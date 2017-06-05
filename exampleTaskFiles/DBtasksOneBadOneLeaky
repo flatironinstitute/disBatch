@@ -1,0 +1,46 @@
+# Note there is a space at the end of the next line.
+#DISBATCH PREFIX cd /mnt/xfs1/home/carriero/projects/parBatch/parSlurm/wip/testRun ; 
+#DISBATCH SUFFIX  > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log
+
+# parathenses are important in this example so that all output is
+# collected and captured by the redirection.
+( echo "13 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "14 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "15 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "16 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "17 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "18 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "19 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "20 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "21 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "22 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "23 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "24 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "25 running on" $(hostname) ; date ; sleep 10 ; date ; )
+
+# generate non-zero return code
+( echo "26 running on" $(hostname) ; date ; sleep 10 ; date ; exit 13 )
+
+( echo "27 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "28 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "29 running on" $(hostname) ; date ; sleep 10 ; date ; )
+#DISBATCH BARRIER
+#DISBATCH BARRIER
+#DISBATCH BARRIER
+( echo "30 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "31 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "32 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "33 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "34 running on" $(hostname) ; date ; sleep 10 ; date ; )
+
+# leak some output
+( echo "35 running on" $(hostname) ; date ; sleep 10 ; date ; ) ; echo 'missed some output'
+
+( echo "36 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "37 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "38 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "39 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "40 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "41 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "42 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "43 running on" $(hostname) ; date ; sleep 10 ; date ; )
