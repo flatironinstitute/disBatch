@@ -11,10 +11,11 @@ from threading import Semaphore, Thread
 
 myHostname = socket.gethostname()
 
-dbbarrier = re.compile('^#DISBATCH BARRIER ?([^\n]+)?\n', re.I)
-dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(\s+start\s+(?P<start>[0-9]+))?(\s+step\s+(?P<step>[0-9]+))?\s*\n', re.I)
-dbprefix  = re.compile('^#DISBATCH PREFIX ([^\n]+)\n', re.I)
-dbsuffix  = re.compile('^#DISBATCH SUFFIX ([^\n]+)\n', re.I)
+dbbarrier = re.compile('^#DISBATCH\s+BARRIER(?:\s+([^\n]+)?)?\n', re.I)
+# would it make sense to allow an (optional) command after the repeat?
+dbrepeat  = re.compile('^#DISBATCH\s+REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?:\s+(?P<command>[^\n]+))?\s*\n', re.I)
+dbprefix  = re.compile('^#DISBATCH\s+PREFIX\s+([^\n]+)\n', re.I)
+dbsuffix  = re.compile('^#DISBATCH\s+SUFFIX\s+([^\n]+)\n', re.I)
 
 # Special ID for "out of band" task events
 TaskIdOOB = -1
@@ -235,24 +236,24 @@ class Blender(object):
             def taskStream(self, taskSource):
                 repeats, tsx = 0, 0
                 while 1:
-                    if 0 == repeats:
-                        t = taskSource.next() # StopIteration will be caught by invoker.
-                        tsx += 1
-                        m = dbrepeat.match(t)
-                        if not m:
-                            repeats, rx, step = 1, 0, 1
-                        else:
-                            t = '#DISBATCH REPEAT SPACER' # command consists entirely of prefix and suffix.
-                            repeats, rx, step = int(m.group('repeat')), 0, 1
-                            if 0 == repeats: continue
-                            g = m.group('start')
-                            if g: rx = int(g)
-                            g = m.group('step')
-                            if g: step = int(g)
-                            logger.info('Processing repeat: %d %d %d'%(repeats, rx, step))
-                    yield (t, tsx, rx)
-                    repeats -= 1
-                    rx += step
+                    t = taskSource.next() # StopIteration will be caught by invoker.
+                    tsx += 1
+                    m = dbrepeat.match(t)
+                    if not m:
+                        yield (t, tsx, 0)
+                    else:
+                        t = m.group('command') or ''
+                        repeats, rx, step = int(m.group('repeat')), 0, 1
+                        g = m.group('start')
+                        if g: rx = int(g)
+                        g = m.group('step')
+                        if g: step = int(g)
+                        logger.info('Processing repeat: %d %d %d'%(repeats, rx, step))
+                        while repeats > 0:
+                            # Having a nested loop here seems less confusing to me than the previous structure
+                            yield (t, tsx, rx)
+                            rx += step
+                            repeats -= 1
                     
             def run(self):
                 while 1:
@@ -430,7 +431,6 @@ class Feeder(Thread):
                         postBarrierFinished()
                     continue
 
-                if t == '#DISBATCH REPEAT SPACER': ts = ''
                 # What if we have something like '#DISBATCH xxINVALIDxx'?  It will be processed as a task command...
                 # Maybe check and error/ignore ts.startswith('#DISBATCH')
 

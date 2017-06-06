@@ -165,7 +165,7 @@ The latest development version incorporates the following changes:
 -   For those problems that are easily handled via a job-array-like
     approach:
      
-         #DISBATCH REPEAT 5 start 100 step 50
+         #DISBATCH REPEAT 5 start 100 step 50 [command]
 
     will expand into five tasks, each with the environment variable
     `DISBATCH_REPEAT_INDEX` set to one of 100, 150, 200, 250, or 300.
