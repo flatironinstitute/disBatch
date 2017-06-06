@@ -16,6 +16,11 @@ dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(\s+start\s+(?P<st
 dbprefix  = re.compile('^#DISBATCH PREFIX ([^\n]+)\n', re.I)
 dbsuffix  = re.compile('^#DISBATCH SUFFIX ([^\n]+)\n', re.I)
 
+# Special ID for "out of band" task events
+TaskIdOOB = -1
+CmdPoison = '!!Poison!!'
+CmdRetire = '!!Retire Me!!'
+
 # TODO: Because of the way SLURM stages batch scripts, it is difficult to infer the correct path.
 ScriptPath = '/mnt/xfs1/home/carriero/projects/parBatch/parSlurm/wip/disBatch.py'
 sys.path.append(os.path.dirname(ScriptPath))
@@ -23,6 +28,7 @@ import kvsstcp
 
 class BatchContext(object):
     def __init__(self, sysid, jobid, nodes, cylinders, launchFunc, retireFunc):
+        # Could make nodes => cylinders a dict since that's how it's used in EngineBlock
         self.sysid, self.jobid, self.nodes, self.cylinders, self.launchFunc, self.retireFunc = sysid, jobid, nodes, cylinders, launchFunc, retireFunc
         self.wd = os.getcwd() #TODO: Easy enough to override, but still... Is this the right place for this?
         self.retiredNodes = set()
@@ -211,7 +217,7 @@ class Blender(object):
             def run(self):
                 while 1:
                     ft = self.kvs.get('.finished task')
-                    if ft.taskId != -1:
+                    if ft.taskId != TaskIdOOB:
                         if self.trackResults: self.kvs.put(self.tasks.resultkey%ft.taskId, str(ft), False)
                         logger.debug('releasing task slot.')
                         self.taskSlots.release()
@@ -238,7 +244,7 @@ class Blender(object):
                         else:
                             t = '#DISBATCH REPEAT SPACER' # command consists entirely of prefix and suffix.
                             repeats, rx, step = int(m.group('repeat')), 0, 1
-                            if 0 == repeats: continnue
+                            if 0 == repeats: continue
                             g = m.group('start')
                             if g: rx = int(g)
                             g = m.group('step')
@@ -332,9 +338,9 @@ class Feeder(Thread):
             logger.debug('Feeder: %s', (qtype, qval))
             if qtype == 'finished':
                 tinfo = qval
-                if tinfo.taskId == -1:
+                if tinfo.taskId == TaskIdOOB:
                     # A finished tasks with id -1 indicates some sort of OOB control message.
-                    if tinfo.taskCmd == '!!Retire Me!!':
+                    if tinfo.taskCmd == CmdRetire:
                         context.retireFunc(context, tinfo.host)
                     else:
                         logger.error('Unrecognized oob task: %(s)'%tinfo)
@@ -380,7 +386,7 @@ class Feeder(Thread):
                     # Let the blender know this wasn't a real task. Shouldn't matter at this point.
                     self.blender.canceltask(t)
                     # Post the poison pill. This may trigger retirement of engines.
-                    self.kvs.put('.task', [-1, -1, -1, '!!Poison!!'])
+                    self.kvs.put('.task', [TaskIdOOB, -1, -1, CmdPoison])
                     continue
                 t, taskStreamIndex, taskRepIndex = qval
                 ts = t.strip()
@@ -425,6 +431,8 @@ class Feeder(Thread):
                     continue
 
                 if t == '#DISBATCH REPEAT SPACER': ts = ''
+                # What if we have something like '#DISBATCH xxINVALIDxx'?  It will be processed as a task command...
+                # Maybe check and error/ignore ts.startswith('#DISBATCH')
 
                 tinfo = [mytc, taskStreamIndex, taskRepIndex, prefix + ts + suffix] 
                 logger.info('Posting task: %r', tinfo)
@@ -473,7 +481,7 @@ class EngineBlock(Thread):
             baseEnv.update(self.commonEnv)
             while 1:
                 taskId, taskStreamIndex, taskRepIndex, taskCmd = self.ciq.get()
-                if -1 == taskId:
+                if taskId == TaskIdOOB:
                     logger.info('Cylinder %d stopping.'%self.cylinderId)
                     self.coq.put(['done', 'stopped'])
                     break
@@ -488,6 +496,7 @@ class EngineBlock(Thread):
                 tp.wait()
                 self.ebProc, self.obProc, self.taskProc = None, None, None
                 t1 = time.time()
+                # should we wait for obp, ebp here?  would it be more efficient/allow more options to capture output in this process?
                 ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, myHostname, tp.pid, tp.returncode, t0, t1, int(obp.stdout.read()), int(ebp.stdout.read()))            
                 logger.info('Cylinder %s completed: %s'%(self.cylinderId, ti))
                 self.coq.put(['done', ti])
@@ -540,12 +549,13 @@ class EngineBlock(Thread):
                 else:
                     liveCylinders -= 1
             elif tag == 'task':
-                if o[0] == -1: self.kvs.put('.task', o)
+                # Is this to "broadcast" this message to other clients?
+                if o[0] == TaskIdOOB: self.kvs.put('.task', o)
                 self.ciq.put(o)
                 inFlight += 1
             else:
                 logger.error('Unknown cylinder input tag: "%s" (%s)'%(tag, repr(o)))
-        self.kvs.put('.finished task', TaskInfo(-1, -1, -1, '!!Retire Me!!', myHostname, -1, 0, 0, 0, 0, 0))
+        self.kvs.put('.finished task', TaskInfo(TaskIdOOB, -1, -1, CmdRetire, myHostname, -1, 0, 0, 0, 0, 0))
 
 # Fail safe: if we lose KVS connectivity (or someone binds the
 # ".shutdown" key), we kill the engine.
@@ -581,6 +591,7 @@ class Deadman(Thread):
         
 def engine(kvsserver, context):
     import random
+    # engine makes at least 3(?) connections to kvs -- look into making client support multiple threads?
     time.sleep(random.random()*5.0)
     e = EngineBlock(kvsserver, context)
     d = Deadman(kvsserver, e, os.getpid())
