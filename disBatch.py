@@ -79,6 +79,8 @@ def nl2flat(nl):
     if prefix: flat.append(prefix)
     return flat
 
+# Maybe slurm, ssh, etc, could inherit from BatchContext, and provide simpler probe functions to wrap the constructors, to make the shape of *Launch and *Retire clearer.
+
 def slurmContext():
     if 'SLURM_JOBID' not in os.environ: return None
 
@@ -254,6 +256,7 @@ class Blender(object):
                             yield (t, tsx, rx)
                             rx += step
                             repeats -= 1
+		    # Could also parse and process prefix and suffix here
                     
             def run(self):
                 while 1:
