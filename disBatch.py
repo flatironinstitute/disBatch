@@ -323,7 +323,8 @@ class Feeder(Thread):
         failed, finished, taskCounter = 0, 0, 0
         nametasks = os.path.basename(self.tasksname)
         failures = '%s_%s_failed.txt'%(nametasks, self.context.jobid)
-        statusfolast, statusfo = 0, open('%s_%s_status.txt'%(nametasks, self.context.jobid), 'a+')
+        statusfo = open('%s_%s_status.txt'%(nametasks, self.context.jobid), 'a+')
+        statusfolast = statusfo.tell()
 
         self.kvs.put('.common env', {'DISBATCH_JOBID': str(self.context.jobid), 'DISBATCH_NAMETASKS': nametasks}) #TODO: Add more later?
         waiters, updatedStatus = [], False
@@ -366,9 +367,12 @@ class Feeder(Thread):
                         except Exception, e:
                             logger.info('Failed to send notification message: "%s". Disabling.', e)
                             self.mailTo = None
+                            # Be sure to seek back to EOF to append
+                            statusfo.seek(0, 2)
                     if tinfo.returncode:
                         failed += 1
-                        open(failures, 'a').write(tinfo.taskCmd+'\n')
+                        with open(failures, 'a') as f:
+                            f.write(tinfo.taskCmd+'\n')
                     if barrier and finished == (taskCounter - 1):
                         # Completed all tasks up to, but not including the barriers. Now completed the barrier.
                         logger.info('Finishing barrier.')
@@ -671,7 +675,8 @@ if '__main__' == __name__:
         else:
             kvsst = kvsstcp.KVSServerThread(socket.gethostname(), 0)
             kvsserver = '%s:%d'%kvsst.cinfo
-            open('kvsinfo.txt', 'w').write(kvsserver)
+            with open('kvsinfo.txt', 'w') as kvsi:
+                kvsi.write(kvsserver)
             if args.taskcommand:
                 os.environ['KVSSTCP_HOST'] = kvsst.cinfo[0]
                 os.environ['KVSSTCP_PORT'] = str(kvsst.cinfo[1])
