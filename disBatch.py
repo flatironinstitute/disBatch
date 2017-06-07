@@ -194,7 +194,9 @@ class KVSTaskSource(object):
 
     def next(self):
         t = self.kvs.get(self.taskkey, False)
-        if t == self.donetask: raise StopIteration
+        if t == self.donetask:
+            self.kvs.close()
+            raise StopIteration
         return t
 
 # Main control loop that sends new tasks to the execution engines and
@@ -400,6 +402,7 @@ class Feeder(Thread):
 
         logger.info('Processed %d tasks.', self.taskCounter)
         statusfo.close()
+        self.kvs.close()
 
 
 # Once we know the nodes participating in the run, we start an engine
@@ -516,6 +519,7 @@ class EngineBlock(Thread):
             else:
                 logger.error('Unknown cylinder input tag: "%s" (%s)', tag, repr(o))
         self.kvs.put('.finished task', TaskInfo(TaskIdOOB, -1, -1, CmdRetire, myHostname, -1, 0, 0, 0, 0, 0))
+        self.kvs.close()
 
 # Fail safe: if we lose KVS connectivity (or someone binds the
 # ".shutdown" key), we kill the engine.
