@@ -11,11 +11,11 @@ from threading import Semaphore, Thread
 
 myHostname = socket.gethostname()
 
-dbbarrier = re.compile('^#DISBATCH\s+BARRIER(?:\s+([^\n]+)?)?\n', re.I)
+dbbarrier = re.compile('^#DISBATCH BARRIER(?: ([^\n]+)?)?\n', re.I)
 # would it make sense to allow an (optional) command after the repeat?
-dbrepeat  = re.compile('^#DISBATCH\s+REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?:\s+(?P<command>[^\n]+))?\s*\n', re.I)
-dbprefix  = re.compile('^#DISBATCH\s+PREFIX\s+([^\n]+)\n', re.I)
-dbsuffix  = re.compile('^#DISBATCH\s+SUFFIX\s+([^\n]+)\n', re.I)
+dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>[^\n]+))?\s*\n', re.I)
+dbprefix  = re.compile('^#DISBATCH PREFIX ([^\n]+)\n', re.I)
+dbsuffix  = re.compile('^#DISBATCH SUFFIX ([^\n]+)\n', re.I)
 
 # Special ID for "out of band" task events
 TaskIdOOB = -1
