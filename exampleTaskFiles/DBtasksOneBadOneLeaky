@@ -44,3 +44,6 @@
 ( echo "41 running on" $(hostname) ; date ; sleep 10 ; date ; )
 ( echo "42 running on" $(hostname) ; date ; sleep 10 ; date ; )
 ( echo "43 running on" $(hostname) ; date ; sleep 10 ; date ; )
+
+# empty repeat
+#DISBATCH REPEAT 0 start 1
