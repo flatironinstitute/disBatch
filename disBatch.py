@@ -11,6 +11,7 @@ from threading import Semaphore, Thread
 
 myHostname = socket.gethostname()
 
+dbcomment = re.compile('^\s*(#|\n|$)')
 dbbarrier = re.compile('^#DISBATCH BARRIER(?: ([^\n]+)?)?\n', re.I)
 # would it make sense to allow an (optional) command after the repeat?
 dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>[^\n]+))?\s*\n', re.I)
@@ -240,8 +241,12 @@ class Blender(object):
                 while 1:
                     t = taskSource.next() # StopIteration will be caught by invoker.
                     tsx += 1
+                    if dbcomment.match(t) and not t.startswith('#DISBATCH '):
+                        # Comment or empty line, ignore (but do count against tsx)
+                        continue
                     m = dbrepeat.match(t)
                     if not m:
+                        # could maybe use a repeat index of -1 to distinguish it?
                         yield (t, tsx, 0)
                     else:
                         t = m.group('command') or ''
@@ -395,10 +400,6 @@ class Feeder(Thread):
                 t, taskStreamIndex, taskRepIndex = qval
                 ts = t.strip()
 
-                if not ts or (ts[0] == '#' and not ts.startswith('#DISBATCH ')):
-                    # Comment line, tell the blender this wasn't real.
-                    self.blender.canceltask(t)
-                    continue
                 # Note: intentionally using non stripped line here
                 m = dbprefix.match(t)
                 if m:
