@@ -1,5 +1,5 @@
 # Note there is a space at the end of the next line.
-#DISBATCH PREFIX cd /mnt/xfs1/home/carriero/projects/parBatch/parSlurm/wip/testRun ; 
+#DISBATCH PREFIX cd . ; 
 #DISBATCH SUFFIX  > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log
 
 # parathenses are important in this example so that all output is
