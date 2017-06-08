@@ -2,6 +2,7 @@
 
 import logging, os, re, signal, socket, subprocess as SUB, sys, time
 
+# As you mentioned, this may be unnecessary (and may actually improve thread contention at the default: 100)
 sys.setcheckinterval(1000000)
 
 from multiprocessing import Process as mpProcess, Queue as mpQueue
