@@ -223,7 +223,6 @@ def taskGenerator(tasks):
 
         logger.debug('Task: %s', t)
 
-        # Note: intentionally using non stripped line here
         if t.startswith('#DISBATCH '):
             m = dbprefix.match(t)
             if m:
@@ -241,7 +240,7 @@ def taskGenerator(tasks):
                 g = m.group('step')
                 if g: step = int(g)
                 logger.info('Processing repeat: %d %d %d', repeats, rx, step)
-                cmd = prefix + (m.group('command') or '').strip() + suffix
+                cmd = prefix + (m.group('command') or '') + suffix
                 while repeats > 0:
                     yield TaskInfo(taskCounter, tsx, rx, cmd)
                     taskCounter += 1
@@ -259,7 +258,7 @@ def taskGenerator(tasks):
             # Comment or empty line, ignore
             continue
 
-        yield TaskInfo(taskCounter, tsx, 0, prefix + t.strip() + suffix)
+        yield TaskInfo(taskCounter, tsx, 0, prefix + t + suffix)
         taskCounter += 1
 
     logger.info('Processed %d tasks.', taskCounter)
