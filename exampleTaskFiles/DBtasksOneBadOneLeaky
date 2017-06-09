@@ -28,6 +28,7 @@
 #DISBATCH BARRIER
 #DISBATCH BARRIER
 ( echo "30 running on" $(hostname) ; date ; sleep 10 ; date ; )
+#DISBATCH BARRIER mykey
 ( echo "31 running on" $(hostname) ; date ; sleep 10 ; date ; )
 ( echo "32 running on" $(hostname) ; date ; sleep 10 ; date ; )
 ( echo "33 running on" $(hostname) ; date ; sleep 10 ; date ; )
