@@ -8,6 +8,7 @@ from Queue import Queue, Empty
 from threading import BoundedSemaphore, Thread
 
 myHostname = socket.gethostname()
+myPid = os.getpid()
 
 dbcomment = re.compile('^\s*(#|\n|$)')
 dbbarrier = re.compile('^#DISBATCH BARRIER(?: ([^\n]+)?)?\n', re.I)
@@ -37,7 +38,7 @@ class BatchContext(object):
         return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\nLaunch function: %s\n'%(self.sysid, self.jobid, self.nodes, self.cylinders, repr(self.launchFunc))
 
 class TaskInfo(object):
-    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = myHostname, pid = os.getpid(), returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
+    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
         self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.host, self.pid, self.returncode, self.start, self.end, self.outbytes, self.errbytes = taskId, taskStreamIndex, taskRepIndex, taskCmd, host, pid, returncode, start, end, outbytes, errbytes
 
     def __str__(self):
@@ -50,7 +51,7 @@ class TaskInfo(object):
 
 class BarrierTask(TaskInfo):
     def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, key):
-        super(BarrierTask, self).__init__(taskId, taskStreamIndex, taskRepIndex, taskCmd)
+        super(BarrierTask, self).__init__(taskId, taskStreamIndex, taskRepIndex, taskCmd, myHostname, myPid)
         self.key = key
 
 # Convert nodelist format (slurm specific?) to an expanded list of nodes.
@@ -570,7 +571,7 @@ def engine(kvsserver, context):
     # engine makes at least 3(?) connections to kvs -- look into making client support multiple threads?
     time.sleep(random.random()*5.0)
     e = EngineBlock(kvsserver, context)
-    d = Deadman(kvsserver, e, os.getpid())
+    d = Deadman(kvsserver, e, myPid)
     e.join()
     logger.info('Engine exiting normally.')
 
@@ -595,7 +596,7 @@ if '__main__' == __name__:
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
         lconf['filename'] = '%s_%s_%s_engine.log'%('disBatch', context.jobid, myHostname)
         logging.basicConfig(**lconf)
-        logger.info('Starting engine (%d) on %s in %s.', os.getpid(), myHostname, os.getcwd())
+        logger.info('Starting engine (%d) on %s in %s.', myPid, myHostname, os.getcwd())
         engine(args.kvsserver, context)
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
@@ -633,7 +634,7 @@ if '__main__' == __name__:
             lconf['filename'] = '%s_%s_log.txt'%('disBatch', context.jobid)
         logging.basicConfig(**lconf)
 
-        logger.info('Starting feeder (%d) on %s in %s.', os.getpid(), myHostname, os.getcwd())
+        logger.info('Starting feeder (%d) on %s in %s.', myPid, myHostname, os.getcwd())
         logger.info('Context: %s', context)
 
         #TODO: Resist rush to judgment. Could we, for example, want to have tasks from a file, but reporting via kvs?
