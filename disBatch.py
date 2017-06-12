@@ -8,6 +8,7 @@ from Queue import Queue, Empty
 from threading import BoundedSemaphore, Thread
 
 myHostname = socket.gethostname()
+myFQDN = socket.getfqdn(myHostname)
 myPid = os.getpid()
 
 dbcomment = re.compile('^\s*(#|$)')
@@ -25,6 +26,12 @@ CmdRetire = '!!Retire Me!!'
 ScriptPath = __file__
 sys.path.append(os.path.dirname(ScriptPath))
 import kvsstcp
+
+def isHostSelf(host):
+    return (host == myHostname or
+            socket.getfqdn(host) == myFQDN)
+    # Could also just use hostnames and compare up to trailing dots:
+           #host.startsWith(myHostname+'.') or myHostname.startswith(host+'.')
 
 class BatchContext(object):
     def __init__(self, sysid, jobid, nodes, cylinders):
@@ -106,8 +113,7 @@ class SlurmContext(BatchContext):
         p = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', '--bcast=/tmp/disBatch_%s_exe.tmp'%self.jobid, ScriptPath, '--engine', kvsserver])
 
     def retire(self, node):
-        if node.startswith(myHostname) or myHostname.startswith(node):
-            # What if we're on a cluster where login nodes are named "cluster" and/or nodes are "cluster-1", "cluster-10"?
+        if isHostSelf(node):
             logger.info('Refusing to retire ("%s", "%s").', node, myHostname)
         else:
             self.retiredNodes.add(node)
@@ -155,7 +161,7 @@ class SSHContext(BatchContext):
         kvs.close()
         for n in self.nodes:
             prefix = ['ssh', n]
-            if n == myHostname: prefix = []
+            if isHostSelf(n): prefix = []
             p = SUB.Popen(prefix + [ScriptPath, '--engine', kvsserver], stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w'))
 
     def retire(self, node):
@@ -505,7 +511,7 @@ class EngineBlock(Thread):
         Thread.__init__(self, name='EngineBlock')
         self.daemon = True
         for n, cylinders in zip(context.nodes, context.cylinders):
-            if n.startswith(myHostname) or myHostname.startswith(n): break
+            if isHostSelf(n): break
         else:
             logger.error('Couldn\'t find %s in "%s", setting cylinder count to 1.', myHostname, context.nodes)
             cylinders = 1
