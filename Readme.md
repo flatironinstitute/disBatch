@@ -37,7 +37,7 @@ the lines in the file have been processed.
 In the simplest case, all that needs to be done is to write the command
 sequences to a file and then submit a job like the following:
 
-    sbatch -n 20 --ntasks-per-node 5 --exclusive /mnt/xfs1/home/carriero/projects/parBatch/parSlurm/disBatch.py TaskFileName
+    sbatch -n 20 --ntasks-per-node 5 --exclusive disBatch.py TaskFileName
 
 This particular invocation will allocate sufficient resources to process
 20 tasks at a time, with no more than five running concurrently on any

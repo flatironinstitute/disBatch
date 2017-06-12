@@ -22,8 +22,7 @@ TaskIdOOB = -1
 CmdPoison = '!!Poison!!'
 CmdRetire = '!!Retire Me!!'
 
-# TODO: Because of the way SLURM stages batch scripts, it is difficult to infer the correct path.
-ScriptPath = '/mnt/xfs1/home/carriero/projects/parBatch/parSlurm/wip/disBatch.py'
+ScriptPath = __file__
 sys.path.append(os.path.dirname(ScriptPath))
 import kvsstcp
 
@@ -107,7 +106,7 @@ def slurmContextLaunch(context, kvsserver):
     kvs.close()
     # start one engine per node using the equivalent of:
     # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
-    p = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', ScriptPath, '--engine', kvsserver])
+    p = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', '--bcast=/tmp/disBatch_%s_exe.tmp'%context.jobid, ScriptPath, '--engine', kvsserver])
 
 def slurmContextRetire(context, node):
     if node.startswith(myHostname) or myHostname.startswith(node):
@@ -577,6 +576,9 @@ def engine(kvsserver, context):
     e = EngineBlock(kvsserver, context)
     d = Deadman(kvsserver, e, myPid)
     e.join()
+    if ScriptPath.startswith('/tmp/disBatch_') and ScriptPath.endswith("_exe.tmp"):
+        # cleanup bcast script
+        os.unlink(ScriptPath)
     logger.info('Engine exiting normally.')
 
 if '__main__' == __name__:
@@ -666,8 +668,9 @@ if '__main__' == __name__:
         logger.info('KVS Server: %s', kvsserver)
 
         if args.web:
+            from kvsstcp import wskvsmu
             urlfile = '%s_%s_url'%(nametasks, context.jobid)
-            w = SUB.Popen([os.path.dirname(ScriptPath)+'/wskvsmu.py', '--urlfile', urlfile, '-s', ':gpvw', kvsserver], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
+            wskvsmu.main(kvsserver, open(urlfile, 'w'), '.webmonitor', ':gpvw')
 
         context.launchFunc(context, kvsserver)
 
