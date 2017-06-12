@@ -27,14 +27,14 @@ sys.path.append(os.path.dirname(ScriptPath))
 import kvsstcp
 
 class BatchContext(object):
-    def __init__(self, sysid, jobid, nodes, cylinders, launchFunc, retireFunc):
+    def __init__(self, sysid, jobid, nodes, cylinders):
         # Could make nodes => cylinders a dict since that's how it's used in EngineBlock
-        self.sysid, self.jobid, self.nodes, self.cylinders, self.launchFunc, self.retireFunc = sysid, jobid, nodes, cylinders, launchFunc, retireFunc
+        self.sysid, self.jobid, self.nodes, self.cylinders = sysid, jobid, nodes, cylinders
         self.wd = os.getcwd() #TODO: Easy enough to override, but still... Is this the right place for this?
         self.retiredNodes = set()
 
     def __str__(self):
-        return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\nLaunch function: %s\n'%(self.sysid, self.jobid, self.nodes, self.cylinders, repr(self.launchFunc))
+        return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
 
 class TaskInfo(object):
     def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
@@ -83,48 +83,48 @@ def nl2flat(nl):
     if prefix: flat.append(prefix)
     return flat
 
-# Maybe slurm, ssh, etc, could inherit from BatchContext, and provide simpler probe functions to wrap the constructors, to make the shape of *Launch and *Retire clearer.
+class SlurmContext(BatchContext):
+    def __init__(self):
+        jobid = os.environ['SLURM_JOBID']
+        nodes = nl2flat(os.environ['SLURM_NODELIST'])
 
-def slurmContext():
-    if 'SLURM_JOBID' not in os.environ: return None
+        cylinders = []
+        for tr in os.environ['SLURM_TASKS_PER_NODE'].split(','):
+            m = re.match(r'([^\(]+)(?:\(x([^\)]+)\))?', tr)
+            c, m = m.groups()
+            if m == None: m = '1'
+            cylinders += [int(c)]*int(m)
 
-    jobid = os.environ['SLURM_JOBID']
-    nodes = nl2flat(os.environ['SLURM_NODELIST'])
+        super(SlurmContext, self).__init__('SLURM', jobid, nodes, cylinders)
 
-    cylinders = []
-    for tr in os.environ['SLURM_TASKS_PER_NODE'].split(','):
-        m = re.match(r'([^\(]+)(?:\(x([^\)]+)\))?', tr)
-        c, m = m.groups()
-        if m == None: m = '1'
-        cylinders += [int(c)]*int(m)
+    def launch(self, kvsserver):
+        kvs = kvsstcp.KVSClient(kvsserver)
+        kvs.put('.context', self)
+        kvs.close()
+        # start one engine per node using the equivalent of:
+        # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
+        p = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', '--bcast=/tmp/disBatch_%s_exe.tmp'%self.jobid, ScriptPath, '--engine', kvsserver])
 
-    return BatchContext('SLURM', jobid, nodes, cylinders, slurmContextLaunch, slurmContextRetire)
-
-def slurmContextLaunch(context, kvsserver):
-    kvs = kvsstcp.KVSClient(kvsserver)
-    kvs.put('.context', context)
-    kvs.close()
-    # start one engine per node using the equivalent of:
-    # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
-    p = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', '--bcast=/tmp/disBatch_%s_exe.tmp'%context.jobid, ScriptPath, '--engine', kvsserver])
-
-def slurmContextRetire(context, node):
-    if node.startswith(myHostname) or myHostname.startswith(node):
-        # What if we're on a cluster where login nodes are named "cluster" and/or nodes are "cluster-1", "cluster-10"?
-        logger.info('Refusing to retire ("%s", "%s").', node, myHostname)
-    else:
-        context.retiredNodes.add(node)
-        command = ['scontrol', 'update', 'JobId=%s'%context.jobid, 'NodeList=' + ','.join([n for n in context.nodes if n not in context.retiredNodes])]
-        logger.info('Retiring node "%s": %s', node, repr(command))
-        try:
-            SUB.check_call(command)
-        except Exception, e:
-            logger.warn('Retirement planning needs improvement: %s', repr(e))
+    def retire(self, node):
+        if node.startswith(myHostname) or myHostname.startswith(node):
+            # What if we're on a cluster where login nodes are named "cluster" and/or nodes are "cluster-1", "cluster-10"?
+            logger.info('Refusing to retire ("%s", "%s").', node, myHostname)
+        else:
+            self.retiredNodes.add(node)
+            command = ['scontrol', 'update', 'JobId=%s'%self.jobid, 'NodeList=' + ','.join([n for n in self.nodes if n not in self.retiredNodes])]
+            logger.info('Retiring node "%s": %s', node, repr(command))
+            try:
+                SUB.check_call(command)
+            except Exception, e:
+                logger.warn('Retirement planning needs improvement: %s', repr(e))
 
 #TODO:
-def geContext(): return None
-def lsfContext(): return None
-def pbsContext(): return None
+class GEContext(BatchContext):
+    pass
+class LSFContext(BatchContext):
+    pass
+class PBSContext(BatchContext):
+    pass
 
 # The ssh context should be generally applicable when all else fails
 # (or there is no resource manager).
@@ -136,33 +136,37 @@ def pbsContext(): return None
 #
 # You can also specify a "job id" via DISBATCH_SSH_JOBID. If you do
 # not provide one, one will be created from the PID and epoch time.
-def sshContext():
-    if 'DISBATCH_SSH_NODELIST' not in os.environ: return None
+class SSHContext(BatchContext):
+    def __init__(self):
+        jobid = os.environ.get('DISBATCH_SSH_JOBID', '%d_%.6f'%(os.getpid(), time.time()))
 
-    jobid = os.environ.get('DISBATCH_SSH_JOBID', '%d_%.6f'%(os.getpid(), time.time()))
+        cylinders, nodes = [], []
+        for p in os.environ['DISBATCH_SSH_NODELIST'].split(','):
+            n, e = p.split(':')
+            if n == 'localhost': n = myHostname
+            nodes.append(n)
+            cylinders.append(int(e))
 
-    cylinders, nodes = [], []
-    for p in os.environ['DISBATCH_SSH_NODELIST'].split(','):
-        n, e = p.split(':')
-        if n == 'localhost': n = myHostname
-        nodes.append(n)
-        cylinders.append(int(e))
+        super(SSHContext, self).__init__('SSH', jobid, nodes, cylinders)
 
-    return BatchContext('SSH', jobid, nodes, cylinders, sshContextLaunch, sshContextRetire)
+    def launch(self, kvsserver):
+        kvs = kvsstcp.KVSClient(kvsserver)
+        kvs.put('.context', self)
+        kvs.close()
+        for n in self.nodes:
+            prefix = ['ssh', n]
+            if n == myHostname: prefix = []
+            p = SUB.Popen(prefix + [ScriptPath, '--engine', kvsserver], stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w'))
 
-def sshContextLaunch(context, kvsserver):
-    kvs = kvsstcp.KVSClient(kvsserver)
-    kvs.put('.context', context)
-    kvs.close()
-    for n in context.nodes:
-        prefix = ['ssh', n]
-        if n == myHostname: prefix = []
-        p = SUB.Popen(prefix + [ScriptPath, '--engine', kvsserver], stdout=open('engine_wrap_%s_%s.out'%(context.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(context.jobid, n), 'w'))
+    def retire(self, node):
+        logger.info('Retiring node "%s": %s', node, 'ToDo: add clean up hook here?')
 
-def sshContextRetire(context, node):
-    logger.info('Retiring node "%s": %s', node, 'ToDo: add clean up hook here?')
-
-ContextProbes = [geContext, lsfContext, pbsContext, slurmContext, sshContext]
+def probeContext():
+    if 'SLURM_JOBID' in os.environ: return SlurmContext()
+    #if ...: return GEContext
+    #if ...: LSFContext
+    #if ...: PBSContext
+    if 'DISBATCH_SSH_NODELIST' in os.environ: return SSHContext()
 
 # When the user specifies a command that will be generating tasks,
 # this class wraps the command's execution so we can trigger a
@@ -346,7 +350,7 @@ class Feeder(Thread):
                     if tinfo.taskId == TaskIdOOB:
                         # A finished tasks with id -1 indicates some sort of OOB control message.
                         if tinfo.taskCmd == CmdRetire:
-                            self.context.retireFunc(self.context, tinfo.host)
+                            self.context.retire(tinfo.host)
                         else:
                             logger.error('Unrecognized oob task: %(s)', tinfo)
                         continue
@@ -625,10 +629,8 @@ if '__main__' == __name__:
             args.mailFreq = 1
 
         # Try to find a batch context.
-        for cf in ContextProbes:
-            context = cf()
-            if context: break
-        else:
+        context = probeContext()
+        if not context:
             print >>sys.stderr, 'Cannot determine batch execution environment.'
             sys.exit(-1)
 
@@ -673,7 +675,7 @@ if '__main__' == __name__:
             urlfile = '%s_%s_url'%(nametasks, context.jobid)
             wskvsmu.main(kvsserver, open(urlfile, 'w'), '.webmonitor', ':gpvw')
 
-        context.launchFunc(context, kvsserver)
+        context.launch(kvsserver)
 
         f = Feeder(kvsserver, context, args.mailFreq, args.mailTo, taskSource, trackResults)
         f.join()
