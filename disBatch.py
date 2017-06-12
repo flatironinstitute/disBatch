@@ -110,6 +110,7 @@ def slurmContextLaunch(context, kvsserver):
 
 def slurmContextRetire(context, node):
     if node.startswith(myHostname) or myHostname.startswith(node):
+        # What if we're on a cluster where login nodes are named "cluster" and/or nodes are "cluster-1", "cluster-10"?
         logger.info('Refusing to retire ("%s", "%s").', node, myHostname)
     else:
         context.retiredNodes.add(node)
