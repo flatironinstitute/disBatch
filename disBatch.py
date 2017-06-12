@@ -620,7 +620,8 @@ if '__main__' == __name__:
         argp.add_argument('-l', '--logfile', default=None, type=argparse.FileType('w'), help='Log file.')
         argp.add_argument('--mailFreq', default=None, type=int, metavar='N', help='Send email every N task completions (default: 1). "--mailTo" must be given.')
         argp.add_argument('--mailTo', default=None, help='Mail address for task completion notification(s).')
-        #argp.add_argument('--tasksPerNode', type=int, help='Maximum concurrently executing tasks per node (default: node core count).')
+        argp.add_argument('-c', '--cpusPerTask', default=1, type=float, help='Number of cores used per task; may be fractional (default: 1).')
+        argp.add_argument('-t', '--tasksPerNode', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
         argp.add_argument('--web', action='store_true', help='Enable web interface.')
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, help='Tasks will come from the command specified via a kvs server instantiated for that purpose.')
@@ -639,6 +640,10 @@ if '__main__' == __name__:
         if not context:
             print >>sys.stderr, 'Cannot determine batch execution environment.'
             sys.exit(-1)
+
+        # Apply -c and -t limits
+        context.cylinders = [ min(int(c / args.cpusPerTask), args.tasksPerNode) for c in context.cylinders ]
+        # TODO: communicate to jobs how many CPUs they have available?
 
         logger = logging.getLogger('DisBatch')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
