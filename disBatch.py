@@ -43,6 +43,12 @@ class BatchContext(object):
     def __str__(self):
         return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
 
+    def launch(self, kvsserver):
+        raise Exception('BatchContext.launch: not implemented')
+
+    def retire(self, node):
+        logger.info('Retiring node "%s": %s', node, 'ToDo: add clean up hook here?')
+
 class TaskInfo(object):
     def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
         self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.host, self.pid, self.returncode, self.start, self.end, self.outbytes, self.errbytes = taskId, taskStreamIndex, taskRepIndex, taskCmd, host, pid, returncode, start, end, outbytes, errbytes
@@ -163,9 +169,6 @@ class SSHContext(BatchContext):
             prefix = ['ssh', n]
             if isHostSelf(n): prefix = []
             p = SUB.Popen(prefix + [ScriptPath, '--engine', kvsserver], stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w'))
-
-    def retire(self, node):
-        logger.info('Retiring node "%s": %s', node, 'ToDo: add clean up hook here?')
 
 def probeContext():
     if 'SLURM_JOBID' in os.environ: return SlurmContext()
