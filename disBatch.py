@@ -687,7 +687,7 @@ if '__main__' == __name__:
         if args.web:
             from kvsstcp import wskvsmu
             urlfile = '%s_%s_url'%(nametasks, context.jobid)
-            wskvsmu.main(kvsserver, open(urlfile, 'w'), '.webmonitor', ':gpvw')
+            wskvsmu.main(kvsserver, urlfile=open(urlfile, 'w'), monitorspec=':gpvw')
 
         context.launch(kvsserver)
 
