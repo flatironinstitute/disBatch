@@ -330,7 +330,7 @@ class Feeder(Thread):
 
     def run(self):
         totalSlots = sum(self.context.cylinders)
-        eof = False
+        more = True
         active = 0 # number of currently executing (unfinished) tasks (must be <= totalSlots)
         barrier = None # current BarrierTask or None
         failed, finished = 0, 0
@@ -343,15 +343,15 @@ class Feeder(Thread):
         self.kvs.put('.common env', {'DISBATCH_JOBID': str(self.context.jobid), 'DISBATCH_NAMETASKS': nametasks}) #TODO: Add more later?
         self.kvs.put('DisBatch status', '<Starting...>', False)
         while 1:
-            logger.info('Feeder loop: %s.', (eof, finished, active, self.shutdown))
+            logger.info('Feeder loop: %s.', (more, finished, active, self.shutdown))
             if self.shutdown: break
-            self.updateStatus(eof = eof, barrier = barrier, finished = finished, failed = failed, active = active)
+            self.updateStatus(more = more, barrier = barrier, finished = finished, failed = failed, active = active)
 
             if active:
                 # Deal with finished tasks, waiting if necessary
                 # Block if we're waiting at a barrier, at end, or there are no free slots
                 try:
-                    tinfo = self.finished.queue.get(barrier or eof or active >= totalSlots)
+                    tinfo = self.finished.queue.get(barrier or not more or active >= totalSlots)
                 except Empty:
                     tinfo = None
                 if tinfo:
@@ -404,7 +404,7 @@ class Feeder(Thread):
                     barrier.end = time.time()
                     self.kvs.put('.finished task', barrier)
                     continue
-                if eof:
+                if not more:
                     # All done
                     break
 
@@ -412,7 +412,7 @@ class Feeder(Thread):
             try:
                 tinfo = self.taskGenerator.next()
             except StopIteration:
-                eof = True
+                more = False
                 # Post the poison pill. This may trigger retirement of engines.
                 self.kvs.put('.task', [TaskIdOOB, -1, -1, CmdPoison])
                 continue
