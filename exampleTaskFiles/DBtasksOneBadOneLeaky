@@ -47,5 +47,8 @@
 # singleton repeat
 #DISBATCH REPEAT 1 start 43 ( echo "$DISBATCH_REPEAT_INDEX running on" $(hostname) ; date ; sleep 10 ; date ; )
 
+# fail two in repeat
+#DISBATCH REPEAT 3 start 44 ( echo "$DISBATCH_REPEAT_INDEX running on" $(hostname) ; date ; sleep 10 ; date ; [[ $DISBATCH_REPEAT_INDEX -eq 45 ]] )
+
 # empty repeat
 #DISBATCH REPEAT 0 start 1

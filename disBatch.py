@@ -265,7 +265,7 @@ def taskGenerator(tasks):
                 continue
             m = dbbarrier.match(t)
             if m:
-                yield BarrierTask(taskCounter, tsx, 0, t, m.group(1))
+                yield BarrierTask(taskCounter, tsx, -1, t, m.group(1))
                 taskCounter += 1
                 continue
             logger.error('Unknown #DISBATCH directive: %s', t)
@@ -274,7 +274,7 @@ def taskGenerator(tasks):
             # Comment or empty line, ignore
             continue
 
-        yield TaskInfo(taskCounter, tsx, 0, prefix + t + suffix)
+        yield TaskInfo(taskCounter, tsx, -1, prefix + t + suffix)
         taskCounter += 1
 
     logger.info('Processed %d tasks.', taskCounter)
@@ -386,6 +386,8 @@ class Feeder(Thread):
                     if tinfo.returncode:
                         failed += 1
                         with open(failures, 'a') as f:
+                            if tinfo.taskRepIndex >= 0:
+                                f.write("#DISBATCH REPEAT 1 start %d " % tinfo.taskRepIndex)
                             f.write(tinfo.taskCmd+'\n')
                     if barrier and tinfo.taskId == barrier.taskId:
                         # Complete the barrier task itself, exit barrier mode.
