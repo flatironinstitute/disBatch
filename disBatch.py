@@ -2,19 +2,23 @@
 
 import logging, os, re, signal, socket, subprocess as SUB, sys, time
 
-sys.setcheckinterval(1000000)
-
 from multiprocessing import Process as mpProcess, Queue as mpQueue
 
-from Queue import Queue
-from threading import Semaphore, Thread
+from Queue import Queue, Empty
+from threading import BoundedSemaphore, Thread
 
 myHostname = socket.gethostname()
+myPid = os.getpid()
 
 dbbarrier = re.compile('^#DISBATCH BARRIER ?([^\n]+)?\n', re.I)
 dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(\s+start\s+(?P<start>[0-9]+))?(\s+step\s+(?P<step>[0-9]+))?\s*\n', re.I)
 dbprefix  = re.compile('^#DISBATCH PREFIX ([^\n]+)\n', re.I)
 dbsuffix  = re.compile('^#DISBATCH SUFFIX ([^\n]+)\n', re.I)
+
+# Special ID for "out of band" task events
+TaskIdOOB = -1
+CmdPoison = '!!Poison!!'
+CmdRetire = '!!Retire Me!!'
 
 # TODO: Because of the way SLURM stages batch scripts, it is difficult to infer the correct path.
 ScriptPath = '/mnt/xfs1/home/carriero/projects/parBatch/parSlurm/wip/disBatch.py'
@@ -97,15 +101,15 @@ def slurmContextLaunch(context, kvsserver):
 
 def slurmContextRetire(context, node):
     if node.startswith(myHostname) or myHostname.startswith(node):
-        logger.info('Refusing to retire ("%s", "%s").'%(node, myHostname))
+        logger.info('Refusing to retire ("%s", "%s").', node, myHostname)
     else:
         context.retiredNodes.add(node)
         command = ['scontrol', 'update', 'JobId=%s'%context.jobid, 'NodeList=' + ','.join([n for n in context.nodes if n not in context.retiredNodes])]
-        logger.info('Retiring node "%s": %s'%(node, repr(command)))
+        logger.info('Retiring node "%s": %s', node, repr(command))
         try:
             SUB.check_call(command)
         except Exception, e:
-            logger.warn('Retirement planning needs improvement: %s'%repr(e))
+            logger.warn('Retirement planning needs improvement: %s', repr(e))
 
 #TODO: 
 def geContext(): return None
@@ -146,7 +150,7 @@ def sshContextLaunch(context, kvsserver):
         p = SUB.Popen(prefix + [ScriptPath, '--engine', kvsserver], stdout=open('engine_wrap_%s_%s.out'%(context.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(context.jobid, n), 'w'))
     
 def sshContextRetire(context, node):
-    logger.info('Retiring node "%s": %s'%(node, 'ToDo: add clean up hook here?'))
+    logger.info('Retiring node "%s": %s', node, 'ToDo: add clean up hook here?')
 
 ContextProbes = [geContext, lsfContext, pbsContext, slurmContext, sshContext]
 
@@ -164,7 +168,7 @@ class WatchIt(Thread):
 
     def run(self):
         self.p.wait()
-        logger.info('Task generating command has exited: %s %d.'%(repr(self.command), self.p.returncode))
+        logger.info('Task generating command has exited: %s %d.', repr(self.command), self.p.returncode)
         # allow time for a normal shutdown to complete. since this is
         # a daemon thread, its existence won't prevent an exit.
         time.sleep(30)
@@ -184,7 +188,9 @@ class KVSTaskSource(object):
 
     def next(self):
         t = self.kvs.get(self.taskkey, False)
-        if t == self.donetask: raise StopIteration
+        if t == self.donetask:
+            self.kvs.close()
+            raise StopIteration
         return t
 
 # Blend two potentially blocking streams (the stream of completed
@@ -211,7 +217,7 @@ class Blender(object):
             def run(self):
                 while 1:
                     ft = self.kvs.get('.finished task')
-                    if ft.taskId != -1:
+                    if ft.taskId != TaskIdOOB:
                         if self.trackResults: self.kvs.put(self.tasks.resultkey%ft.taskId, str(ft), False)
                         logger.debug('releasing task slot.')
                         self.taskSlots.release()
@@ -261,7 +267,7 @@ class Blender(object):
                         break
 
         self.queue = Queue()
-        self.taskSlots = Semaphore(cylinders)
+        self.taskSlots = BoundedSemaphore(cylinders)
         self.ft = FinishedTask(self.queue, kvsserver, self.taskSlots)
         self.tt = NewTask(self.queue, tasks, self.taskSlots)
 
@@ -332,9 +338,9 @@ class Feeder(Thread):
             logger.debug('Feeder: %s', (qtype, qval))
             if qtype == 'finished':
                 tinfo = qval
-                if tinfo.taskId == -1:
-                    # A finished tasks with id -1 indicates some sort of OOB control message.
-                    if tinfo.taskCmd == '!!Retire Me!!':
+                if tinfo.taskId == TaskIdOOB:
+                    # A finished task with id TaskIDOOB indicates some sort of OOB control message.
+                    if tinfo.taskCmd == CmdRetire:
                         context.retireFunc(context, tinfo.host)
                     else:
                         logger.error('Unrecognized oob task: %(s)'%tinfo)
@@ -349,8 +355,10 @@ class Feeder(Thread):
                             self.sendNotification(finished, statusfo, statusfolast)
                             statusfolast = statusfo.tell()
                         except Exception, e:
-                            logger.info('Failed to send notification message: "%s". Disabling.', e)
+                            logger.warn('Failed to send notification message: "%s". Disabling.', e)
                             self.mailTo = None
+                            # Be sure to seek back to EOF to append
+                            statusfo.seek(0, 2)
                     if tinfo.returncode:
                         failed += 1
                         open(failures, 'a').write(tinfo.taskCmd+'\n')
@@ -364,7 +372,7 @@ class Feeder(Thread):
                         logger.info('Finished barrier.')
                         # If user specified a KVS key, use it to signal the barrier is done.
                         if barrierKey:
-                            logger.info('put %s: %d.'%(barrierKey, taskCounter))
+                            logger.info('put %s: %d.', barrierKey, taskCounter)
                             self.kvs.put(barrierKey, str(taskCounter), False)
                         barrier, barrierKey = False, None
                         continue
@@ -380,7 +388,7 @@ class Feeder(Thread):
                     # Let the blender know this wasn't a real task. Shouldn't matter at this point.
                     self.blender.canceltask(t)
                     # Post the poison pill. This may trigger retirement of engines.
-                    self.kvs.put('.task', [-1, -1, -1, '!!Poison!!'])
+                    self.kvs.put('.task', [TaskIdOOB, -1, -1, CmdPoison])
                     continue
                 t, taskStreamIndex, taskRepIndex = qval
                 ts = t.strip()
@@ -458,27 +466,27 @@ class EngineBlock(Thread):
             self.start()
             
         def killTaskSubproc(self, sig, frame):
-            logger.info('Cylinder %d killing sub procs.'%(self.cylinderId))
+            logger.info('Cylinder %d killing sub procs.', self.cylinderId)
             for p in [self.ebProc, self.obProc, self.taskProc]:
                 if p and p.returncode == None:
-                    logger.info('Cylinder %d sending SIGTERM to %d.'%(self.cylinderId, p.pid))
+                    logger.info('Cylinder %d sending SIGTERM to %d.', self.cylinderId, p.pid)
                     os.killpg(p.pid, signal.SIGTERM)
-            logger.info('Cylinder %d exiting on interrupt, %d, %d.'%(self.cylinderId, self.pid, self.pgid))
+            logger.info('Cylinder %d exiting on interrupt, %d, %d.', self.cylinderId, self.pid, self.pgid)
             os._exit(0)
             
         def run(self):
             self.pgid = os.getpgid(0)
-            logger.info('Cylinder %d firing, %d, %d.'%(self.cylinderId, self.pid, self.pgid))
+            logger.info('Cylinder %d firing, %d, %d.', self.cylinderId, self.pid, self.pgid)
             baseEnv = os.environ.copy()
             baseEnv.update(self.commonEnv)
             while 1:
                 taskId, taskStreamIndex, taskRepIndex, taskCmd = self.ciq.get()
-                if -1 == taskId:
-                    logger.info('Cylinder %d stopping.'%self.cylinderId)
+                if taskId == TaskIdOOB:
+                    logger.info('Cylinder %d stopping.', self.cylinderId)
                     self.coq.put(['done', 'stopped'])
                     break
                 t0 = time.time()
-                logger.info('Cylinder %d executing %s.'%(self.cylinderId, repr([taskId, taskStreamIndex, taskRepIndex, taskCmd])))
+                logger.info('Cylinder %d executing %s.', self.cylinderId, repr([taskId, taskStreamIndex, taskRepIndex, taskCmd]))
                 baseEnv['DISBATCH_STREAM_INDEX'], baseEnv['DISBATCH_REPEAT_INDEX'], baseEnv['DISBATCH_TASKID'] = str(taskStreamIndex), str(taskRepIndex), str(taskId)
                 pfnarg = {}
                 if self.context.sysid == 'SSH': pfnarg['preexec_fn'] = os.setsid
@@ -489,7 +497,7 @@ class EngineBlock(Thread):
                 self.ebProc, self.obProc, self.taskProc = None, None, None
                 t1 = time.time()
                 ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, myHostname, tp.pid, tp.returncode, t0, t1, int(obp.stdout.read()), int(ebp.stdout.read()))            
-                logger.info('Cylinder %s completed: %s'%(self.cylinderId, ti))
+                logger.info('Cylinder %s completed: %s', self.cylinderId, ti)
                 self.coq.put(['done', ti])
 
     class Injector(Thread):
@@ -505,7 +513,7 @@ class EngineBlock(Thread):
             while 1:
                 self.throttle.acquire()
                 ti = self.kvs.get('.task')
-                logger.debug('Injector got task %s'%repr(ti))
+                logger.debug('Injector got task %s', repr(ti))
                 self.fuelline.put(['task', ti])
                 
     def __init__(self, kvsserver, context):
@@ -514,7 +522,7 @@ class EngineBlock(Thread):
         for n, cylinders in zip(context.nodes, context.cylinders):
             if n.startswith(myHostname) or myHostname.startswith(n): break
         else:
-            logger.error('Couldn\'t find %s in "%s", setting cylinder count to 1.'%(myHostname, context.nodes))
+            logger.error('Couldn\'t find %s in "%s", setting cylinder count to 1.', myHostname, context.nodes)
             cylinders = 1
 
         self.kvs = kvsstcp.KVSClient(kvsserver)
@@ -522,7 +530,7 @@ class EngineBlock(Thread):
         # Note we are using the Queue construct from the
         # mulitprocessing module---we need to coordinate between
         # independent processes.
-        self.ciq, self.coq, self.throttle = mpQueue(), mpQueue(), Semaphore(cylinders)
+        self.ciq, self.coq, self.throttle = mpQueue(), mpQueue(), BoundedSemaphore(cylinders)
         self.Injector(kvsserver, self.throttle, self.coq)
         self.cylinders = [self.Cylinder(context, self.commonEnv, self.ciq, self.coq, x) for x in range(cylinders)]
         self.start()
@@ -531,7 +539,7 @@ class EngineBlock(Thread):
         inFlight, liveCylinders = 0, len(self.cylinders)
         while liveCylinders:
             tag, o = self.coq.get()
-            logger.info('Run loop: %d %d %s %s'%(inFlight, liveCylinders, tag, repr(o)))
+            logger.info('Run loop: %d %d %s %s', inFlight, liveCylinders, tag, repr(o))
             if tag == 'done':
                 inFlight -= 1
                 if o != 'stopped':
@@ -540,12 +548,17 @@ class EngineBlock(Thread):
                 else:
                     liveCylinders -= 1
             elif tag == 'task':
-                if o[0] == -1: self.kvs.put('.task', o)
+                # This is a control message. The default at the moment
+                # is to put it back so other engines will see it. In
+                # the future we may have additional codings, perhaps
+                # ones that shouldn't auto propagate, so this sort of
+                # test will become a bit more complicated.
+                if o[0] == TaskIdOOB: self.kvs.put('.task', o)
                 self.ciq.put(o)
                 inFlight += 1
             else:
-                logger.error('Unknown cylinder input tag: "%s" (%s)'%(tag, repr(o)))
-        self.kvs.put('.finished task', TaskInfo(-1, -1, -1, '!!Retire Me!!', myHostname, -1, 0, 0, 0, 0, 0))
+                logger.error('Unknown cylinder input tag: "%s" (%s)', tag, repr(o))
+        self.kvs.put('.finished task', TaskInfo(TaskIdOOB, -1, -1, CmdRetire, myHostname, -1, 0, 0, 0, 0, 0))
 
 # Fail safe: if we lose KVS connectivity (or someone binds the
 # ".shutdown" key), we kill the engine.
@@ -569,10 +582,10 @@ class Deadman(Thread):
             if c.is_alive():
                 nap = True
                 try:
-                    logger.info('Deadman terminating %d'%c.pid)
+                    logger.info('Deadman terminating %d', c.pid)
                     os.kill(c.pid, signal.SIGTERM)
                 except Exception, e:
-                    logger.info('Deadman ignoring "%s" while terminating %d'%(e, c.pid))
+                    logger.info('Deadman ignoring "%s" while terminating %d', e, c.pid)
         if nap:
             logger.info('Deadman saw live processes.')
             time.sleep(5)
@@ -583,12 +596,14 @@ def engine(kvsserver, context):
     import random
     time.sleep(random.random()*5.0)
     e = EngineBlock(kvsserver, context)
-    d = Deadman(kvsserver, e, os.getpid())
+    d = Deadman(kvsserver, e, myPid)
     e.join()
     logger.info('Engine exiting normally.')
 
 if '__main__' == __name__:
     import argparse
+
+    sys.setcheckinterval(1000000)
 
     if len(sys.argv) > 1 and sys.argv[1] == '--engine':
         argp = argparse.ArgumentParser(description='Task execution engine.')
@@ -606,7 +621,7 @@ if '__main__' == __name__:
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
         lconf['filename'] = '%s_%s_%s_engine.log'%('disBatch', context.jobid, myHostname)
         logging.basicConfig(**lconf)
-        logger.info('Starting engine (%d) on %s in %s.'%(os.getpid(), myHostname, os.getcwd()))
+        logger.info('Starting engine (%d) on %s in %s.', myPid, myHostname, os.getcwd())
         engine(args.kvsserver, context)
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
@@ -644,7 +659,7 @@ if '__main__' == __name__:
             lconf['filename'] = '%s_%s_log.txt'%('disBatch', context.jobid)
         logging.basicConfig(**lconf)
 
-        logger.info('Starting feeder (%d) on %s in %s.'%(os.getpid(), myHostname, os.getcwd()))
+        logger.info('Starting feeder (%d) on %s in %s.', myPid, myHostname, os.getcwd())
         logger.info('Context: %s', context)
 
         #TODO: Resist rush to judgment. Could we, for example, want to have tasks from a file, but reporting via kvs?
