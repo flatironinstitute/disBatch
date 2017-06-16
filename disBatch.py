@@ -310,6 +310,7 @@ class Feeder(Thread):
 
         self.kvs = kvsstcp.KVSClient(kvsserver)
         self.shutdown = False
+        self.status = None
         self.start()
 
     def sendNotification(self, finished, statusfo, statusfolast):
@@ -325,9 +326,11 @@ class Feeder(Thread):
         s.sendmail([self.mailTo], [self.mailTo], msg.as_string())
 
     def updateStatus(self, **args):
+        if args == self.status: return
         # Make changes visible via KVS.
         self.kvs.get('DisBatch status', False)
         self.kvs.put('DisBatch status', repr(args), False)
+        self.status = args
 
     def run(self):
         totalSlots = sum(self.context.cylinders)
