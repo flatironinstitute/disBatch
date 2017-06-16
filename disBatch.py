@@ -23,15 +23,16 @@ TaskIdOOB = -1
 CmdPoison = '!!Poison!!'
 CmdRetire = '!!Retire Me!!'
 
-ScriptPath = __file__
-sys.path.append(os.path.dirname(ScriptPath))
+ScriptPath = sys.argv[0] or __file__
+if not ScriptPath.startswith("/tmp/"):
+    sys.path.append(os.path.dirname(ScriptPath))
 import kvsstcp
 
 def isHostSelf(host):
     return (host == myHostname or
             socket.getfqdn(host) == myFQDN)
     # Could also just use hostnames and compare up to trailing dots:
-           #host.startsWith(myHostname+'.') or myHostname.startswith(host+'.')
+           #host.startswith(myHostname+'.') or myHostname.startswith(host+'.')
 
 class BatchContext(object):
     def __init__(self, sysid, jobid, nodes, cylinders):
