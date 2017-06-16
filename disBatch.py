@@ -12,11 +12,11 @@ myFQDN = socket.getfqdn(myHostname)
 myPid = os.getpid()
 
 dbcomment = re.compile('^\s*(#|$)')
-dbbarrier = re.compile('^#DISBATCH BARRIER(?: ([^\n]+)?)?$', re.I)
+dbbarrier = re.compile('^#DISBATCH BARRIER(?: (.+)?)?$', re.I)
 # would it make sense to allow an (optional) command after the repeat?
-dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>[^\n]+))?\s*$', re.I)
-dbprefix  = re.compile('^#DISBATCH PREFIX ([^\n]+)$', re.I)
-dbsuffix  = re.compile('^#DISBATCH SUFFIX ([^\n]+)$', re.I)
+dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>.+))?\s*$', re.I)
+dbprefix  = re.compile('^#DISBATCH PREFIX (.*)$', re.I)
+dbsuffix  = re.compile('^#DISBATCH SUFFIX (.*)$', re.I)
 
 # Special ID for "out of band" task events
 TaskIdOOB = -1
@@ -235,47 +235,54 @@ def taskGenerator(tasks):
 
         logger.debug('Task: %s', t)
 
-        # Remove any trailing newline (but avoid stripping any other whitespace)
-        # This allows tasks submitted through kvs with or without newlines or from files (always with newlines)
-        t = t.rstrip('\n')
+        # Split on newlines.
+        #
+        # This allows tasks submitted through kvs with or without newlines,
+        # including multiple tasks per item, or from files (always with single
+        # trailing newline).
+        #
+        # Note that multiple lines in the same item get the same streamIndex,
+        # but this shouldn't be a problem.  (Alternatively could increment tsx
+        # inside this loop instead.)
+        for t in t.splitlines():
 
-        if t.startswith('#DISBATCH '):
-            m = dbprefix.match(t)
-            if m:
-                prefix = m.group(1)
-                continue
-            m = dbsuffix.match(t)
-            if m:
-                suffix = m.group(1)
-                continue
-            m = dbrepeat.match(t)
-            if m:
-                repeats, rx, step = int(m.group('repeat')), 0, 1
-                g = m.group('start')
-                if g: rx = int(g)
-                g = m.group('step')
-                if g: step = int(g)
-                logger.info('Processing repeat: %d %d %d', repeats, rx, step)
-                cmd = prefix + (m.group('command') or '') + suffix
-                while repeats > 0:
-                    yield TaskInfo(taskCounter, tsx, rx, cmd)
+            if t.startswith('#DISBATCH '):
+                m = dbprefix.match(t)
+                if m:
+                    prefix = m.group(1)
+                    continue
+                m = dbsuffix.match(t)
+                if m:
+                    suffix = m.group(1)
+                    continue
+                m = dbrepeat.match(t)
+                if m:
+                    repeats, rx, step = int(m.group('repeat')), 0, 1
+                    g = m.group('start')
+                    if g: rx = int(g)
+                    g = m.group('step')
+                    if g: step = int(g)
+                    logger.info('Processing repeat: %d %d %d', repeats, rx, step)
+                    cmd = prefix + (m.group('command') or '') + suffix
+                    while repeats > 0:
+                        yield TaskInfo(taskCounter, tsx, rx, cmd)
+                        taskCounter += 1
+                        rx += step
+                        repeats -= 1
+                    continue
+                m = dbbarrier.match(t)
+                if m:
+                    yield BarrierTask(taskCounter, tsx, -1, t, m.group(1))
                     taskCounter += 1
-                    rx += step
-                    repeats -= 1
-                continue
-            m = dbbarrier.match(t)
-            if m:
-                yield BarrierTask(taskCounter, tsx, -1, t, m.group(1))
-                taskCounter += 1
-                continue
-            logger.error('Unknown #DISBATCH directive: %s', t)
+                    continue
+                logger.error('Unknown #DISBATCH directive: %s', t)
 
-        if dbcomment.match(t):
-            # Comment or empty line, ignore
-            continue
+            if dbcomment.match(t):
+                # Comment or empty line, ignore
+                continue
 
-        yield TaskInfo(taskCounter, tsx, -1, prefix + t + suffix)
-        taskCounter += 1
+            yield TaskInfo(taskCounter, tsx, -1, prefix + t + suffix)
+            taskCounter += 1
 
     logger.info('Processed %d tasks.', taskCounter)
 
