@@ -698,4 +698,4 @@ if '__main__' == __name__:
         f = Feeder(kvsserver, context, args.mailFreq, args.mailTo, taskSource, trackResults)
         f.join()
 
-        if kvsst: kvsst.server.shutdown()
+        if kvsst: kvsst.shutdown()
