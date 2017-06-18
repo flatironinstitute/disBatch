@@ -10,10 +10,11 @@ from threading import BoundedSemaphore, Thread
 myHostname = socket.gethostname()
 myPid = os.getpid()
 
-dbbarrier = re.compile('^#DISBATCH BARRIER ?([^\n]+)?\n', re.I)
-dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(\s+start\s+(?P<start>[0-9]+))?(\s+step\s+(?P<step>[0-9]+))?\s*\n', re.I)
-dbprefix  = re.compile('^#DISBATCH PREFIX ([^\n]+)\n', re.I)
-dbsuffix  = re.compile('^#DISBATCH SUFFIX ([^\n]+)\n', re.I)
+dbbarrier = re.compile('^#DISBATCH BARRIER(?: (.+)?)?$', re.I)
+dbcomment = re.compile('^\s*(#|$)')
+dbprefix  = re.compile('^#DISBATCH PREFIX (.*)$', re.I)
+dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>.+))?\s*$', re.I)
+dbsuffix  = re.compile('^#DISBATCH SUFFIX (.*)$', re.I)
 
 # Special ID for "out of band" task events
 TaskIdOOB = -1
@@ -35,7 +36,7 @@ class BatchContext(object):
         return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\nLaunch function: %s\n'%(self.sysid, self.jobid, self.nodes, self.cylinders, repr(self.launchFunc))
 
 class TaskInfo(object):
-    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host, pid, returncode, start, end, outbytes, errbytes):
+    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
         self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.host, self.pid, self.returncode, self.start, self.end, self.outbytes, self.errbytes = taskId, taskStreamIndex, taskRepIndex, taskCmd, host, pid, returncode, start, end, outbytes, errbytes
 
     def __str__(self):
@@ -45,7 +46,12 @@ class TaskInfo(object):
         if self.errbytes: flags[2] = 'E'
         flags = ''.join(flags)
         return '\t'.join([str(x) for x in [flags, self.taskId, self.taskStreamIndex, self.taskRepIndex, self.host, self.pid, self.returncode, self.end - self.start, self.start, self.end, self.outbytes, self.errbytes, repr(self.taskCmd)]])
-                         
+
+class BarrierTask(TaskInfo):
+    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, key):
+        super(BarrierTask, self).__init__(taskId, taskStreamIndex, taskRepIndex, taskCmd, myHostname, myPid)
+        self.key = key
+
 # Convert nodelist format (slurm specific?) to an expanded list of nodes.
 #    nl     => hosts[,nl]
 #    hosts  => prefix[\[ranges\]]
@@ -193,101 +199,104 @@ class KVSTaskSource(object):
             raise StopIteration
         return t
 
-# Blend two potentially blocking streams (the stream of completed
-# tasks and the stream of new ones) into one stream, enabling the
-# feeder to wait for either kind of event.
-#
-# In principle, we could have an unending stream of tasks---in which
-# case, the user explicitly cancels the job when he's seen enough---so
-# the blender must consume tasks at a measured pace: just one task
-# each time a cylinder becomes available.
-class Blender(object):
-    def __init__(self, kvsserver, cylinders, tasks, trackResults):
-        class FinishedTask(Thread):
-            def __init__(self, bq, kvsserver, taskSlots):
-                Thread.__init__(self, name='FinishedTask')
-                self.daemon = True
-                self.bq = bq
-                self.kvs = kvsstcp.KVSClient(kvsserver)
-                self.tasks = tasks
-                self.taskSlots = taskSlots
-                self.trackResults = trackResults
-                self.start()
-            
-            def run(self):
-                while 1:
-                    ft = self.kvs.get('.finished task')
-                    if ft.taskId != TaskIdOOB:
-                        if self.trackResults: self.kvs.put(self.tasks.resultkey%ft.taskId, str(ft), False)
-                        logger.debug('releasing task slot.')
-                        self.taskSlots.release()
-                    self.bq.put(('finished', ft))
+# Given a task source (generating task command lines), parse the lines and
+# produce a TaskInfo generator.
+def taskGenerator(tasks):
+    tsx = 0 # "line number" of current task
+    taskCounter = 0 # next taskId
+    prefix = suffix = ''
 
-        class NewTask(Thread):
-            def __init__(self, bq, taskSource, taskSlots):
-                Thread.__init__(self, name='NewTask')
-                self.daemon = True
-                self.bq = bq
-                self.tasks = self.taskStream(taskSource)
-                self.taskSlots = taskSlots
-                self.start()
-            
-            def taskStream(self, taskSource):
-                repeats, tsx = 0, 0
-                while 1:
-                    if 0 == repeats:
-                        t = taskSource.next() # StopIteration will be caught by invoker.
-                        tsx += 1
-                        m = dbrepeat.match(t)
-                        if not m:
-                            repeats, rx, step = 1, 0, 1
-                        else:
-                            t = '#DISBATCH REPEAT SPACER' # command consists entirely of prefix and suffix.
-                            repeats, rx, step = int(m.group('repeat')), 0, 1
-                            if 0 == repeats: continnue
-                            g = m.group('start')
-                            if g: rx = int(g)
-                            g = m.group('step')
-                            if g: step = int(g)
-                            logger.info('Processing repeat: %d %d %d'%(repeats, rx, step))
-                    yield (t, tsx, rx)
-                    repeats -= 1
-                    rx += step
-                    
-            def run(self):
-                while 1:
-                    logger.debug('claiming task slot.')
-                    self.taskSlots.acquire()
-                    logger.debug('claimed task slot.')
-                    try:
-                        t = self.tasks.next()
-                        self.bq.put(('new', t))
-                    except StopIteration:
-                        self.bq.put(('new', None))
-                        break
+    while 1:
+        try:
+            t = tasks.next()
+            tsx += 1
+        except StopIteration:
+            # Signals there will be no more tasks.
+            logger.info('Read %d tasks.', taskCounter)
+            break
 
-        self.queue = Queue()
-        self.taskSlots = BoundedSemaphore(cylinders)
-        self.ft = FinishedTask(self.queue, kvsserver, self.taskSlots)
-        self.tt = NewTask(self.queue, tasks, self.taskSlots)
+        logger.debug('Task: %s', t)
 
-    def next(self): return self.queue.get()
+        # Split on newlines.
+        #
+        # This allows tasks submitted through kvs with or without newlines,
+        # including multiple tasks per item, or from files (always with single
+        # trailing newline).
+        #
+        # Note that multiple lines in the same item get the same streamIndex,
+        # but this shouldn't be a problem.  (Alternatively could increment tsx
+        # inside this loop instead.)
+        for t in t.splitlines():
 
-    def canceltask(self, t):
-        logger.debug('releasing task slot.')
-        self.taskSlots.release()
+            if t.startswith('#DISBATCH '):
+                m = dbprefix.match(t)
+                if m:
+                    prefix = m.group(1)
+                    continue
+                m = dbsuffix.match(t)
+                if m:
+                    suffix = m.group(1)
+                    continue
+                m = dbrepeat.match(t)
+                if m:
+                    repeats, rx, step = int(m.group('repeat')), 0, 1
+                    g = m.group('start')
+                    if g: rx = int(g)
+                    g = m.group('step')
+                    if g: step = int(g)
+                    logger.info('Processing repeat: %d %d %d', repeats, rx, step)
+                    cmd = prefix + (m.group('command') or '') + suffix
+                    while repeats > 0:
+                        yield TaskInfo(taskCounter, tsx, rx, cmd)
+                        taskCounter += 1
+                        rx += step
+                        repeats -= 1
+                    continue
+                m = dbbarrier.match(t)
+                if m:
+                    yield BarrierTask(taskCounter, tsx, -1, t, m.group(1))
+                    taskCounter += 1
+                    continue
+                logger.error('Unknown #DISBATCH directive: %s', t)
+
+            if dbcomment.match(t):
+                # Comment or empty line, ignore
+                continue
+
+            yield TaskInfo(taskCounter, tsx, -1, prefix + t + suffix)
+            taskCounter += 1
+
+    logger.info('Processed %d tasks.', taskCounter)
 
 # Main control loop that sends new tasks to the execution engines and
 # processes completed ones.
 class Feeder(Thread):
     def __init__(self, kvsserver, context, mailFreq, mailTo, tasks, trackResults):
+
+        # Convert the '.finished task' kvs into a simple Queue
+        class FinishedTask(Thread):
+            def __init__(self):
+                Thread.__init__(self, name='FinishedTask')
+                self.daemon = True
+                self.queue = Queue()
+                self.kvs = kvsstcp.KVSClient(kvsserver)
+                self.start()
+
+            def run(self):
+                while 1:
+                    self.queue.put(self.kvs.get('.finished task'))
+
         Thread.__init__(self, name='Feeder')
         self.daemon = True
         self.context = context
         self.mailFreq = mailFreq
         self.mailTo = mailTo
-        self.tasksname = tasks.name
-        self.blender = Blender(kvsserver, sum(context.cylinders), tasks, trackResults)
+        self.tasks = tasks
+        self.trackResults = trackResults
+
+        self.finished = FinishedTask()
+        self.taskGenerator = taskGenerator(tasks)
+
         self.kvs = kvsstcp.KVSClient(kvsserver)
         self.shutdown = False
         self.start()
@@ -297,7 +306,7 @@ class Feeder(Thread):
         from email.mime.text import MIMEText
         statusfo.seek(statusfolast)
         msg = MIMEText('Last %d:\n\n'%self.mailFreq + statusfo.read())
-        msg['Subject'] = '%s (%s) has completed %d tasks.'%(self.tasksname, self.context.jobid, finished)
+        msg['Subject'] = '%s (%s) has completed %d tasks.'%(self.tasks.name, self.context.jobid, finished)
         msg['From'] = self.mailTo
         msg['To'] = self.mailTo
         s = smtplib.SMTP()
@@ -305,49 +314,51 @@ class Feeder(Thread):
         s.sendmail([self.mailTo], [self.mailTo], msg.as_string())
 
     def run(self):
-        def postBarrierFinished():
-            # post a task finished for the current barrier, just like any other task.
-            self.kvs.put('.finished task', TaskInfo(barriertc, barriersx, barrierrx, barrierText, myHostname, mypid, 0, barrierStart, time.time(), 0, 0))
+        totalSlots = sum(self.context.cylinders)
+        more = True
+        active = 0 # number of currently executing (unfinished) tasks (must be <= totalSlots)
+        barrier = None # current BarrierTask or None
+        failed, finished = 0, 0
 
-        mypid = os.getpid()
-        barrier, barrierKey, more, prefix, suffix = False, None, True, '', ''
-        failed, finished, taskCounter = 0, 0, 0
-        nametasks = os.path.basename(self.tasksname)
+        nametasks = os.path.basename(self.tasks.name)
         failures = '%s_%s_failed.txt'%(nametasks, self.context.jobid)
         statusfolast, statusfo = 0, open('%s_%s_status.txt'%(nametasks, self.context.jobid), 'a+')
 
         self.kvs.put('.common env', {'DISBATCH_JOBID': str(self.context.jobid), 'DISBATCH_NAMETASKS': nametasks}) #TODO: Add more later?
-        waiters, updatedStatus = [], False
+        updatedStatus = False
         self.kvs.put('DisBatch status', '<Starting...>', False)
-        while more or finished < taskCounter:
-            logger.info('Feeder loop: %s.', (more, finished, taskCounter, len(waiters), self.shutdown))
+        while 1:
+            logger.info('Feeder loop: %s.', (more, finished, active, self.shutdown))
             if self.shutdown: break
 
             # Make changes visible via KVS.
             if updatedStatus:
                 self.kvs.get('DisBatch status', False)
-                self.kvs.put('DisBatch status', '{' + ', '.join(['"%s": %s'%(x, eval(x)) for x in ['more', 'barrier', 'taskCounter', 'finished', 'failed']]) + '}', False)
+                self.kvs.put('DisBatch status', '{' + ', '.join(['"%s": %s'%(x, eval(x)) for x in ['more', 'barrier', 'active', 'finished', 'failed']]) + '}', False)
                 updatedStatus = False
 
-            if not barrier and waiters:
-                # We must have exited a barrier, drain waiters.
-                qtype, qval = waiters.pop(0)
-            else:
-                qtype, qval = self.blender.next()
+            if active:
+                # Deal with finished tasks, waiting if necessary
+                # Block if we're waiting at a barrier, at end, or there are no free slots
+                try:
+                    tinfo = self.finished.queue.get(barrier or not more or active >= totalSlots)
+                except Empty:
+                    tinfo = None
+                if tinfo:
+                    logger.debug('Finished task: %s', tinfo)
+                    if tinfo.taskId == TaskIdOOB:
+                        # A finished tasks with id -1 indicates some sort of OOB control message.
+                        if tinfo.taskCmd == CmdRetire:
+                            self.context.retireFunc(self.context, tinfo.host)
+                        else:
+                            logger.error('Unrecognized oob task: %(s)', tinfo)
+                        continue
 
-            logger.debug('Feeder: %s', (qtype, qval))
-            if qtype == 'finished':
-                tinfo = qval
-                if tinfo.taskId == TaskIdOOB:
-                    # A finished task with id TaskIDOOB indicates some sort of OOB control message.
-                    if tinfo.taskCmd == CmdRetire:
-                        context.retireFunc(context, tinfo.host)
-                    else:
-                        logger.error('Unrecognized oob task: %(s)'%tinfo)
-                else:
-                    finished += 1
                     updatedStatus = True
-                    logger.info('Finished task: %s', tinfo)
+                    if self.trackResults: self.kvs.put(self.tasks.resultkey%tinfo.taskId, str(tinfo), False)
+                    finished += 1
+                    logger.debug('releasing task slot.')
+                    active -= 1
                     statusfo.write(str(tinfo)+'\n')
                     statusfo.flush()
                     if self.mailTo and finished%self.mailFreq == 0:
@@ -361,86 +372,61 @@ class Feeder(Thread):
                             statusfo.seek(0, 2)
                     if tinfo.returncode:
                         failed += 1
-                        open(failures, 'a').write(tinfo.taskCmd+'\n')
-                    if barrier and finished == (taskCounter - 1):
-                        # Completed all tasks up to, but not including the barriers. Now completed the barrier.
-                        logger.info('Finishing barrier.')
-                        postBarrierFinished()
-                        continue
-                    if barrier and finished == taskCounter:
+                        with open(failures, 'a') as f:
+                            if tinfo.taskRepIndex >= 0:
+                                f.write("#DISBATCH REPEAT 1 start %d " % tinfo.taskRepIndex)
+                            f.write(tinfo.taskCmd+'\n')
+                    if barrier and tinfo.taskId == barrier.taskId:
                         # Complete the barrier task itself, exit barrier mode.
                         logger.info('Finished barrier.')
                         # If user specified a KVS key, use it to signal the barrier is done.
-                        if barrierKey:
-                            logger.info('put %s: %d.', barrierKey, taskCounter)
-                            self.kvs.put(barrierKey, str(taskCounter), False)
-                        barrier, barrierKey = False, None
-                        continue
-            elif qtype == 'new':
-                if barrier:
-                    # While at a barrier, queue up tasks until will pass it.
-                    waiters.append((qtype, qval))
+                        if barrier.key:
+                            logger.info('put %s: %d.', barrier.key, barrier.taskId)
+                            self.kvs.put(barrier.key, str(barrier.taskId), False)
+                        barrier = None
                     continue
-                if None == qval:
-                    # Signals there will be no more tasks.
-                    logger.info('Read %d tasks.', taskCounter)
-                    more = False
-                    # Let the blender know this wasn't a real task. Shouldn't matter at this point.
-                    self.blender.canceltask(t)
-                    # Post the poison pill. This may trigger retirement of engines.
-                    self.kvs.put('.task', [TaskIdOOB, -1, -1, CmdPoison])
-                    continue
-                t, taskStreamIndex, taskRepIndex = qval
-                ts = t.strip()
-
-                if not ts or (ts[0] == '#' and not ts.startswith('#DISBATCH ')):
-                    # Comment line, tell the blender this wasn't real.
-                    self.blender.canceltask(t)
-                    continue
-                # Note: intentionally using non stripped line here
-                m = dbprefix.match(t)
-                if m:
-                    prefix = m.group(1)
-                    # Prefix line, tell the blender this wasn't real.
-                    self.blender.canceltask(t)
-                    continue
-                m = dbsuffix.match(t)
-                if m:
-                    suffix = m.group(1)
-                    # Suffix line, tell the blender this wasn't real.
-                    self.blender.canceltask(t)
-                    continue
-
-                # At this point, we have a task (in particular, barriers are a kind of task).
-                mytc = taskCounter
-                taskCounter += 1
-                updatedStatus = True
-
-                m = dbbarrier.match(t)
-                if m:
-                    # Enter a barrier. We'll exit when all tasks
-                    # issued to this point have completed.
-                    barrier = True
-                    barriertc, barriersx, barrierrx = mytc, taskStreamIndex, taskRepIndex
-                    barrierKey = m.group(1)
-                    barrierStart = time.time()
-                    barrierText = t[:-1]
-                    logger.info('Entering barrier (key is %s).', repr(barrierKey))
-                    if finished == (taskCounter - 1):
-                        # This barrier immediately follows the previous one, so were already done.
-                        logger.info('Finishing quick barrier.')
-                        postBarrierFinished()
-                    continue
-
-                if t == '#DISBATCH REPEAT SPACER': ts = ''
-
-                tinfo = [mytc, taskStreamIndex, taskRepIndex, prefix + ts + suffix] 
-                logger.info('Posting task: %r', tinfo)
-                self.kvs.put('.task', tinfo)
             else:
-                raise Exception('Unknown task queue type: %s.'%(repr((qtype, qval))))
-        logger.info('Processed %d tasks.', taskCounter)
+                # Nothing running
+                # See if we've completed a barrier
+                if barrier:
+                    # Completed all tasks up to, but not including the barrier. Now complete the barrier.
+                    logger.info('Finishing barrier.')
+                    # activate the barrier
+                    active += 1
+                    # post a task finished for the current barrier, just like any other task.
+                    barrier.end = time.time()
+                    self.kvs.put('.finished task', barrier)
+                    continue
+                if not more:
+                    # All done
+                    break
+
+            # Request the next task
+            try:
+                tinfo = self.taskGenerator.next()
+            except StopIteration:
+                more = False
+                # Post the poison pill. This may trigger retirement of engines.
+                self.kvs.put('.task', [TaskIdOOB, -1, -1, CmdPoison])
+                continue
+
+            if isinstance(tinfo, BarrierTask):
+                # Enter a barrier. We'll exit when all tasks
+                # issued to this point have completed.
+                barrier = tinfo
+                barrier.start = time.time()
+                logger.info('Entering barrier (key is %s).', repr(barrier.key))
+                continue
+
+            # At this point, we have a task
+            active += 1
+            tinfo = [tinfo.taskId, tinfo.taskStreamIndex, tinfo.taskRepIndex, tinfo.taskCmd]
+            logger.info('Posting task: %r', tinfo)
+            self.kvs.put('.task', tinfo)
+
         statusfo.close()
+        self.kvs.close()
+
 
 # Once we know the nodes participating in the run, we start an engine
 # on each node. The engine in turn starts the number of cylinders
@@ -558,7 +544,7 @@ class EngineBlock(Thread):
                 inFlight += 1
             else:
                 logger.error('Unknown cylinder input tag: "%s" (%s)', tag, repr(o))
-        self.kvs.put('.finished task', TaskInfo(TaskIdOOB, -1, -1, CmdRetire, myHostname, -1, 0, 0, 0, 0, 0))
+        self.kvs.put('.finished task', TaskInfo(TaskIdOOB, -1, -1, CmdRetire, myHostname))
 
 # Fail safe: if we lose KVS connectivity (or someone binds the
 # ".shutdown" key), we kill the engine.
