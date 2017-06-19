@@ -12,11 +12,13 @@ myHostname = socket.gethostname()
 myFQDN = socket.getfqdn(myHostname)
 myPid = os.getpid()
 
+# Note that even though these are case insensitive, only upper-case '#DISBATCH' prefixes are matched
 dbbarrier = re.compile('^#DISBATCH BARRIER(?: (.+)?)?$', re.I)
 dbcomment = re.compile('^\s*(#|$)')
 dbprefix  = re.compile('^#DISBATCH PREFIX (.*)$', re.I)
 dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>.+))?\s*$', re.I)
 dbsuffix  = re.compile('^#DISBATCH SUFFIX (.*)$', re.I)
+dbpernode = re.compile('^#DISBATCH PERNODE (.*)$', re.I)
 
 # Special ID for "out of band" task events
 TaskIdOOB = -1
@@ -216,7 +218,7 @@ class KVSTaskSource(object):
 
 # Given a task source (generating task command lines), parse the lines and
 # produce a TaskInfo generator.
-def taskGenerator(tasks):
+def taskGenerator(tasks, context):
     tsx = 0 # "line number" of current task
     taskCounter = 0 # next taskId
     prefix = suffix = ''
@@ -267,6 +269,13 @@ def taskGenerator(tasks):
                         rx += step
                         repeats -= 1
                     continue
+                m = dbpernode.match(t)
+                if m:
+                    cmd = m.group(1)
+                    for rx, node in enumerate(context.nodes):
+                        yield TaskInfo(taskCounter, tsx, rx, prefix + cmd + suffix, node)
+                        taskCounter += 1
+                    continue
                 m = dbbarrier.match(t)
                 if m:
                     yield BarrierTask(taskCounter, tsx, -1, t, m.group(1))
@@ -310,7 +319,7 @@ class Feeder(Thread):
         self.trackResults = trackResults
 
         self.finished = FinishedTask()
-        self.taskGenerator = taskGenerator(tasks)
+        self.taskGenerator = taskGenerator(tasks, context)
 
         self.kvs = kvsstcp.KVSClient(kvsserver)
         self.shutdown = False
@@ -443,9 +452,8 @@ class Feeder(Thread):
 
             # At this point, we have a task
             active += 1
-            tinfo = [tinfo.taskId, tinfo.taskStreamIndex, tinfo.taskRepIndex, tinfo.taskCmd]
-            logger.info('Posting task: %r', tinfo)
-            self.kvs.put('.task', tinfo)
+            logger.info('Posting task: %s', tinfo)
+            self.kvs.put('.node.%s'%tinfo.host if tinfo.host else '.task', [tinfo.taskId, tinfo.taskStreamIndex, tinfo.taskRepIndex, tinfo.taskCmd])
 
         statusfo.close()
         self.kvs.close()
@@ -511,18 +519,19 @@ class EngineBlock(Thread):
                 self.coq.put(['done', ti])
 
     class Injector(Thread):
-        def __init__(self, kvsserver, throttle, fuelline):
+        def __init__(self, kvsserver, key, throttle, fuelline):
             Thread.__init__(self, name='Injector')
             self.daemon = True
             self.kvs = kvsstcp.KVSClient(kvsserver)
+            self.key = key
             self.throttle = throttle
             self.fuelline = fuelline
             self.start()
 
         def run(self):
             while 1:
-                self.throttle.acquire()
-                ti = self.kvs.get('.task')
+                if self.throttle: self.throttle.acquire()
+                ti = self.kvs.get(self.key)
                 logger.debug('Injector got task %s', repr(ti))
                 self.fuelline.put(['task', ti])
 
@@ -530,10 +539,13 @@ class EngineBlock(Thread):
         Thread.__init__(self, name='EngineBlock')
         self.daemon = True
         for n, cylinders in zip(context.nodes, context.cylinders):
-            if isHostSelf(n): break
+            if isHostSelf(n):
+                self.node = n
+                break
         else:
             logger.error('Couldn\'t find %s in "%s", setting cylinder count to 1.', myHostname, context.nodes)
             cylinders = 1
+            self.node = None
 
         self.kvs = kvsstcp.KVSClient(kvsserver)
         self.commonEnv = self.kvs.view('.common env')
@@ -541,7 +553,9 @@ class EngineBlock(Thread):
         # mulitprocessing module---we need to coordinate between
         # independent processes.
         self.ciq, self.coq, self.throttle = mpQueue(), mpQueue(), BoundedSemaphore(cylinders)
-        self.Injector(kvsserver, self.throttle, self.coq)
+        if self.node:
+            self.Injector(kvsserver, ".node.%s" % self.node, None, self.coq)
+        self.Injector(kvsserver, ".task", self.throttle, self.coq)
         self.cylinders = [self.Cylinder(context, self.commonEnv, self.ciq, self.coq, x) for x in range(cylinders)]
         self.start()
 
