@@ -8,8 +8,7 @@ from multiprocessing import Process as mpProcess, Queue as mpQueue
 from Queue import Queue, Empty
 from threading import BoundedSemaphore, Thread
 
-myHostname = socket.gethostname()
-myFQDN = socket.getfqdn(myHostname)
+myHostname = socket.gethostname().split('.', 1)[0]
 myPid = os.getpid()
 
 # Note that even though these are case insensitive, only upper-case '#DISBATCH' prefixes are matched
@@ -31,10 +30,7 @@ if not ScriptPath.startswith("/tmp/"):
 import kvsstcp
 
 def isHostSelf(host):
-    return (host == myHostname or
-            socket.getfqdn(host) == myFQDN)
-    # Could also just use hostnames and compare up to trailing dots:
-           #host.startswith(myHostname+'.') or myHostname.startswith(host+'.')
+    return host == myHostname or host.startswith(myHostname+'.')
 
 class BatchContext(object):
     def __init__(self, sysid, jobid, nodes, cylinders):
