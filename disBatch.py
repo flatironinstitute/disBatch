@@ -44,7 +44,9 @@ class BatchContext(object):
         return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
 
     def launch(self, kvsserver):
-        raise Exception('BatchContext.launch: not implemented')
+        kvs = kvsstcp.KVSClient(kvsserver)
+        kvs.put('.context', self)
+        kvs.close()
 
     def retire(self, node):
         logger.info('Retiring node "%s": %s', node, 'ToDo: add clean up hook here?')
@@ -111,12 +113,10 @@ class SlurmContext(BatchContext):
         super(SlurmContext, self).__init__('SLURM', jobid, nodes, cylinders)
 
     def launch(self, kvsserver):
-        kvs = kvsstcp.KVSClient(kvsserver)
-        kvs.put('.context', self)
-        kvs.close()
+        super(SlurmContext, self).launch(kvsserver)
         # start one engine per node using the equivalent of:
         # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
-        p = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', '--bcast=/tmp/disBatch_%s_exe.tmp'%self.jobid, ScriptPath, '--engine', kvsserver])
+        SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', '--bcast=/tmp/disBatch_%s_exe.tmp'%self.jobid, ScriptPath, '--engine', kvsserver])
 
     def retire(self, node):
         if isHostSelf(node):
@@ -162,13 +162,11 @@ class SSHContext(BatchContext):
         super(SSHContext, self).__init__('SSH', jobid, nodes, cylinders)
 
     def launch(self, kvsserver):
-        kvs = kvsstcp.KVSClient(kvsserver)
-        kvs.put('.context', self)
-        kvs.close()
+        super(SSHContext, self).launch(kvsserver)
         for n in self.nodes:
             prefix = ['ssh', n]
             if isHostSelf(n): prefix = []
-            p = SUB.Popen(prefix + [ScriptPath, '--engine', kvsserver], stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w'))
+            SUB.Popen(prefix + [ScriptPath, '--engine', kvsserver], stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w'))
 
 def probeContext():
     if 'SLURM_JOBID' in os.environ: return SlurmContext()
