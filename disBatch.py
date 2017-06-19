@@ -12,11 +12,10 @@ myHostname = socket.gethostname()
 myFQDN = socket.getfqdn(myHostname)
 myPid = os.getpid()
 
-dbcomment = re.compile('^\s*(#|$)')
 dbbarrier = re.compile('^#DISBATCH BARRIER(?: (.+)?)?$', re.I)
-# would it make sense to allow an (optional) command after the repeat?
-dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>.+))?\s*$', re.I)
+dbcomment = re.compile('^\s*(#|$)')
 dbprefix  = re.compile('^#DISBATCH PREFIX (.*)$', re.I)
+dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>.+))?\s*$', re.I)
 dbsuffix  = re.compile('^#DISBATCH SUFFIX (.*)$', re.I)
 
 # Special ID for "out of band" task events
@@ -37,7 +36,6 @@ def isHostSelf(host):
 
 class BatchContext(object):
     def __init__(self, sysid, jobid, nodes, cylinders):
-        # Could make nodes => cylinders a dict since that's how it's used in EngineBlock
         self.sysid, self.jobid, self.nodes, self.cylinders = sysid, jobid, nodes, cylinders
         self.wd = os.getcwd() #TODO: Easy enough to override, but still... Is this the right place for this?
         self.retiredNodes = set()
@@ -152,7 +150,7 @@ class PBSContext(BatchContext):
 # not provide one, one will be created from the PID and epoch time.
 class SSHContext(BatchContext):
     def __init__(self):
-        jobid = os.environ.get('DISBATCH_SSH_JOBID', '%d_%.6f'%(os.getpid(), time.time()))
+        jobid = os.environ.get('DISBATCH_SSH_JOBID', '%d_%.6f'%(myPid, time.time()))
 
         cylinders, nodes = [], []
         for p in os.environ['DISBATCH_SSH_NODELIST'].split(','):
@@ -292,7 +290,7 @@ def taskGenerator(tasks):
 class Feeder(Thread):
     def __init__(self, kvsserver, context, mailFreq, mailTo, tasks, trackResults):
 
-        # Convert the '.finished task' kvs into a simple Queue
+        # Convert the '.finished task' kvs into a simple Queue (would be unnecessary if we had non-blocking kvs.get)
         class FinishedTask(Thread):
             def __init__(self):
                 Thread.__init__(self, name='FinishedTask')
@@ -361,6 +359,8 @@ class Feeder(Thread):
         while 1:
             logger.info('Feeder loop: %s.', (more, finished, active, self.shutdown))
             if self.shutdown: break
+
+            # Make changes visible via KVS.
             self.updateStatus(more = more, barrier = barrier, finished = finished, failed = failed, active = active)
 
             if active:
@@ -560,13 +560,17 @@ class EngineBlock(Thread):
                 else:
                     liveCylinders -= 1
             elif tag == 'task':
-                # Is this to "broadcast" this message to other clients?
+                # This is a control message. The default at the moment
+                # is to put it back so other engines will see it. In
+                # the future we may have additional codings, perhaps
+                # ones that shouldn't auto propagate, so this sort of
+                # test will become a bit more complicated.
                 if o[0] == TaskIdOOB: self.kvs.put('.task', o)
                 self.ciq.put(o)
                 inFlight += 1
             else:
                 logger.error('Unknown cylinder input tag: "%s" (%s)', tag, repr(o))
-        self.kvs.put('.finished task', TaskInfo(TaskIdOOB, -1, -1, CmdRetire))
+        self.kvs.put('.finished task', TaskInfo(TaskIdOOB, -1, -1, CmdRetire, myHostname))
         self.kvs.close()
 
 # Fail safe: if we lose KVS connectivity (or someone binds the

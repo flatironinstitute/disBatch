@@ -1,5 +1,5 @@
 # Note there is a space at the end of the next line.
-#DISBATCH PREFIX cd . ; 
+#DISBATCH PREFIX echo 'EDIT TASK FILE, CHANGE PREFIX DIRECTIVE TO "#DISBATCH PREFIX cd /appropriate/test/output/directory ; "' > NeedToEditTaskFile; exit ; 
 #DISBATCH SUFFIX  > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log
 
 # parathenses are important in this example so that all output is
@@ -37,18 +37,16 @@
 # leak some output
 ( echo "35 running on" $(hostname) ; date ; sleep 10 ; date ; ) ; echo 'missed some output'
 
-( echo "36 running on" $(hostname) ; date ; sleep 10 ; date ; )
-( echo "37 running on" $(hostname) ; date ; sleep 10 ; date ; )
-( echo "38 running on" $(hostname) ; date ; sleep 10 ; date ; )
-( echo "39 running on" $(hostname) ; date ; sleep 10 ; date ; )
-( echo "40 running on" $(hostname) ; date ; sleep 10 ; date ; )
-( echo "41 running on" $(hostname) ; date ; sleep 10 ; date ; )
-( echo "42 running on" $(hostname) ; date ; sleep 10 ; date ; )
 # singleton repeat
-#DISBATCH REPEAT 1 start 43 ( echo "$DISBATCH_REPEAT_INDEX running on" $(hostname) ; date ; sleep 10 ; date ; )
-
-# fail two in repeat
-#DISBATCH REPEAT 3 start 44 ( echo "$DISBATCH_REPEAT_INDEX running on" $(hostname) ; date ; sleep 10 ; date ; [[ $DISBATCH_REPEAT_INDEX -eq 45 ]] )
+#DISBATCH REPEAT 1 start 36 ( echo "$DISBATCH_REPEAT_INDEX running on" $(hostname) ; date ; sleep 10 ; date ; )
 
 # empty repeat
 #DISBATCH REPEAT 0 start 1
+
+#DISBATCH BARRIER
+#DISBATCH SUFFIX ( echo "${DISBATCH_REPEAT_INDEX} running on" $(hostname) ; date ; sleep 10 ; date ; )  > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}_${DISBATCH_REPEAT_INDEX}.log
+#DISBATCH REPEAT 7 start 37
+
+# fail two in repeat
+#DISBATCH SUFFIX  > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}_${DISBATCH_REPEAT_INDEX}.log
+#DISBATCH REPEAT 3 start 44 ( echo "$DISBATCH_REPEAT_INDEX running on" $(hostname) ; date ; sleep 10 ; date ; [[ $DISBATCH_REPEAT_INDEX -eq 46 ]] )
