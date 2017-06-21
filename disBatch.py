@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 import logging, os, re, signal, socket, subprocess as SUB, sys, time
-import cgi
+import json
 
 from multiprocessing import Process as mpProcess, Queue as mpQueue
 
@@ -361,12 +361,8 @@ class Feeder(Thread):
     def updateStatus(self, **args):
         if args == self.status: return
         # Make changes visible via KVS.
-        msg = '<html><dl>'
-        for k, v in args.iteritems():
-            msg += '<dt>%s</dt><dd>%s</dd>' % (cgi.escape(k), cgi.escape(repr(v)))
-        msg += '</dl>'
         self.kvs.get('DisBatch status', False)
-        self.kvs.put('DisBatch status', msg, False)
+        self.kvs.put('DisBatch status', json.dumps(args, default=repr), False)
         self.status = args
 
     def run(self):
