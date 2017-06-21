@@ -1,0 +1,4 @@
+[submodule "kvsstcp"]
+	path = kvsstcp
+	url = https://github.com/simonsfoundation/kvsstcp
+	branch = dylex

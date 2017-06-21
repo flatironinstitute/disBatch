@@ -24,9 +24,15 @@ TaskIdOOB = -1
 CmdPoison = '!!Poison!!'
 CmdRetire = '!!Retire Me!!'
 
-ScriptPath = sys.argv[0] or __file__
+ScriptPath = os.path.realpath(sys.argv[0] or __file__)
+PythonPath = os.environ.get('PYTHONPATH', '')
 if not ScriptPath.startswith("/tmp/"):
-    sys.path.append(os.path.dirname(ScriptPath))
+    # to find kvsstcp:
+    ScriptDir = os.path.dirname(ScriptPath)
+    sys.path.append(ScriptDir)
+    # for subprocesses:
+    PythonPath = PythonPath + ':' + ScriptDir if PythonPath else ScriptDir
+    os.environ['PYTHONPATH'] = PythonPath
 import kvsstcp
 
 def isHostSelf(host):
@@ -162,8 +168,7 @@ class SSHContext(BatchContext):
     def launch(self, kvsserver):
         super(SSHContext, self).launch(kvsserver)
         for n in self.nodes:
-            prefix = ['ssh', n]
-            if isHostSelf(n): prefix = []
+            prefix = [] if isHostSelf(n) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
             SUB.Popen(prefix + [ScriptPath, '--engine', kvsserver], stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w'))
 
 def probeContext():
