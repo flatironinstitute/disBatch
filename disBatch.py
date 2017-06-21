@@ -42,7 +42,6 @@ class BatchContext(object):
     def __init__(self, sysid, jobid, nodes, cylinders):
         self.sysid, self.jobid, self.nodes, self.cylinders = sysid, jobid, nodes, cylinders
         self.wd = os.getcwd() #TODO: Easy enough to override, but still... Is this the right place for this?
-        self.retiredNodes = set()
 
     def __str__(self):
         return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
@@ -51,9 +50,26 @@ class BatchContext(object):
         kvs = kvsstcp.KVSClient(kvsserver)
         kvs.put('.context', self)
         kvs.close()
+        self.retiredNodes = set()
 
-    def retire(self, node):
-        logger.info('Retiring node "%s": %s', node, 'ToDo: add clean up hook here?')
+    def retire(self, node, msg='ToDo: add clean up hook here?'):
+        self.retiredNodes.add(node)
+        logger.info('Retiring node "%s": %s', node, msg)
+
+    def setNode(self, node=None):
+        # This is just a fallback. Implementations should try to determine node as appropriate.
+        # Could just default to node=myHostname, but then we lose special domain-name matching
+        if not node:
+            for n in context.nodes:
+                if isHostSelf(n):
+                    node = n
+                    break
+        self.node = node
+        try:
+            self.nodeId = context.nodes.index(self.node)
+        except ValueError:
+            # Should we instead assume 0 or carry on with none?
+            raise Exception('Couldn\'t find nodeId for %s in "%s".', self.node or myHostname, context.nodes)
 
 class TaskInfo(object):
     def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
@@ -124,15 +140,18 @@ class SlurmContext(BatchContext):
 
     def retire(self, node):
         if isHostSelf(node):
-            logger.info('Refusing to retire ("%s", "%s").', node, myHostname)
+            logger.info('Refusing to retire "%s" on "%s".', node, myHostname)
         else:
-            self.retiredNodes.add(node)
+            super(SlurmContext, self).retire(node, "updating node list")
             command = ['scontrol', 'update', 'JobId=%s'%self.jobid, 'NodeList=' + ','.join([n for n in self.nodes if n not in self.retiredNodes])]
-            logger.info('Retiring node "%s": %s', node, repr(command))
+            logger.debug("Retirement: %s", repr(command))
             try:
                 SUB.check_call(command)
             except Exception, e:
                 logger.warn('Retirement planning needs improvement: %s', repr(e))
+
+    def setNode(self, node=None):
+        super(SlurmContext, self).setNode(node or os.environ.get('SLURMD_NODENAME'))
 
 #TODO:
 class GEContext(BatchContext):
@@ -169,7 +188,7 @@ class SSHContext(BatchContext):
         super(SSHContext, self).launch(kvsserver)
         for n in self.nodes:
             prefix = [] if isHostSelf(n) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
-            SUB.Popen(prefix + [ScriptPath, '--engine', kvsserver], stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w'))
+            SUB.Popen(prefix + [ScriptPath, '--engine', '-n', n, kvsserver], stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w'))
 
 def probeContext():
     if 'SLURM_JOBID' in os.environ: return SlurmContext()
@@ -480,6 +499,7 @@ class EngineBlock(Thread):
             self.daemon = True
             self.context, self.commonEnv, self.ciq, self.coq, self.cylinderId = context, commonEnv, ciq, coq, cylinderId
             self.ebProc, self.obProc, self.taskProc = None, None, None
+            # TODO generalize this into context class:
             if self.context.sysid == 'SSH': signal.signal(signal.SIGTERM, self.killTaskSubproc)
             self.start()
 
@@ -515,7 +535,7 @@ class EngineBlock(Thread):
                 self.ebProc, self.obProc, self.taskProc = None, None, None
                 t1 = time.time()
                 # should we wait for obp, ebp here?  would it be more efficient/allow more options to capture output in this process?
-                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, myHostname, tp.pid, tp.returncode, t0, t1, int(obp.stdout.read()), int(ebp.stdout.read()))
+                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, self.context.node, tp.pid, tp.returncode, t0, t1, int(obp.stdout.read()), int(ebp.stdout.read()))
                 logger.info('Cylinder %s completed: %s', self.cylinderId, ti)
                 self.coq.put(['done', ti])
 
@@ -539,14 +559,8 @@ class EngineBlock(Thread):
     def __init__(self, kvsserver, context):
         Thread.__init__(self, name='EngineBlock')
         self.daemon = True
-        for n, cylinders in zip(context.nodes, context.cylinders):
-            if isHostSelf(n):
-                self.node = n
-                break
-        else:
-            logger.error('Couldn\'t find %s in "%s", setting cylinder count to 1.', myHostname, context.nodes)
-            cylinders = 1
-            self.node = None
+        self.context = context
+        cylinders = context.cylinders[context.nodeId]
 
         self.kvs = kvsstcp.KVSClient(kvsserver)
         self.commonEnv = self.kvs.view('.common env')
@@ -554,8 +568,7 @@ class EngineBlock(Thread):
         # mulitprocessing module---we need to coordinate between
         # independent processes.
         self.ciq, self.coq, self.throttle = mpQueue(), mpQueue(), BoundedSemaphore(cylinders)
-        if self.node:
-            self.Injector(kvsserver, ".node.%s" % self.node, None, self.coq)
+        self.Injector(kvsserver, ".node.%s" % context.node, None, self.coq)
         self.Injector(kvsserver, ".task", self.throttle, self.coq)
         self.cylinders = [self.Cylinder(context, self.commonEnv, self.ciq, self.coq, x) for x in range(cylinders)]
         self.start()
@@ -583,7 +596,7 @@ class EngineBlock(Thread):
                 inFlight += 1
             else:
                 logger.error('Unknown cylinder input tag: "%s" (%s)', tag, repr(o))
-        self.kvs.put('.finished task', TaskInfo(TaskIdOOB, -1, -1, CmdRetire, myHostname))
+        self.kvs.put('.finished task', TaskInfo(TaskIdOOB, -1, -1, CmdRetire, self.context.node))
         self.kvs.close()
 
 # Fail safe: if we lose KVS connectivity (or someone binds the
@@ -638,6 +651,7 @@ if '__main__' == __name__:
     if len(sys.argv) > 1 and sys.argv[1] == '--engine':
         argp = argparse.ArgumentParser(description='Task execution engine.')
         argp.add_argument('--engine', action='store_true', help='Run in execution engine mode.')
+        argp.add_argument('-n', '--node', type=str, help='Name of this engine node.')
         argp.add_argument('kvsserver', help='Address of kvs sever used to relay data to this execution engine.')
         args = argp.parse_args()
         kvs = kvsstcp.KVSClient(args.kvsserver)
@@ -647,11 +661,12 @@ if '__main__' == __name__:
             os.chdir(context.wd)
         except Exception, e:
             print >>sys.stderr, 'Failed to change working directory to "%s".'%context.wd
+        context.setNode(args.node)
         logger = logging.getLogger('DisBatch Engine')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
-        lconf['filename'] = '%s_%s_%s_engine.log'%('disBatch', context.jobid, myHostname)
+        lconf['filename'] = '%s_%s_%s_engine.log'%('disBatch', context.jobid, context.node)
         logging.basicConfig(**lconf)
-        logger.info('Starting engine (%d) on %s in %s.', myPid, myHostname, os.getcwd())
+        logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, context.nodeId, myHostname, myPid, os.getcwd())
         engine(args.kvsserver, context)
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
