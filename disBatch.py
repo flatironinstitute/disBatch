@@ -316,20 +316,6 @@ def taskGenerator(tasks, context):
 # processes completed ones.
 class Feeder(Thread):
     def __init__(self, kvsserver, context, mailFreq, mailTo, tasks, trackResults):
-
-        # Convert the '.finished task' kvs into a simple Queue (would be unnecessary if we had non-blocking kvs.get)
-        class FinishedTask(Thread):
-            def __init__(self):
-                Thread.__init__(self, name='FinishedTask')
-                self.daemon = True
-                self.queue = Queue()
-                self.kvs = kvsstcp.KVSClient(kvsserver)
-                self.start()
-
-            def run(self):
-                while 1:
-                    self.queue.put(self.kvs.get('.finished task'))
-
         Thread.__init__(self, name='Feeder')
         self.daemon = True
         self.context = context
@@ -338,8 +324,9 @@ class Feeder(Thread):
         self.tasks = tasks
         self.trackResults = trackResults
 
-        self.finished = FinishedTask()
         self.taskGenerator = taskGenerator(tasks, context)
+        # Used to wait (non-blocking) on .finished task:
+        self.kvsWait = kvsstcp.KVSClient(kvsserver)
 
         self.kvs = kvsstcp.KVSClient(kvsserver)
         self.shutdown = False
@@ -389,10 +376,7 @@ class Feeder(Thread):
             if active:
                 # Deal with finished tasks, waiting if necessary
                 # Block if we're waiting at a barrier, at end, or there are no free slots
-                try:
-                    tinfo = self.finished.queue.get(barrier or not more or active >= totalSlots)
-                except Empty:
-                    tinfo = None
+                tinfo = self.kvsWait.get('.finished task', timeout = None if barrier or not more or active >= totalSlots else 0)
                 if tinfo:
                     logger.debug('Finished task: %s', tinfo)
                     if tinfo.taskId == TaskIdOOB:
