@@ -349,7 +349,7 @@ class Feeder(Thread):
         if args == self.status: return
         # Make changes visible via KVS.
         self.kvs.get('DisBatch status', False)
-        self.kvs.put('DisBatch status', json.dumps(args, default=repr), False)
+        self.kvs.put('DisBatch status', json.dumps(args, default=repr), 'JSON')
         self.status = args
 
     def run(self):
