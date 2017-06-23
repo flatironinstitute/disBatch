@@ -60,16 +60,16 @@ class BatchContext(object):
         # This is just a fallback. Implementations should try to determine node as appropriate.
         # Could just default to node=myHostname, but then we lose special domain-name matching
         if not node:
-            for n in context.nodes:
+            for n in self.nodes:
                 if isHostSelf(n):
                     node = n
                     break
         self.node = node
         try:
-            self.nodeId = context.nodes.index(self.node)
+            self.nodeId = self.nodes.index(self.node)
         except ValueError:
             # Should we instead assume 0 or carry on with none?
-            raise Exception('Couldn\'t find nodeId for %s in "%s".', self.node or myHostname, context.nodes)
+            raise Exception('Couldn\'t find nodeId for %s in "%s".', self.node or myHostname, self.nodes)
 
 class TaskInfo(object):
     def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
