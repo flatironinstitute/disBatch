@@ -87,6 +87,11 @@ class TaskInfo(object):
         flags = ''.join(flags)
         return '\t'.join([str(x) for x in [flags, self.taskId, self.taskStreamIndex, self.taskRepIndex, self.host, self.pid, self.returncode, self.end - self.start, self.start, self.end, self.outbytes, self.errbytes, repr(self.taskCmd)]])
 
+    def taskKey(self):
+        '''The KVS key in which this task should be queued: per-node or global.'''
+        # This could even check if this is a finished tasked and return '.finished task', potentially
+        return '.node.%s'%self.host if self.host else '.task'
+
 class BarrierTask(TaskInfo):
     def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, key):
         super(BarrierTask, self).__init__(taskId, taskStreamIndex, taskRepIndex, taskCmd, myHostname, myPid)
@@ -454,7 +459,7 @@ class Feeder(Thread):
             # At this point, we have a task
             active += 1
             logger.info('Posting task: %s', tinfo)
-            self.kvs.put('.node.%s'%tinfo.host if tinfo.host else '.task', [tinfo.taskId, tinfo.taskStreamIndex, tinfo.taskRepIndex, tinfo.taskCmd])
+            self.kvs.put(tinfo.taskKey(), [tinfo.taskId, tinfo.taskStreamIndex, tinfo.taskRepIndex, tinfo.taskCmd])
 
         statusfo.close()
         self.kvs.close()
