@@ -46,11 +46,15 @@ class BatchContext(object):
     def __str__(self):
         return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
 
-    def launch(self, kvsserver):
+    def _launch(self, kvsserver):
         kvs = kvsstcp.KVSClient(kvsserver)
         kvs.put('.context', self)
         kvs.close()
         self.retiredNodes = set()
+
+    def launch(self, kvsserver):
+        self._launch(kvsserver)
+        raise NotImplementedError('%s.launch is not implemented' % type(self))
 
     def retire(self, node, msg='ToDo: add clean up hook here?'):
         self.retiredNodes.add(node)
@@ -69,7 +73,7 @@ class BatchContext(object):
             self.nodeId = self.nodes.index(self.node)
         except ValueError:
             # Should we instead assume 0 or carry on with none?
-            raise Exception('Couldn\'t find nodeId for %s in "%s".', self.node or myHostname, self.nodes)
+            raise LookupError('Couldn\'t find nodeId for %s in "%s".' % (node or myHostname, self.nodes))
 
 class TaskInfo(object):
     def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
@@ -133,7 +137,7 @@ class SlurmContext(BatchContext):
         super(SlurmContext, self).__init__('SLURM', jobid, nodes, cylinders)
 
     def launch(self, kvsserver):
-        super(SlurmContext, self).launch(kvsserver)
+        self._launch(kvsserver)
         # start one engine per node using the equivalent of:
         # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
         SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', '--bcast=/tmp/disBatch_%s_exe.tmp'%self.jobid, ScriptPath, '--engine', kvsserver])
@@ -154,12 +158,9 @@ class SlurmContext(BatchContext):
         super(SlurmContext, self).setNode(node or os.environ.get('SLURMD_NODENAME'))
 
 #TODO:
-class GEContext(BatchContext):
-    pass
-class LSFContext(BatchContext):
-    pass
-class PBSContext(BatchContext):
-    pass
+#class GEContext(BatchContext):
+#class LSFContext(BatchContext):
+#class PBSContext(BatchContext):
 
 # The ssh context should be generally applicable when all else fails
 # (or there is no resource manager).
@@ -185,16 +186,16 @@ class SSHContext(BatchContext):
         super(SSHContext, self).__init__('SSH', jobid, nodes, cylinders)
 
     def launch(self, kvsserver):
-        super(SSHContext, self).launch(kvsserver)
+        self._launch(kvsserver)
         for n in self.nodes:
             prefix = [] if isHostSelf(n) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
             SUB.Popen(prefix + [ScriptPath, '--engine', '-n', n, kvsserver], stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w'))
 
 def probeContext():
     if 'SLURM_JOBID' in os.environ: return SlurmContext()
-    #if ...: return GEContext
-    #if ...: LSFContext
-    #if ...: PBSContext
+    #if ...: return GEContext()
+    #if ...: LSFContext()
+    #if ...: PBSContext()
     if 'DISBATCH_SSH_NODELIST' in os.environ: return SSHContext()
 
 # When the user specifies a command that will be generating tasks,
