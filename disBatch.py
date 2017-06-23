@@ -421,7 +421,7 @@ class Feeder(Thread):
             if active:
                 # Deal with finished tasks, waiting if necessary
                 # Block if we're waiting at a barrier, at end, or there are no free slots
-                tinfo = self.kvsWait.get('.finished task', timeout = None if barrier or not more or active >= totalSlots else 0)
+                tinfo = self.kvsWait._get_nb('.finished task', timeout = None if barrier or not more or active >= totalSlots else 0)
                 if tinfo:
                     logger.debug('Finished task: %s', tinfo)
                     if tinfo.taskId == TaskIdOOB:
@@ -698,7 +698,7 @@ if '__main__' == __name__:
         argp.add_argument('-c', '--cpusPerTask', default=1, type=float, help='Number of cores used per task; may be fractional (default: 1).')
         argp.add_argument('-t', '--tasksPerNode', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
         argp.add_argument('--web', action='store_true', help='Enable web interface.')
-        argp.add_argument('--fix-path', action='store_true', help='Configure fixed path to script and modules.')
+        argp.add_argument('--fix-path', dest='fixPath', action='store_true', help='Configure fixed path to script and modules.')
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, help='Tasks will come from the command specified via a kvs server instantiated for that purpose.')
         source.add_argument('--taskserver', default=None, help='Tasks will come via the specified kvs server.')
