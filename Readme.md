@@ -1,6 +1,13 @@
 Distributed processing of a batch of tasks.
 ===========================================
 
+## Installation
+
+`disBatch.py` requires the `kvsstcp` package, which should be in the same directory.
+You can simply clone this git repository with `--recursive` (or run `git submodule update --init` if you've already cloned it).
+
+## Overview
+
 One common usage pattern for cluster computing involves processing a
 long list of commands (aka *tasks*):
 
@@ -37,7 +44,7 @@ the lines in the file have been processed.
 In the simplest case, all that needs to be done is to write the command
 sequences to a file and then submit a job like the following:
 
-    sbatch -n 20 --ntasks-per-node 5 --exclusive disBatch.py TaskFileName
+    sbatch -n 20 --ntasks-per-node 5 --exclusive --wrap "disBatch.py TaskFileName"
 
 This particular invocation will allocate sufficient resources to process
 20 tasks at a time, with no more than five running concurrently on any

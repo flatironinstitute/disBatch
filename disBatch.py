@@ -1,4 +1,6 @@
 #!/usr/bin/env python
+ScriptDir = None
+ScriptPath = None
 
 import logging, os, re, signal, socket, subprocess as SUB, sys, time
 import json
@@ -24,16 +26,53 @@ TaskIdOOB = -1
 CmdPoison = '!!Poison!!'
 CmdRetire = '!!Retire Me!!'
 
-ScriptPath = os.path.realpath(sys.argv[0] or __file__)
 PythonPath = os.environ.get('PYTHONPATH', '')
-if not ScriptPath.startswith("/tmp/"):
-    # to find kvsstcp:
+
+# Handle self-modification invocation early, before messing with paths and other imports
+FIXPATH = '__main__' == __name__ and sys.argv[1:] == ["--fix-path"]
+# Try to guess if necessary
+if FIXPATH or not ScriptPath:
+    ScriptPath = os.path.realpath(__file__)
+if FIXPATH or not ScriptDir:
     ScriptDir = os.path.dirname(ScriptPath)
+
+if FIXPATH:
+    import tempfile
+    if not os.path.exists(ScriptPath):
+        print >>sys.stderr, 'Unable to find myself; you may have to set ScriptDir manually at the top of disBatch.py.'
+        sys.exit(1)
+    print >>sys.stderr, "Hard-coding disBatch.py path to %s"%ScriptPath
+    with open(ScriptPath, 'r') as fi:
+        with tempfile.NamedTemporaryFile('w', prefix='disBatch.py.', dir=ScriptDir, delete=False) as fo:
+            for l in fi:
+                if l.startswith("ScriptDir = "):
+                    l = "ScriptDir = %r\n" % ScriptDir
+                if l.startswith("ScriptPath = "):
+                    l = "ScriptPath = %r\n" % ScriptPath
+                fo.write(l)
+            os.fchmod(fo.fileno(), os.fstat(fi.fileno()).st_mode)
+    os.rename(fo.name, ScriptPath)
+    sys.exit(0)
+
+if ScriptDir:
+    # to find kvsstcp:
     sys.path.append(ScriptDir)
     # for subprocesses:
     PythonPath = PythonPath + ':' + ScriptDir if PythonPath else ScriptDir
     os.environ['PYTHONPATH'] = PythonPath
-import kvsstcp
+
+try:
+    import kvsstcp
+except ImportError:
+    print >>sys.stderr, '''
+Could not find the required kvsstcp module anywhere in %s
+
+If kvsstcp exists alongside disBatch.py, try hard-coding the path with:
+   disBatch.py --fix-path
+Otherwise, make sure disBatch and kvsstcp are installed correctly (you may need
+to run "git submodule update --init").
+''' % sys.path
+    sys.exit(1)
 
 def isHostSelf(host):
     return host == myHostname or host.startswith(myHostname+'.')
@@ -145,7 +184,7 @@ class SlurmContext(BatchContext):
         self._launch(kvsserver)
         # start one engine per node using the equivalent of:
         # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
-        SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', '--bcast=/tmp/disBatch_%s_exe.tmp'%self.jobid, ScriptPath, '--engine', kvsserver])
+        SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', ScriptPath, '--engine', kvsserver])
 
     def retire(self, node):
         if isHostSelf(node):
@@ -624,9 +663,6 @@ def engine(kvsserver, context):
     e = EngineBlock(kvsserver, context)
     d = Deadman(kvsserver, e, myPid)
     e.join()
-    if ScriptPath.startswith('/tmp/disBatch_') and ScriptPath.endswith("_exe.tmp"):
-        # cleanup bcast script
-        os.unlink(ScriptPath)
     logger.info('Engine exiting normally.')
 
 if '__main__' == __name__:
@@ -662,15 +698,20 @@ if '__main__' == __name__:
         argp.add_argument('-c', '--cpusPerTask', default=1, type=float, help='Number of cores used per task; may be fractional (default: 1).')
         argp.add_argument('-t', '--tasksPerNode', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
         argp.add_argument('--web', action='store_true', help='Enable web interface.')
+        argp.add_argument('--fix-path', action='store_true', help='Configure fixed path to script and modules.')
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, help='Tasks will come from the command specified via a kvs server instantiated for that purpose.')
         source.add_argument('--taskserver', default=None, help='Tasks will come via the specified kvs server.')
         source.add_argument('taskfile', nargs='?', default=None,  type=argparse.FileType('r'), help='File with tasks, one task per line.')
         args = argp.parse_args()
 
+        if args.fixPath:
+            print >>sys.stderr, 'You must use --fix-path without any other arguments.'
+            sys.exit(1)
+
         if args.mailFreq and not args.mailTo:
             argp.print_help()
-            sys.exit(-1)
+            sys.exit(1)
         if not args.mailFreq and args.mailTo:
             args.mailFreq = 1
 
@@ -678,7 +719,7 @@ if '__main__' == __name__:
         context = probeContext()
         if not context:
             print >>sys.stderr, 'Cannot determine batch execution environment.'
-            sys.exit(-1)
+            sys.exit(1)
 
         # Apply -c and -t limits
         context.cylinders = [ min(int(c / args.cpusPerTask), args.tasksPerNode) for c in context.cylinders ]
