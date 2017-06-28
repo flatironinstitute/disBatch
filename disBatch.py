@@ -86,20 +86,29 @@ class BatchContext(object):
         return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
 
     def _launch(self, kvsserver):
+        '''Prepare for launch: place the context (self) in the KVS for engine
+        nodes to load.'''
         kvs = kvsstcp.KVSClient(kvsserver)
         kvs.put('.context', self)
         kvs.close()
         self.retiredNodes = set()
 
     def launch(self, kvsserver):
+        '''Launch the engine processes on all the nodes.'''
         self._launch(kvsserver)
         raise NotImplementedError('%s.launch is not implemented' % type(self))
 
     def retire(self, node, msg='ToDo: add clean up hook here?'):
+        '''Note that a node has completed.'''
         self.retiredNodes.add(node)
         logger.info('Retiring node "%s": %s', node, msg)
 
+    def finish(self):
+        '''Check that all engines completed successfully and return 0 on success, or a true value on failure (i.e., returncode).'''
+        raise NotImplementedError('%s.finish is not implemented' % type(self))
+
     def setNode(self, node=None):
+        '''On an engine, set the name of this node.'''
         # This is just a fallback. Implementations should try to determine node as appropriate.
         # Could just default to node=myHostname, but then we lose special domain-name matching
         if not node:
@@ -184,7 +193,7 @@ class SlurmContext(BatchContext):
         self._launch(kvsserver)
         # start one engine per node using the equivalent of:
         # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
-        SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', ScriptPath, '--engine', kvsserver])
+        self.engines = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', ScriptPath, '--engine', kvsserver])
 
     def retire(self, node):
         if isHostSelf(node):
@@ -197,6 +206,9 @@ class SlurmContext(BatchContext):
                 SUB.check_call(command)
             except Exception, e:
                 logger.warn('Retirement planning needs improvement: %s', repr(e))
+
+    def finish(self):
+        return self.engines.wait()
 
     def setNode(self, node=None):
         super(SlurmContext, self).setNode(node or os.environ.get('SLURMD_NODENAME'))
@@ -231,9 +243,17 @@ class SSHContext(BatchContext):
 
     def launch(self, kvsserver):
         self._launch(kvsserver)
+        self.engines = list()
         for n in self.nodes:
             prefix = [] if isHostSelf(n) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
-            SUB.Popen(prefix + [ScriptPath, '--engine', '-n', n, kvsserver], stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w'))
+            self.engines.append(SUB.Popen(prefix + [ScriptPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w')))
+
+    def finish(self):
+        failed = dict()
+        for n, e in zip(self.nodes, self.engines):
+            r = e.wait()
+            if r: failed[n] = r
+        return failed
 
 def probeContext():
     if 'SLURM_JOBID' in os.environ: return SlurmContext()
@@ -770,5 +790,9 @@ if '__main__' == __name__:
 
         f = Feeder(kvsserver, context, args.mailFreq, args.mailTo, taskSource, trackResults)
         f.join()
+
+        r = context.finish()
+        if r:
+            print >>sys.stderr, 'Some engine processes failed (%r) -- please check the logs'%r
 
         if kvsst: kvsst.shutdown()
