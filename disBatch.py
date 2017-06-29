@@ -1,12 +1,56 @@
 #!/usr/bin/env python
-
-import logging, os, re, signal, socket, subprocess as SUB, sys, time
+import json, logging, os, re, signal, socket, subprocess as SUB, sys, time
 
 from multiprocessing import Process as mpProcess, Queue as mpQueue
-
 from Queue import Queue, Empty
 from threading import BoundedSemaphore, Thread
 
+DisBatchPath, ImportDir, PathsFixed = None, None, False # <= May need to set these, setting PathsFixed to True as well.
+
+# Handle self-modification invocation early, before messing with paths and other imports
+FIXPATHS = '__main__' == __name__ and sys.argv[1:] == ["--fix-paths"]
+if FIXPATHS:
+    DisBatchPath = os.path.realpath(__file__)
+    if not os.path.exists(DisBatchPath):
+        print >>sys.stderr, 'Unable to find myself; set DisBatchPath and ImportDir manually at the top of disBatch.py.'
+        sys.exit(1)
+    ll = open(DisBatchPath).readlines()
+    xx = [x for x, l in enumerate(ll) if l.startswith('DisBatchPath, ImportDir, PathsFixed =')]
+    assert 1 == len(xx)
+    nl = 'DisBatchPath, ImportDir, PathsFixed = \'%s\', \'%s\', True\n'%(DisBatchPath, os.path.dirname(DisBatchPath))
+    print >>sys.stderr, "Changing path info to %s"%repr(nl)
+    ll[xx[0]] = nl
+    mode = os.stat(DisBatchPath).st_mode
+    os.rename(DisBatchPath, DisBatchPath+'.prev')
+    open(DisBatchPath, 'w').write(''.join(ll))
+    os.chmod(DisBatchPath, mode)
+    sys.exit(0)
+
+if not PathsFixed:
+    # Try to guess
+    DisBatchPath = os.path.realpath(__file__)
+    ImportDir = os.path.dirname(DisBatchPath)
+
+PythonPath = os.environ.get('PYTHONPATH', '')
+if ImportDir:
+    sys.path.append(ImportDir)
+    # for subprocesses:
+    PythonPath = PythonPath + ':' + ImportDir if PythonPath else ImportDir
+    os.environ['PYTHONPATH'] = PythonPath
+
+try:
+    import kvsstcp
+except ImportError:
+    if PathsFixed:
+        print >>sys.stderr, 'This script is looking in the wrong place for "kvssctp". Try running "%s --fix-paths" or editing it by hand.'%DisBatchPath
+    else:
+        print >>sys.stderr, '''
+Could not find kvsstcp. If there is a "kvsstcp" directory in "%s",
+try running "%s --fix-paths". Otherwise review the installation
+instructions.
+'''%(ImportDir, DisBatchPath)
+    sys.exit(1)
+    
 myHostname = socket.gethostname()
 myPid = os.getpid()
 
@@ -21,23 +65,55 @@ TaskIdOOB = -1
 CmdPoison = '!!Poison!!'
 CmdRetire = '!!Retire Me!!'
 
-# TODO: Because of the way SLURM stages batch scripts, it is difficult to infer the correct path.
-ScriptPath = '/mnt/xfs1/home/carriero/projects/parBatch/parSlurm/wip/disBatch.py'
-sys.path.append(os.path.dirname(ScriptPath))
-import kvsstcp
+def compHostnames(h0, h1):
+    return h0.split('.', 1)[0] == h1.split('.', 1)[0]
 
 class BatchContext(object):
-    def __init__(self, sysid, jobid, nodes, cylinders, launchFunc, retireFunc):
-        self.sysid, self.jobid, self.nodes, self.cylinders, self.launchFunc, self.retireFunc = sysid, jobid, nodes, cylinders, launchFunc, retireFunc
+    def __init__(self, sysid, jobid, nodes, cylinders):
+        self.sysid, self.jobid, self.nodes, self.cylinders = sysid, jobid, nodes, cylinders
         self.wd = os.getcwd() #TODO: Easy enough to override, but still... Is this the right place for this?
         self.retiredNodes = set()
         
     def __str__(self):
-        return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\nLaunch function: %s\n'%(self.sysid, self.jobid, self.nodes, self.cylinders, repr(self.launchFunc))
+        return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
+
+    def _launch(self, kvsserver):
+        '''Prepare for launch: place the context (self) in the KVS for engine
+        nodes to load.'''
+        kvs = kvsstcp.KVSClient(kvsserver)
+        kvs.put('.context', self)
+        kvs.close()
+
+    def launch(self, kvsserver):
+        '''Launch the engine processes on all the nodes.'''
+        self._launch(kvsserver)
+        raise NotImplementedError('%s.launch is not implemented' % type(self))
+
+    def retire(self, node, msg='ToDo: add clean up hook here?'):
+        '''Note that a node has finished all assigned tasks (and has been told there will be no more coming).'''
+        self.retiredNodes.add(node)
+        logger.info('Retiring node "%s": %s', node, msg)
+
+    def setNode(self, node=None):
+        '''Try to determine the hostname of an engine from the pov of the launcher.'''
+        # This is just a fallback. Implementations should try to determine node as appropriate.
+        # Could just default to node=myHostname, but then we lose special domain-name matching
+        if not node:
+            for n in self.nodes:
+                if compHostnames(n, myHostname):
+                    node = n
+                    break
+        self.node = node
+        try:
+            self.nodeId = self.nodes.index(self.node)
+        except ValueError:
+            # Should we instead assume 0 or carry on with none?
+            raise LookupError('Couldn\'t find nodeId for %s in "%s".' % (node or myHostname, self.nodes))
 
 class TaskInfo(object):
-    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
-        self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.host, self.pid, self.returncode, self.start, self.end, self.outbytes, self.errbytes = taskId, taskStreamIndex, taskRepIndex, taskCmd, host, pid, returncode, start, end, outbytes, errbytes
+    def __init__(self, taskKey, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
+        self.taskKey, self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.host = taskKey, taskId, taskStreamIndex, taskRepIndex, taskCmd, host
+        self.pid, self.returncode, self.start, self.end, self.outbytes, self.errbytes = pid, returncode, start, end, outbytes, errbytes
 
     def __str__(self):
         flags =  [' ', ' ', ' ']
@@ -82,45 +158,45 @@ def nl2flat(nl):
     if prefix: flat.append(prefix)
     return flat
 
-def slurmContext():
-    if 'SLURM_JOBID' not in os.environ: return None
+class SlurmContext(BatchContext):
+    def __init__(self):
+        jobid = os.environ['SLURM_JOBID']
+        nodes = nl2flat(os.environ['SLURM_NODELIST'])
 
-    jobid = os.environ['SLURM_JOBID']
-    nodes = nl2flat(os.environ['SLURM_NODELIST'])
+        cylinders = []
+        for tr in os.environ['SLURM_TASKS_PER_NODE'].split(','):
+            m = re.match(r'([^\(]+)(?:\(x([^\)]+)\))?', tr)
+            c, m = m.groups()
+            if m == None: m = '1'
+            cylinders += [int(c)]*int(m)
 
-    cylinders = []
-    for tr in os.environ['SLURM_TASKS_PER_NODE'].split(','):
-        m = re.match(r'([^\(]+)(?:\(x([^\)]+)\))?', tr)
-        c, m = m.groups()
-        if m == None: m = '1'
-        cylinders += [int(c)]*int(m)
+        super(SlurmContext, self).__init__('SLURM', jobid, nodes, cylinders)
+        
+    def launch(self, kvsserver):
+        self._launch(kvsserver)
+        # start one engine per node using the equivalent of:
+        # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
+        SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', DisBatchPath, '--engine', kvsserver])
 
-    return BatchContext('SLURM', jobid, nodes, cylinders, slurmContextLaunch, slurmContextRetire) 
+    def retire(self, node):
+        if compHostnames(node, myHostname):
+            logger.info('Refusing to retire "%s" on "%s".', node, myHostname)
+        else:
+            super(SlurmContext, self).retire(node, "updating node list")
+            command = ['scontrol', 'update', 'JobId=%s'%self.jobid, 'NodeList=' + ','.join([n for n in self.nodes if n not in self.retiredNodes])]
+            logger.debug("Retirement: %s", repr(command))
+            try:
+                SUB.check_call(command)
+            except Exception, e:
+                logger.warn('Retirement planning needs improvement: %s', repr(e))
 
-def slurmContextLaunch(context, kvsserver):
-    kvs = kvsstcp.KVSClient(kvsserver)
-    kvs.put('.context', context)
-    kvs.close()
-    # start one engine per node using the equivalent of:
-    # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
-    p = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', ScriptPath, '--engine', kvsserver])
+    def setNode(self, node=None):
+        super(SlurmContext, self).setNode(node or os.environ.get('SLURMD_NODENAME'))
 
-def slurmContextRetire(context, node):
-    if node.startswith(myHostname) or myHostname.startswith(node):
-        logger.info('Refusing to retire ("%s", "%s").', node, myHostname)
-    else:
-        context.retiredNodes.add(node)
-        command = ['scontrol', 'update', 'JobId=%s'%context.jobid, 'NodeList=' + ','.join([n for n in context.nodes if n not in context.retiredNodes])]
-        logger.info('Retiring node "%s": %s', node, repr(command))
-        try:
-            SUB.check_call(command)
-        except Exception, e:
-            logger.warn('Retirement planning needs improvement: %s', repr(e))
-
-#TODO: 
-def geContext(): return None
-def lsfContext(): return None
-def pbsContext(): return None
+#TODO:
+#class GEContext(BatchContext):
+#class LSFContext(BatchContext):
+#class PBSContext(BatchContext):
 
 # The ssh context should be generally applicable when all else fails
 # (or there is no resource manager).
@@ -132,33 +208,31 @@ def pbsContext(): return None
 #
 # You can also specify a "job id" via DISBATCH_SSH_JOBID. If you do
 # not provide one, one will be created from the PID and epoch time.
-def sshContext():
-    if 'DISBATCH_SSH_NODELIST' not in os.environ: return None
+class SSHContext(BatchContext):
+    def __init__(self):
+        jobid = os.environ.get('DISBATCH_SSH_JOBID', '%d_%.6f'%(myPid, time.time()))
 
-    jobid = os.environ.get('DISBATCH_SSH_JOBID', '%d_%.6f'%(os.getpid(), time.time()))
+        cylinders, nodes = [], []
+        for p in os.environ['DISBATCH_SSH_NODELIST'].split(','):
+            n, e = p.split(':')
+            if n == 'localhost': n = myHostname
+            nodes.append(n)
+            cylinders.append(int(e))
 
-    cylinders, nodes = [], []
-    for p in os.environ['DISBATCH_SSH_NODELIST'].split(','):
-        n, e = p.split(':')
-        if n == 'localhost': n = myHostname
-        nodes.append(n)
-        cylinders.append(int(e))
-        
-    return BatchContext('SSH', jobid, nodes, cylinders, sshContextLaunch, sshContextRetire)
+        super(SSHContext, self).__init__('SSH', jobid, nodes, cylinders)
 
-def sshContextLaunch(context, kvsserver):
-    kvs = kvsstcp.KVSClient(kvsserver)
-    kvs.put('.context', context)
-    kvs.close()
-    for n in context.nodes:
-        prefix = ['ssh', n]
-        if n == myHostname: prefix = []
-        p = SUB.Popen(prefix + [ScriptPath, '--engine', kvsserver], stdout=open('engine_wrap_%s_%s.out'%(context.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(context.jobid, n), 'w'))
-    
-def sshContextRetire(context, node):
-    logger.info('Retiring node "%s": %s', node, 'ToDo: add clean up hook here?')
+    def launch(self, kvsserver):
+        self._launch(kvsserver)
+        for n in self.nodes:
+            prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
+            self.engines.append(SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w')))
 
-ContextProbes = [geContext, lsfContext, pbsContext, slurmContext, sshContext]
+def probeContext():
+    if 'SLURM_JOBID' in os.environ: return SlurmContext()
+    #if ...: return GEContext()
+    #if ...: LSFContext()
+    #if ...: PBSContext()
+    if 'DISBATCH_SSH_NODELIST' in os.environ: return SSHContext()
 
 # When the user specifies a command that will be generating tasks,
 # this class wraps the command's execution so we can trigger a
@@ -247,7 +321,7 @@ def taskGenerator(tasks):
                     logger.info('Processing repeat: %d %d %d', repeats, rx, step)
                     cmd = prefix + (m.group('command') or '') + suffix
                     while repeats > 0:
-                        yield TaskInfo(taskCounter, tsx, rx, cmd)
+                        yield TaskInfo('.task', taskCounter, tsx, rx, cmd)
                         taskCounter += 1
                         rx += step
                         repeats -= 1
@@ -263,7 +337,7 @@ def taskGenerator(tasks):
                 # Comment or empty line, ignore
                 continue
 
-            yield TaskInfo(taskCounter, tsx, -1, prefix + t + suffix)
+            yield TaskInfo('.task', taskCounter, tsx, -1, prefix + t + suffix)
             taskCounter += 1
 
     logger.info('Processed %d tasks.', taskCounter)
@@ -299,6 +373,7 @@ class Feeder(Thread):
 
         self.kvs = kvsstcp.KVSClient(kvsserver)
         self.shutdown = False
+        self.status = None
         self.start()
 
     def sendNotification(self, finished, statusfo, statusfolast):
@@ -313,6 +388,13 @@ class Feeder(Thread):
         s.connect()
         s.sendmail([self.mailTo], [self.mailTo], msg.as_string())
 
+    def updateStatus(self, **args):
+        if args == self.status: return
+        # Make changes visible via KVS.
+        self.kvs.get('DisBatch status', False)
+        self.kvs.put('DisBatch status', json.dumps(args, default=repr), 'JSON')
+        self.status = args
+
     def run(self):
         totalSlots = sum(self.context.cylinders)
         more = True
@@ -322,20 +404,16 @@ class Feeder(Thread):
 
         nametasks = os.path.basename(self.tasks.name)
         failures = '%s_%s_failed.txt'%(nametasks, self.context.jobid)
-        statusfolast, statusfo = 0, open('%s_%s_status.txt'%(nametasks, self.context.jobid), 'a+')
+        statusfolast, statusfo = 0, open('%s_%s_status.txt'%(nametasks, self.context.jobid), 'w+')
 
         self.kvs.put('.common env', {'DISBATCH_JOBID': str(self.context.jobid), 'DISBATCH_NAMETASKS': nametasks}) #TODO: Add more later?
-        updatedStatus = False
         self.kvs.put('DisBatch status', '<Starting...>', False)
         while 1:
             logger.info('Feeder loop: %s.', (more, finished, active, self.shutdown))
             if self.shutdown: break
 
             # Make changes visible via KVS.
-            if updatedStatus:
-                self.kvs.get('DisBatch status', False)
-                self.kvs.put('DisBatch status', '{' + ', '.join(['"%s": %s'%(x, eval(x)) for x in ['more', 'barrier', 'active', 'finished', 'failed']]) + '}', False)
-                updatedStatus = False
+            self.updateStatus(more = more, barrier = barrier, finished = finished, failed = failed, active = active)
 
             if active:
                 # Deal with finished tasks, waiting if necessary
@@ -349,12 +427,11 @@ class Feeder(Thread):
                     if tinfo.taskId == TaskIdOOB:
                         # A finished tasks with id -1 indicates some sort of OOB control message.
                         if tinfo.taskCmd == CmdRetire:
-                            self.context.retireFunc(self.context, tinfo.host)
+                            self.context.retire(tinfo.host)
                         else:
                             logger.error('Unrecognized oob task: %(s)', tinfo)
                         continue
 
-                    updatedStatus = True
                     if self.trackResults: self.kvs.put(self.tasks.resultkey%tinfo.taskId, str(tinfo), False)
                     finished += 1
                     logger.debug('releasing task slot.')
@@ -420,9 +497,9 @@ class Feeder(Thread):
 
             # At this point, we have a task
             active += 1
-            tinfo = [tinfo.taskId, tinfo.taskStreamIndex, tinfo.taskRepIndex, tinfo.taskCmd]
-            logger.info('Posting task: %r', tinfo)
-            self.kvs.put('.task', tinfo)
+            tpayload = [tinfo.taskId, tinfo.taskStreamIndex, tinfo.taskRepIndex, tinfo.taskCmd]
+            logger.info('Posting task: %r', tpayload)
+            self.kvs.put(tinfo.taskKey, tpayload)
 
         statusfo.close()
         self.kvs.close()
@@ -448,6 +525,7 @@ class EngineBlock(Thread):
             self.daemon = True
             self.context, self.commonEnv, self.ciq, self.coq, self.cylinderId = context, commonEnv, ciq, coq, cylinderId
             self.ebProc, self.obProc, self.taskProc = None, None, None
+            # TODO generalize this into context class:
             if self.context.sysid == 'SSH': signal.signal(signal.SIGTERM, self.killTaskSubproc)
             self.start()
             
@@ -482,7 +560,7 @@ class EngineBlock(Thread):
                 tp.wait()
                 self.ebProc, self.obProc, self.taskProc = None, None, None
                 t1 = time.time()
-                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, myHostname, tp.pid, tp.returncode, t0, t1, int(obp.stdout.read()), int(ebp.stdout.read()))            
+                ti = TaskInfo('', taskId, taskStreamIndex, taskRepIndex, taskCmd, self.context.node, tp.pid, tp.returncode, t0, t1, int(obp.stdout.read()), int(ebp.stdout.read()))            
                 logger.info('Cylinder %s completed: %s', self.cylinderId, ti)
                 self.coq.put(['done', ti])
 
@@ -505,11 +583,8 @@ class EngineBlock(Thread):
     def __init__(self, kvsserver, context):
         Thread.__init__(self, name='EngineBlock')
         self.daemon = True
-        for n, cylinders in zip(context.nodes, context.cylinders):
-            if n.startswith(myHostname) or myHostname.startswith(n): break
-        else:
-            logger.error('Couldn\'t find %s in "%s", setting cylinder count to 1.', myHostname, context.nodes)
-            cylinders = 1
+        self.context = context
+        cylinders = context.cylinders[context.nodeId]
 
         self.kvs = kvsstcp.KVSClient(kvsserver)
         self.commonEnv = self.kvs.view('.common env')
@@ -544,7 +619,8 @@ class EngineBlock(Thread):
                 inFlight += 1
             else:
                 logger.error('Unknown cylinder input tag: "%s" (%s)', tag, repr(o))
-        self.kvs.put('.finished task', TaskInfo(TaskIdOOB, -1, -1, CmdRetire, myHostname))
+        self.kvs.put('.finished task', TaskInfo('', TaskIdOOB, -1, -1, CmdRetire, self.context.node))
+        self.kvs.close()
 
 # Fail safe: if we lose KVS connectivity (or someone binds the
 # ".shutdown" key), we kill the engine.
@@ -594,6 +670,7 @@ if '__main__' == __name__:
     if len(sys.argv) > 1 and sys.argv[1] == '--engine':
         argp = argparse.ArgumentParser(description='Task execution engine.')
         argp.add_argument('--engine', action='store_true', help='Run in execution engine mode.')
+        argp.add_argument('-n', '--node', type=str, help='Name of this engine node.')
         argp.add_argument('kvsserver', help='Address of kvs sever used to relay data to this execution engine.')
         args = argp.parse_args()
         kvs = kvsstcp.KVSClient(args.kvsserver)
@@ -603,11 +680,12 @@ if '__main__' == __name__:
             os.chdir(context.wd)
         except Exception, e:
             print >>sys.stderr, 'Failed to change working directory to "%s".'%context.wd
+        context.setNode(args.node)
         logger = logging.getLogger('DisBatch Engine')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
-        lconf['filename'] = '%s_%s_%s_engine.log'%('disBatch', context.jobid, myHostname)
+        lconf['filename'] = '%s_%s_%s_engine.log'%('disBatch', context.jobid, context.node)
         logging.basicConfig(**lconf)
-        logger.info('Starting engine (%d) on %s in %s.', myPid, myHostname, os.getcwd())
+        logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, context.nodeId, myHostname, myPid, os.getcwd())
         engine(args.kvsserver, context)
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
@@ -616,11 +694,16 @@ if '__main__' == __name__:
         argp.add_argument('--mailTo', default=None, help='Mail address for task completion notification(s).')
         #argp.add_argument('--tasksPerNode', type=int, help='Maximum concurrently executing tasks per node (default: node core count).')
         argp.add_argument('--web', action='store_true', help='Enable web interface.')
+        argp.add_argument('--fix-paths', dest='fixPaths', action='store_true', help='Configure fixed path to script and modules.')
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, help='Tasks will come from the command specified via a kvs server instantiated for that purpose.')
         source.add_argument('--taskserver', default=None, help='Tasks will come via the specified kvs server.')
         source.add_argument('taskfile', nargs='?', default=None,  type=argparse.FileType('r'), help='File with tasks, one task per line.')
         args = argp.parse_args()
+
+        if args.fixPaths:
+            print >>sys.stderr, 'You must use --fix-paths without any other arguments.'
+            sys.exit(1)
 
         if args.mailFreq and not args.mailTo:
             argp.print_help()
@@ -629,12 +712,10 @@ if '__main__' == __name__:
             args.mailFreq = 1
 
         # Try to find a batch context.
-        for cf in ContextProbes:
-            context = cf()
-            if context: break
-        else:
+        context = probeContext()
+        if not context:
             print >>sys.stderr, 'Cannot determine batch execution environment.'
-            sys.exit(-1)
+            sys.exit(1)
 
         logger = logging.getLogger('DisBatch')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
@@ -672,10 +753,11 @@ if '__main__' == __name__:
         logger.info('KVS Server: %s', kvsserver)
 
         if args.web:
+            from kvsstcp import wskvsmu
             urlfile = '%s_%s_url'%(nametasks, context.jobid)
-            w = SUB.Popen([os.path.dirname(ScriptPath)+'/wskvsmu.py', '--urlfile', urlfile, '-s', ':gpvw', kvsserver], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
+            w = SUB.Popen([os.path.dirname(ImportDir)+'/wskvsmu.py', '--urlfile', urlfile, '-s', ':gpvw', kvsserver], stdout=open('/dev/null', 'w'), stderr=open('/dev/null', 'w'))
 
-        context.launchFunc(context, kvsserver)
+        context.launch(kvsserver)
             
         f = Feeder(kvsserver, context, args.mailFreq, args.mailTo, taskSource, trackResults)
         f.join()
