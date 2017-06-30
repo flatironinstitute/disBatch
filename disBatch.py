@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import json, logging, os, re, signal, socket, subprocess as SUB, sys, time
+import json, logging, os, re, signal, socket, subprocess as SUB, sys, tempfile, time
 
 from multiprocessing import Process as mpProcess, Queue as mpQueue
 from Queue import Queue, Empty
@@ -8,22 +8,26 @@ from threading import BoundedSemaphore, Thread
 DisBatchPath, ImportDir, PathsFixed = None, None, False # <= May need to set these, setting PathsFixed to True as well.
 
 # Handle self-modification invocation early, before messing with paths and other imports
-FIXPATHS = '__main__' == __name__ and sys.argv[1:] == ["--fix-paths"]
-if FIXPATHS:
+if '__main__' == __name__ and sys.argv[1:] == ["--fix-paths"]:
     DisBatchPath = os.path.realpath(__file__)
     if not os.path.exists(DisBatchPath):
         print >>sys.stderr, 'Unable to find myself; set DisBatchPath and ImportDir manually at the top of disBatch.py.'
         sys.exit(1)
-    ll = open(DisBatchPath).readlines()
-    xx = [x for x, l in enumerate(ll) if l.startswith('DisBatchPath, ImportDir, PathsFixed =')]
-    assert 1 == len(xx)
-    nl = 'DisBatchPath, ImportDir, PathsFixed = \'%s\', \'%s\', True\n'%(DisBatchPath, os.path.dirname(DisBatchPath))
-    print >>sys.stderr, "Changing path info to %s"%repr(nl)
-    ll[xx[0]] = nl
-    mode = os.stat(DisBatchPath).st_mode
+    DisBatchDir = os.path.dirname(DisBatchPath)
+    with open(DisBatchPath, 'r') as fi:
+        with tempfile.NamedTemporaryFile('w', prefix='disBatch.py.', dir=DisBatchDir, delete=False) as fo:
+            found = False
+            for l in fi:
+                if l.startswith('DisBatchPath, ImportDir, PathsFixed ='):
+                    assert not found
+                    found = True
+                    l = 'DisBatchPath, ImportDir, PathsFixed = %r, %r, True\n'%(DisBatchPath, DisBatchDir)
+                    print >>sys.stderr, "Changing path info to %r"%l
+                fo.write(l)
+            assert found
+            os.fchmod(fo.fileno(), os.fstat(fi.fileno()).st_mode)
     os.rename(DisBatchPath, DisBatchPath+'.prev')
-    open(DisBatchPath, 'w').write(''.join(ll))
-    os.chmod(DisBatchPath, mode)
+    os.rename(fo.name, DisBatchPath)
     sys.exit(0)
 
 if not PathsFixed:
