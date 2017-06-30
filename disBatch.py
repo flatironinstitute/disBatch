@@ -1,16 +1,63 @@
 #!/usr/bin/env python
-ScriptDir = None
-ScriptPath = None
-
-import logging, os, re, signal, socket, subprocess as SUB, sys, time
-import json
+import json, logging, os, re, signal, socket, subprocess as SUB, sys, time
 
 from multiprocessing import Process as mpProcess, Queue as mpQueue
-
 from Queue import Queue, Empty
 from threading import BoundedSemaphore, Thread
 
-myHostname = socket.gethostname().split('.', 1)[0]
+DisBatchPath, ImportDir, PathsFixed = None, None, False # <= May need to set these, setting PathsFixed to True as well.
+
+# Handle self-modification invocation early, before messing with paths and other imports
+if '__main__' == __name__ and sys.argv[1:] == ["--fix-paths"]:
+    import tempfile
+    DisBatchPath = os.path.realpath(__file__)
+    if not os.path.exists(DisBatchPath):
+        print >>sys.stderr, 'Unable to find myself; set DisBatchPath and ImportDir manually at the top of disBatch.py.'
+        sys.exit(1)
+    DisBatchDir = os.path.dirname(DisBatchPath)
+    with open(DisBatchPath, 'r') as fi:
+        with tempfile.NamedTemporaryFile('w', prefix='disBatch.py.', dir=DisBatchDir, delete=False) as fo:
+            found = False
+            for l in fi:
+                if l.startswith('DisBatchPath, ImportDir, PathsFixed ='):
+                    assert not found
+                    found = True
+                    l = 'DisBatchPath, ImportDir, PathsFixed = %r, %r, True\n'%(DisBatchPath, DisBatchDir)
+                    print >>sys.stderr, "Changing path info to %r"%l
+                fo.write(l)
+            assert found
+            os.fchmod(fo.fileno(), os.fstat(fi.fileno()).st_mode)
+    os.rename(DisBatchPath, DisBatchPath+'.prev')
+    os.rename(fo.name, DisBatchPath)
+    sys.exit(0)
+
+if not PathsFixed:
+    # Try to guess
+    DisBatchPath = os.path.realpath(__file__)
+    ImportDir = os.path.dirname(DisBatchPath)
+
+PythonPath = os.environ.get('PYTHONPATH', '')
+if ImportDir:
+    # to find kvsstcp:
+    sys.path.append(ImportDir)
+    # for subprocesses:
+    PythonPath = PythonPath + ':' + ImportDir if PythonPath else ImportDir
+    os.environ['PYTHONPATH'] = PythonPath
+
+try:
+    import kvsstcp
+except ImportError:
+    if PathsFixed:
+        print >>sys.stderr, 'This script is looking in the wrong place for "kvssctp". Try running "%s --fix-paths" or editing it by hand.'%DisBatchPath
+    else:
+        print >>sys.stderr, '''
+Could not find kvsstcp. If there is a "kvsstcp" directory in "%s",
+try running "%s --fix-paths". Otherwise review the installation
+instructions.
+'''%(ImportDir, DisBatchPath)
+    sys.exit(1)
+    
+myHostname = socket.gethostname()
 myPid = os.getpid()
 
 # Note that even though these are case insensitive, only upper-case '#DISBATCH' prefixes are matched
@@ -26,56 +73,8 @@ TaskIdOOB = -1
 CmdPoison = '!!Poison!!'
 CmdRetire = '!!Retire Me!!'
 
-PythonPath = os.environ.get('PYTHONPATH', '')
-
-# Handle self-modification invocation early, before messing with paths and other imports
-FIXPATH = '__main__' == __name__ and sys.argv[1:] == ["--fix-path"]
-# Try to guess if necessary
-if FIXPATH or not ScriptPath:
-    ScriptPath = os.path.realpath(__file__)
-if FIXPATH or not ScriptDir:
-    ScriptDir = os.path.dirname(ScriptPath)
-
-if FIXPATH:
-    import tempfile
-    if not os.path.exists(ScriptPath):
-        print >>sys.stderr, 'Unable to find myself; you may have to set ScriptDir manually at the top of disBatch.py.'
-        sys.exit(1)
-    print >>sys.stderr, "Hard-coding disBatch.py path to %s"%ScriptPath
-    with open(ScriptPath, 'r') as fi:
-        with tempfile.NamedTemporaryFile('w', prefix='disBatch.py.', dir=ScriptDir, delete=False) as fo:
-            for l in fi:
-                if l.startswith("ScriptDir = "):
-                    l = "ScriptDir = %r\n" % ScriptDir
-                if l.startswith("ScriptPath = "):
-                    l = "ScriptPath = %r\n" % ScriptPath
-                fo.write(l)
-            os.fchmod(fo.fileno(), os.fstat(fi.fileno()).st_mode)
-    os.rename(fo.name, ScriptPath)
-    sys.exit(0)
-
-if ScriptDir:
-    # to find kvsstcp:
-    sys.path.append(ScriptDir)
-    # for subprocesses:
-    PythonPath = PythonPath + ':' + ScriptDir if PythonPath else ScriptDir
-    os.environ['PYTHONPATH'] = PythonPath
-
-try:
-    import kvsstcp
-except ImportError:
-    print >>sys.stderr, '''
-Could not find the required kvsstcp module anywhere in %s
-
-If kvsstcp exists alongside disBatch.py, try hard-coding the path with:
-   disBatch.py --fix-path
-Otherwise, make sure disBatch and kvsstcp are installed correctly (you may need
-to run "git submodule update --init").
-''' % sys.path
-    sys.exit(1)
-
-def isHostSelf(host):
-    return host == myHostname or host.startswith(myHostname+'.')
+def compHostnames(h0, h1):
+    return h0.split('.', 1)[0] == h1.split('.', 1)[0]
 
 class BatchContext(object):
     def __init__(self, sysid, jobid, nodes, cylinders):
@@ -91,6 +90,7 @@ class BatchContext(object):
         kvs = kvsstcp.KVSClient(kvsserver)
         kvs.put('.context', self)
         kvs.close()
+        # Do this here so it doesn't get unnecessarily pickled and distributed to engines:
         self.retiredNodes = set()
 
     def launch(self, kvsserver):
@@ -99,7 +99,7 @@ class BatchContext(object):
         raise NotImplementedError('%s.launch is not implemented' % type(self))
 
     def retire(self, node, msg='ToDo: add clean up hook here?'):
-        '''Note that a node has completed.'''
+        '''Note that a node has finished all assigned tasks (and has been told there will be no more coming).'''
         self.retiredNodes.add(node)
         logger.info('Retiring node "%s": %s', node, msg)
 
@@ -108,12 +108,12 @@ class BatchContext(object):
         raise NotImplementedError('%s.finish is not implemented' % type(self))
 
     def setNode(self, node=None):
-        '''On an engine, set the name of this node.'''
+        '''Try to determine the hostname of this engine from the pov of the launcher.'''
         # This is just a fallback. Implementations should try to determine node as appropriate.
         # Could just default to node=myHostname, but then we lose special domain-name matching
         if not node:
             for n in self.nodes:
-                if isHostSelf(n):
+                if compHostnames(n, myHostname):
                     node = n
                     break
         self.node = node
@@ -125,7 +125,8 @@ class BatchContext(object):
 
 class TaskInfo(object):
     def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
-        self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.host, self.pid, self.returncode, self.start, self.end, self.outbytes, self.errbytes = taskId, taskStreamIndex, taskRepIndex, taskCmd, host, pid, returncode, start, end, outbytes, errbytes
+        self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.host = taskId, taskStreamIndex, taskRepIndex, taskCmd, host
+        self.pid, self.returncode, self.start, self.end, self.outbytes, self.errbytes = pid, returncode, start, end, outbytes, errbytes
 
     def __str__(self):
         flags =  [' ', ' ', ' ']
@@ -193,10 +194,10 @@ class SlurmContext(BatchContext):
         self._launch(kvsserver)
         # start one engine per node using the equivalent of:
         # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
-        self.engines = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', ScriptPath, '--engine', kvsserver])
+        self.engines = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', DisBatchPath, '--engine', kvsserver])
 
     def retire(self, node):
-        if isHostSelf(node):
+        if compHostnames(node, myHostname):
             logger.info('Refusing to retire "%s" on "%s".', node, myHostname)
         else:
             super(SlurmContext, self).retire(node, "updating node list")
@@ -245,8 +246,8 @@ class SSHContext(BatchContext):
         self._launch(kvsserver)
         self.engines = list()
         for n in self.nodes:
-            prefix = [] if isHostSelf(n) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
-            self.engines.append(SUB.Popen(prefix + [ScriptPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w')))
+            prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
+            self.engines.append(SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w')))
 
     def finish(self):
         failed = dict()
@@ -426,8 +427,7 @@ class Feeder(Thread):
 
         nametasks = os.path.basename(self.tasks.name)
         failures = '%s_%s_failed.txt'%(nametasks, self.context.jobid)
-        statusfo = open('%s_%s_status.txt'%(nametasks, self.context.jobid), 'a+')
-        statusfolast = statusfo.tell()
+        statusfolast, statusfo = 0, open('%s_%s_status.txt'%(nametasks, self.context.jobid), 'w+')
 
         self.kvs.put('.common env', {'DISBATCH_JOBID': str(self.context.jobid), 'DISBATCH_NAMETASKS': nametasks}) #TODO: Add more later?
         self.kvs.put('DisBatch status', '<Starting...>', False)
@@ -517,8 +517,9 @@ class Feeder(Thread):
 
             # At this point, we have a task
             active += 1
-            logger.info('Posting task: %s', tinfo)
-            self.kvs.put(tinfo.taskKey(), [tinfo.taskId, tinfo.taskStreamIndex, tinfo.taskRepIndex, tinfo.taskCmd])
+            tpayload = [tinfo.taskId, tinfo.taskStreamIndex, tinfo.taskRepIndex, tinfo.taskCmd]
+            logger.info('Posting task: %r', tpayload)
+            self.kvs.put(tinfo.taskKey(), tpayload)
 
         statusfo.close()
         self.kvs.close()
@@ -580,7 +581,7 @@ class EngineBlock(Thread):
                 self.ebProc, self.obProc, self.taskProc = None, None, None
                 t1 = time.time()
                 # should we wait for obp, ebp here?  would it be more efficient/allow more options to capture output in this process?
-                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, self.context.node, tp.pid, tp.returncode, t0, t1, int(obp.stdout.read()), int(ebp.stdout.read()))
+                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, self.context.node, tp.pid, tp.returncode, t0, t1, int(obp.stdout.read()), int(ebp.stdout.read()))            
                 logger.info('Cylinder %s completed: %s', self.cylinderId, ti)
                 self.coq.put(['done', ti])
 
@@ -718,15 +719,15 @@ if '__main__' == __name__:
         argp.add_argument('-c', '--cpusPerTask', default=1, type=float, help='Number of cores used per task; may be fractional (default: 1).')
         argp.add_argument('-t', '--tasksPerNode', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
         argp.add_argument('--web', action='store_true', help='Enable web interface.')
-        argp.add_argument('--fix-path', dest='fixPath', action='store_true', help='Configure fixed path to script and modules.')
+        argp.add_argument('--fix-paths', action='store_true', help='Configure fixed path to script and modules.')
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, help='Tasks will come from the command specified via a kvs server instantiated for that purpose.')
         source.add_argument('--taskserver', default=None, help='Tasks will come via the specified kvs server.')
         source.add_argument('taskfile', nargs='?', default=None,  type=argparse.FileType('r'), help='File with tasks, one task per line.')
         args = argp.parse_args()
 
-        if args.fixPath:
-            print >>sys.stderr, 'You must use --fix-path without any other arguments.'
+        if args.fix_paths:
+            print >>sys.stderr, 'You must use --fix-paths without any other arguments.'
             sys.exit(1)
 
         if args.mailFreq and not args.mailTo:
