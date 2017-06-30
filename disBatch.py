@@ -247,7 +247,7 @@ class SSHContext(BatchContext):
         self.engines = list()
         for n in self.nodes:
             prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
-            self.engines.append(SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open('engine_wrap_%s_%s.out'%(self.jobid, n), 'w'), stderr=open('engine_wrap_%s_%s.err'%(self.jobid, n), 'w')))
+            self.engines.append(SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open('disBatch_%s_%s_engine_wrap.out'%(self.jobid, n), 'w'), stderr=open('disBatch_%s_%s_engine_wrap.err'%(self.jobid, n), 'w')))
 
     def finish(self):
         failed = dict()
