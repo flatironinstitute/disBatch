@@ -134,6 +134,7 @@ class TaskInfo(object):
         if self.outbytes: flags[1] = 'O'
         if self.errbytes: flags[2] = 'E'
         flags = ''.join(flags)
+        # If this changes, update disBatcher.py too
         return '\t'.join([str(x) for x in [flags, self.taskId, self.taskStreamIndex, self.taskRepIndex, self.host, self.pid, self.returncode, self.end - self.start, self.start, self.end, self.outbytes, self.errbytes, repr(self.taskCmd)]])
 
     def taskKey(self):
@@ -268,11 +269,11 @@ def probeContext():
 # shutdown if the user's command fails to send an indication that task
 # generation is done.
 class WatchIt(Thread):
-    def __init__(self, command):
+    def __init__(self, command, **kwargs):
         Thread.__init__(self, name='WatchIt')
         self.daemon = True
         self.command = command
-        self.p = SUB.Popen(command)
+        self.p = SUB.Popen(command, **kwargs)
         self.start()
 
     def run(self):
@@ -381,14 +382,17 @@ def taskGenerator(tasks, context):
 # Main control loop that sends new tasks to the execution engines and
 # processes completed ones.
 class Feeder(Thread):
-    def __init__(self, kvsserver, context, mailFreq, mailTo, tasks, trackResults):
+    def __init__(self, kvsserver, context, mailFreq, mailTo, tasks):
         Thread.__init__(self, name='Feeder')
         self.daemon = True
         self.context = context
         self.mailFreq = mailFreq
         self.mailTo = mailTo
         self.tasks = tasks
-        self.trackResults = trackResults
+        try:
+            self.trackResults = tasks.resultkey
+        except AttributeError:
+            self.trackResults = False
 
         self.taskGenerator = taskGenerator(tasks, context)
         # Used to wait (non-blocking) on .finished task:
@@ -452,7 +456,8 @@ class Feeder(Thread):
                             logger.error('Unrecognized oob task: %(s)', tinfo)
                         continue
 
-                    if self.trackResults: self.kvs.put(self.tasks.resultkey%tinfo.taskId, str(tinfo), False)
+                    # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than one per key.
+                    if self.trackResults: self.kvs.put(self.trackResults%tinfo.taskId, str(tinfo), False)
                     finished += 1
                     logger.debug('releasing task slot.')
                     active -= 1
@@ -763,33 +768,28 @@ if '__main__' == __name__:
             kvsst = None
             kvsserver = args.taskserver
             taskSource = KVSTaskSource(kvsserver)
-            trackResults = True
         else:
             kvsst = kvsstcp.KVSServerThread(socket.gethostname(), 0)
             kvsserver = '%s:%d'%kvsst.cinfo
             with open('kvsinfo.txt', 'w') as kvsi:
                 kvsi.write(kvsserver)
             if args.taskcommand:
-                os.environ['KVSSTCP_HOST'] = kvsst.cinfo[0]
-                os.environ['KVSSTCP_PORT'] = str(kvsst.cinfo[1])
-                wit = WatchIt(['/bin/bash', '-c', args.taskcommand])
+                wit = WatchIt(args.taskcommand, shell=True, env=kvsst.env())
                 taskSource = KVSTaskSource(kvsserver)
-                trackResults = True
             else:
-                trackResults = False
                 taskSource = args.taskfile
-        nametasks = os.path.basename(taskSource.name)
 
         logger.info('KVS Server: %s', kvsserver)
 
         if args.web:
             from kvsstcp import wskvsmu
+            nametasks = os.path.basename(taskSource.name)
             urlfile = '%s_%s_url'%(nametasks, context.jobid)
             wskvsmu.main(kvsserver, urlfile=open(urlfile, 'w'), monitorspec=':gpvw')
 
         context.launch(kvsserver)
 
-        f = Feeder(kvsserver, context, args.mailFreq, args.mailTo, taskSource, trackResults)
+        f = Feeder(kvsserver, context, args.mailFreq, args.mailTo, taskSource)
         f.join()
 
         r = context.finish()
