@@ -529,6 +529,29 @@ class Feeder(Thread):
         statusfo.close()
         self.kvs.close()
 
+# A simple class to count the number of bytes from a file stream (e.g., pipe),
+# and possibly collect the first few bytes of it
+class OutputCollector(Thread):
+    def __init__(self, pipe, trim=0):
+        super(OutputCollector, self).__init__(name='OutputCollector')
+        self.pipe = pipe
+        self.trim = trim
+        self.data = ''
+        self.bytes = 0
+        self.daemon = True
+        self.start()
+
+    def run(self):
+        left = self.trim
+        while 1:
+            if left > 0:
+                r = self.pipe.read(left)
+                self.data += r
+                left -= len(r)
+            else:
+                r = self.pipe.read(1024)
+            if not r: return
+            self.bytes += len(r)
 
 # Once we know the nodes participating in the run, we start an engine
 # on each node. The engine in turn starts the number of cylinders
@@ -546,20 +569,26 @@ class Feeder(Thread):
 class EngineBlock(Thread):
     class Cylinder(mpProcess):
         def __init__(self, context, commonEnv, ciq, coq, cylinderId):
-            mpProcess.__init__(self, target=self.run)
+            mpProcess.__init__(self)
             self.daemon = True
             self.context, self.commonEnv, self.ciq, self.coq, self.cylinderId = context, commonEnv, ciq, coq, cylinderId
-            self.ebProc, self.obProc, self.taskProc = None, None, None
+            self.taskProc = None, None, None
             # TODO generalize this into context class:
             if self.context.sysid == 'SSH': signal.signal(signal.SIGTERM, self.killTaskSubproc)
             self.start()
 
         def killTaskSubproc(self, sig, frame):
             logger.info('Cylinder %d killing sub procs.', self.cylinderId)
-            for p in [self.ebProc, self.obProc, self.taskProc]:
-                if p and p.returncode == None:
-                    logger.info('Cylinder %d sending SIGTERM to %d.', self.cylinderId, p.pid)
-                    os.killpg(p.pid, signal.SIGTERM)
+            try:
+                if self.taskProc.poll() is None:
+                    logger.info('Cylinder %d sending SIGTERM to %d.', self.cylinderId, self.taskProc.pid)
+                    self.taskProc.terminate()
+            except AttributeError:
+                # in case taskProc disappears
+                pass
+            except OSError:
+                # in case process completes
+                pass
             logger.info('Cylinder %d exiting on interrupt, %d, %d.', self.cylinderId, self.pid, self.pgid)
             os._exit(0)
 
@@ -580,13 +609,12 @@ class EngineBlock(Thread):
                 pfnarg = {}
                 if self.context.sysid == 'SSH': pfnarg['preexec_fn'] = os.setsid
                 tp = self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=baseEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, **pfnarg)
-                obp = self.obProc = SUB.Popen(['wc', '-c'], stdin=tp.stdout, stdout=SUB.PIPE, **pfnarg)
-                ebp = self.ebProc = SUB.Popen(['wc', '-c'], stdin=tp.stderr, stdout=SUB.PIPE, **pfnarg)
+                obp = OutputCollector(tp.stdout)
+                ebp = OutputCollector(tp.stderr)
                 tp.wait()
-                self.ebProc, self.obProc, self.taskProc = None, None, None
+                self.taskProc = None
                 t1 = time.time()
-                # should we wait for obp, ebp here?  would it be more efficient/allow more options to capture output in this process?
-                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, self.context.node, tp.pid, tp.returncode, t0, t1, int(obp.stdout.read()), int(ebp.stdout.read()))            
+                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, self.context.node, tp.pid, tp.returncode, t0, t1, obp.bytes, ebp.bytes)
                 logger.info('Cylinder %s completed: %s', self.cylinderId, ti)
                 self.coq.put(['done', ti])
 
