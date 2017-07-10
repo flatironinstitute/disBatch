@@ -107,6 +107,15 @@ class BatchContext(object):
         '''Check that all engines completed successfully and return 0 on success, or a true value on failure (i.e., returncode).'''
         raise NotImplementedError('%s.finish is not implemented' % type(self))
 
+    def logfile(self, suffix=''):
+        '''Prefix for log files'''
+        f = "%s_%s"%(getattr(self, 'name', 'disBatch'), self.jobid)
+        if hasattr(self, 'node'):
+            f += "_%s"%self.node
+        if suffix:
+            f += "_%s"%suffix
+        return f
+
     def setNode(self, node=None):
         '''Try to determine the hostname of this engine from the pov of the launcher.'''
         # This is just a fallback. Implementations should try to determine node as appropriate.
@@ -248,7 +257,7 @@ class SSHContext(BatchContext):
         self.engines = list()
         for n in self.nodes:
             prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
-            self.engines.append(SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open('disBatch_%s_%s_engine_wrap.out'%(self.jobid, n), 'w'), stderr=open('disBatch_%s_%s_engine_wrap.err'%(self.jobid, n), 'w')))
+            self.engines.append(SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open(self.logfile('%s_engine_wrap.out'%n), 'w'), stderr=open(self.logfile('%s_engine_wrap.err'%n), 'w')))
 
     def finish(self):
         failed = dict()
@@ -408,7 +417,7 @@ class Feeder(Thread):
         from email.mime.text import MIMEText
         statusfo.seek(statusfolast)
         msg = MIMEText('Last %d:\n\n'%self.mailFreq + statusfo.read())
-        msg['Subject'] = '%s (%s) has completed %d tasks.'%(self.tasks.name, self.context.jobid, finished)
+        msg['Subject'] = '%s (%s) has completed %d tasks.'%(self.context.name, self.context.jobid, finished)
         msg['From'] = self.mailTo
         msg['To'] = self.mailTo
         s = smtplib.SMTP()
@@ -429,11 +438,10 @@ class Feeder(Thread):
         barrier = None # current BarrierTask or None
         failed, finished = 0, 0
 
-        nametasks = os.path.basename(self.tasks.name)
-        failures = '%s_%s_failed.txt'%(nametasks, self.context.jobid)
-        statusfolast, statusfo = 0, open('%s_%s_status.txt'%(nametasks, self.context.jobid), 'w+')
+        failures = self.context.logfile('failed.txt')
+        statusfolast, statusfo = 0, open(self.context.logfile('status.txt'), 'w+')
 
-        self.kvs.put('.common env', {'DISBATCH_JOBID': str(self.context.jobid), 'DISBATCH_NAMETASKS': nametasks}) #TODO: Add more later?
+        self.kvs.put('.common env', {'DISBATCH_JOBID': str(self.context.jobid), 'DISBATCH_NAMETASKS': self.context.name}) #TODO: Add more later?
         self.kvs.put('DisBatch status', '<Starting...>', False)
         while 1:
             logger.info('Feeder loop: %s.', (more, finished, active, self.shutdown))
@@ -740,7 +748,7 @@ if '__main__' == __name__:
         context.setNode(args.node)
         logger = logging.getLogger('DisBatch Engine')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
-        lconf['filename'] = '%s_%s_%s_engine.log'%('disBatch', context.jobid, context.node)
+        lconf['filename'] = context.logfile('engine.log')
         logging.basicConfig(**lconf)
         logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, context.nodeId, myHostname, myPid, os.getcwd())
         engine(args.kvsserver, context)
@@ -785,7 +793,7 @@ if '__main__' == __name__:
             args.logfile.close()
             lconf['filename'] = args.logfile.name
         else:
-            lconf['filename'] = '%s_%s_log.txt'%('disBatch', context.jobid)
+            lconf['filename'] = context.logfile('log.txt')
         logging.basicConfig(**lconf)
 
         logger.info('Starting feeder (%d) on %s in %s.', myPid, myHostname, os.getcwd())
@@ -807,12 +815,14 @@ if '__main__' == __name__:
             else:
                 taskSource = args.taskfile
 
+        # Could reorder initialization some to pass this as argument
+        context.name = os.path.basename(taskSource.name)
+
         logger.info('KVS Server: %s', kvsserver)
 
         if args.web:
             from kvsstcp import wskvsmu
-            nametasks = os.path.basename(taskSource.name)
-            urlfile = '%s_%s_url'%(nametasks, context.jobid)
+            urlfile = context.logfile('url')
             wskvsmu.main(kvsserver, urlfile=open(urlfile, 'w'), monitorspec=':gpvw')
 
         context.launch(kvsserver)
