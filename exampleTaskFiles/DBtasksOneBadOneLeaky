@@ -40,7 +40,7 @@
 ( echo "38 running on" $(hostname) ; date ; sleep 10 ; date ; ) ; echo 'missed some output'
 
 # singleton repeat
-#DISBATCH REPEAT 1 start 36 ( echo "$DISBATCH_REPEAT_INDEX running on" $(hostname) ; date ; sleep 10 ; date ; )
+#DISBATCH REPEAT 1 start 39 ( echo "$DISBATCH_REPEAT_INDEX running on" $(hostname) ; date ; sleep 10 ; date ; )
 
 # empty repeat
 #DISBATCH REPEAT 0 start 1
@@ -51,9 +51,9 @@
 
 # fail two in repeat
 #DISBATCH SUFFIX  > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}_${DISBATCH_REPEAT_INDEX}.log
-#DISBATCH REPEAT 3 start 44 ( echo "$DISBATCH_REPEAT_INDEX running on" $(hostname) ; date ; sleep 10 ; date ; [[ $DISBATCH_REPEAT_INDEX -eq 46 ]] )
+#DISBATCH REPEAT 3 start 50 ( echo "$DISBATCH_REPEAT_INDEX running on" $(hostname) ; date ; sleep 10 ; date ; [[ $DISBATCH_REPEAT_INDEX -eq 51 ]] )
 
 #DISBATCH BARRIER
 #DISBATCH SUFFIX  > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log
 # All engines are idle at this point. Running one last task should trigger retirement(s) of all but one engine.
-( echo "48 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "55 running on" $(hostname) ; date ; sleep 10 ; date ; )
