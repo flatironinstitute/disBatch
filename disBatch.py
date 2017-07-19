@@ -95,20 +95,21 @@ class BatchContext(object):
 
     def launch(self, kvsserver):
         '''Launch the engine processes on all the nodes.'''
+        # Any implementation of launch must call self._launch:
         self._launch(kvsserver)
         raise NotImplementedError('%s.launch is not implemented' % type(self))
 
     def retire(self, node, msg='ToDo: add clean up hook here?'):
         '''Note that a node has finished all assigned tasks (and has been told there will be no more coming).'''
         self.retiredNodes.add(node)
-        logger.info('Retiring node "%s": %s', node, msg)
+        logger.info('Retiring node (no op) "%s": %s', node, msg)
 
     def finish(self):
         '''Check that all engines completed successfully and return 0 on success, or a true value on failure (i.e., returncode).'''
         raise NotImplementedError('%s.finish is not implemented' % type(self))
 
     def logfile(self, suffix=''):
-        '''Prefix for log files'''
+        '''Standardized file path construction for log files.'''
         f = "%s_%s"%(getattr(self, 'name', 'disBatch'), self.jobid)
         if hasattr(self, 'node'):
             f += "_%s"%self.node
@@ -131,38 +132,6 @@ class BatchContext(object):
         except ValueError:
             # Should we instead assume 0 or carry on with none?
             raise LookupError('Couldn\'t find nodeId for %s in "%s".' % (node or myHostname, self.nodes))
-
-class TaskInfo(object):
-    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
-        self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.host = taskId, taskStreamIndex, taskRepIndex, taskCmd, host
-        self.pid, self.returncode, self.start, self.end, self.outbytes, self.errbytes = pid, returncode, start, end, outbytes, errbytes
-
-    def flags(self):
-        return (  ('R' if self.returncode else ' ')
-                + ('O' if self.outbytes   else ' ')
-                + ('E' if self.errbytes   else ' '))
-
-    def __str__(self):
-        # If this changes, update disBatcher.py too
-        return '\t'.join([str(x) for x in [self.flags(), self.taskId, self.taskStreamIndex, self.taskRepIndex, self.host, self.pid, self.returncode, self.end - self.start, self.start, self.end, self.outbytes, self.errbytes, repr(self.taskCmd)]])
-
-    def taskKey(self):
-        '''The KVS key in which this task should be queued: per-node or global.'''
-        # This could even check if this is a finished tasked and return '.finished task', potentially
-        return '.node.%s'%self.host if self.host else '.task'
-
-class BarrierTask(TaskInfo):
-    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, key=None):
-        super(BarrierTask, self).__init__(taskId, taskStreamIndex, taskRepIndex, taskCmd, myHostname, myPid)
-        self.key = key
-
-    def flags(self):
-        return 'B'
-
-class DoneTask(BarrierTask):
-    '''Implicit barrier posted when there are no more tasks.'''
-    def flags(self):
-        return 'D'
 
 # Convert nodelist format (slurm specific?) to an expanded list of nodes.
 #    nl     => hosts[,nl]
@@ -281,13 +250,46 @@ def probeContext():
     #if ...: PBSContext()
     if 'DISBATCH_SSH_NODELIST' in os.environ: return SSHContext()
 
+class TaskInfo(object):
+    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
+        self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.host = taskId, taskStreamIndex, taskRepIndex, taskCmd, host
+        self.pid, self.returncode, self.start, self.end, self.outbytes, self.errbytes = pid, returncode, start, end, outbytes, errbytes
+        # The KVS key in which this task should be queued: per-node or global.
+        # This could even check if this is a finished tasked and return '.finished task', potentially
+        self.taskKey = '.node.%s'%self.host if self.host else '.task'
+
+    def flags(self):
+        return (  ('R' if self.returncode else ' ')
+                + ('O' if self.outbytes   else ' ')
+                + ('E' if self.errbytes   else ' '))
+
+    def __str__(self):
+        # If this changes, update disBatcher.py too
+        return '\t'.join([str(x) for x in [self.flags(), self.taskId, self.taskStreamIndex, self.taskRepIndex, self.host, self.pid, self.returncode, self.end - self.start, self.start, self.end, self.outbytes, self.errbytes, repr(self.taskCmd)]])
+
+class BarrierTask(TaskInfo):
+    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, key=None):
+        super(BarrierTask, self).__init__(taskId, taskStreamIndex, taskRepIndex, taskCmd, myHostname, myPid)
+        self.key = key
+
+    def flags(self):
+        return 'B'
+
+class DoneTask(BarrierTask):
+    '''Implicit barrier posted when there are no more tasks.'''
+    def __init__(self, taskId, taskStreamIndex):
+        super(DoneTask, self).__init__(taskId, taskStreamIndex, -1, '', 'done!')
+
+    def flags(self):
+        return 'D'
+
 # When the user specifies a command that will be generating tasks,
 # this class wraps the command's execution so we can trigger a
 # shutdown if the user's command fails to send an indication that task
 # generation is done.
 class WatchIt(Thread):
     def __init__(self, command, **kwargs):
-        Thread.__init__(self, name='WatchIt')
+        super(WatchIt, self).__init__(name='WatchIt')
         self.daemon = True
         self.command = command
         self.p = SUB.Popen(command, **kwargs)
@@ -394,17 +396,16 @@ def taskGenerator(tasks, context):
             taskCounter += 1
 
     logger.info('Processed %d tasks.', taskCounter)
-    # Could set a key to post automatically to a 'done' key at end:
-    yield DoneTask(taskCounter, tsx, -1, '')
+    yield DoneTask(taskCounter, tsx)
 
 # Main control loop that sends new tasks to the execution engines.
 class Feeder(Thread):
-    def __init__(self, kvsserver, context, tasks, semaphore):
+    def __init__(self, kvsserver, context, tasks, taskSlots):
         super(Feeder, self).__init__(name='Feeder')
         self.daemon = True
         self.context = context
         self.taskGenerator = taskGenerator(tasks, context)
-        self.semaphore = semaphore
+        self.taskSlots = taskSlots
         self.kvs = kvsstcp.KVSClient(kvsserver)
         # just used for status reporting (not thread safe):
         self.done = False
@@ -415,7 +416,7 @@ class Feeder(Thread):
         self.kvs.put('.common env', {'DISBATCH_JOBID': str(self.context.jobid), 'DISBATCH_NAMETASKS': self.context.name}) #TODO: Add more later?
         while 1:
             # Wait for a slot
-            self.semaphore.acquire()
+            self.taskSlots.acquire()
 
             # Request the next task
             tinfo = self.taskGenerator.next()
@@ -433,12 +434,13 @@ class Feeder(Thread):
                 logger.info('Entering barrier (key is %s).', repr(tinfo.key))
 
                 # Wait for all the other task slots to be free (_initial_value is totalSlots)
-                for i in range(self.semaphore._initial_value-1):
-                    self.semaphore.acquire()
+                # These ar ethen released by Driver when barrier is finished
+                for i in range(self.taskSlots._initial_value-1):
+                    self.taskSlots.acquire()
 
                 # Completed all tasks up to, but not including the barrier. Now complete the barrier.
                 logger.info('Finishing barrier.')
-                # post a task finished for the current barrier, just like any other task.
+                # post a task finished for the current barrier, just like any other task, triggering the release of all taskSlots
                 tinfo.end = time.time()
                 self.kvs.put('.finished task', tinfo)
                 self.barrier = None
@@ -449,14 +451,14 @@ class Feeder(Thread):
             # At this point, we have a task
             tpayload = [tinfo.taskId, tinfo.taskStreamIndex, tinfo.taskRepIndex, tinfo.taskCmd]
             logger.info('Posting task: %r', tpayload)
-            self.kvs.put(tinfo.taskKey(), tpayload)
+            self.kvs.put(tinfo.taskKey, tpayload)
 
         self.kvs.close()
 
 # Main control loop that processes completed tasks.
-class Finisher(Thread):
+class Driver(Thread):
     def __init__(self, kvsserver, context, tasks, mailTo=None, mailFreq=1):
-        super(Finisher, self).__init__(name='Finisher')
+        super(Driver, self).__init__(name='Driver')
         self.context = context
         self.kvs = kvsstcp.KVSClient(kvsserver)
         self.mailTo = mailTo
@@ -466,60 +468,71 @@ class Finisher(Thread):
             self.trackResults = tasks.resultkey
         except AttributeError:
             self.trackResults = False
-        self.semaphore = BoundedSemaphore(sum(self.context.cylinders))
-        self.feeder = Feeder(kvsserver, context, tasks, self.semaphore)
-        self.status = None
+        self.taskSlots = BoundedSemaphore(sum(self.context.cylinders))
+        self.feeder = Feeder(kvsserver, context, tasks, self.taskSlots)
+
+        self.finished = 0
+        self.failed = 0
+
+        self.failureFile = self.context.logfile('failed.txt')
+        self.statusFile = open(self.context.logfile('status.txt'), 'w+')
+        self.statusLastOffset = self.statusFile.tell()
 
         self.daemon = True
         self.start()
 
-    def sendNotification(self, finished, statusfo, statusfolast):
-        import smtplib
-        from email.mime.text import MIMEText
-        statusfo.seek(statusfolast)
-        msg = MIMEText('Last %d:\n\n'%self.mailFreq + statusfo.read())
-        msg['Subject'] = '%s (%s) has completed %d tasks.'%(self.context.name, self.context.jobid, finished)
-        msg['From'] = self.mailTo
-        msg['To'] = self.mailTo
-        s = smtplib.SMTP()
-        s.connect()
-        s.sendmail([self.mailTo], [self.mailTo], msg.as_string())
+    def sendNotification(self):
+        try:
+            import smtplib
+            from email.mime.text import MIMEText
+            self.statusFile.seek(self.statusLastOffset)
+            msg = MIMEText('Last %d:\n\n'%self.mailFreq + self.statusFile.read())
+            msg['Subject'] = '%s (%s) has completed %d tasks.'%(self.context.name, self.context.jobid, self.finished)
+            msg['From'] = self.mailTo
+            msg['To'] = self.mailTo
+            s = smtplib.SMTP()
+            s.connect()
+            s.sendmail([self.mailTo], [self.mailTo], msg.as_string())
+            self.statusLastOffset = statusfo.tell()
+        except Exception, e:
+            logger.warn('Failed to send notification message: "%s". Disabling.', e)
+            self.mailTo = None
+            # Be sure to seek back to EOF to append
+            self.statusFile.seek(0, 2)
 
-    def updateStatus(self, **args):
-        if args == self.status: return
+    def updateStatus(self):
+        status = dict(more = not self.feeder.done, barrier = self.feeder.barrier,
+                finished = self.finished, failed = self.failed,
+                # base active on semaphore value (correct except for barriers)
+                active = self.taskSlots._initial_value - self.taskSlots._Semaphore__value)
         # Make changes visible via KVS.
-        logger.debug('Posting status: %r', args)
+        logger.debug('Posting status: %r', status)
         self.kvs.get('DisBatch status', False)
-        self.kvs.put('DisBatch status', json.dumps(args, default=repr), 'JSON')
-        self.status = args
+        self.kvs.put('DisBatch status', json.dumps(status, default=repr), 'JSON')
 
     def run(self):
-        finished = failed = 0
-
-        failures = self.context.logfile('failed.txt')
-        statusfolast, statusfo = 0, open(self.context.logfile('status.txt'), 'w+')
-
         self.kvs.put('DisBatch status', '<Starting...>', False)
+        changed = False
         while 1:
-            logger.debug('Finisher loop: %d', finished)
+            logger.debug('Driver loop: %d', self.finished)
 
             # Make changes visible via KVS.
-            self.updateStatus(more = not self.feeder.done, barrier = self.feeder.barrier,
-                    finished = finished, failed = failed,
-                    # base active on semaphore value (correct except for barriers)
-                    active = self.semaphore._initial_value - self.semaphore._Semaphore__value)
+            if changed:
+                self.updateStatus()
+                changed = False
 
             # Wait for a finished task
             tinfo = self.kvs.get('.finished task')
             logger.debug('Finished task: %s', tinfo)
-            self.semaphore.release()
+            self.taskSlots.release()
 
             if isinstance(tinfo, BarrierTask):
+                changed = True
                 # Complete the barrier task itself, exit barrier mode.
                 logger.info('Finished barrier.')
                 # Release the rest of the slots (_initial_value is totalSlots)
-                for i in range(self.semaphore._initial_value-1):
-                    self.semaphore.release()
+                for i in range(self.taskSlots._initial_value-1):
+                    self.taskSlots.release()
                 # If user specified a KVS key, use it to signal the barrier is done.
                 if tinfo.key:
                     logger.info('put %s: %d.', tinfo.key, tinfo.taskId)
@@ -536,13 +549,14 @@ class Finisher(Thread):
                     logger.error('Unrecognized oob task: %(s)', tinfo)
                 continue
 
-            finished += 1
-            statusfo.write(str(tinfo)+'\n')
-            statusfo.flush()
+            changed = True
+            self.finished += 1
+            self.statusFile.write(str(tinfo)+'\n')
+            self.statusFile.flush()
 
             if tinfo.returncode:
-                failed += 1
-                with open(failures, 'a') as f:
+                self.failed += 1
+                with open(self.failureFile, 'a') as f:
                     if tinfo.taskRepIndex >= 0:
                         f.write("#DISBATCH REPEAT 1 start %d " % tinfo.taskRepIndex)
                     f.write(tinfo.taskCmd+'\n')
@@ -550,39 +564,40 @@ class Finisher(Thread):
             # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than one per key.
             if self.trackResults: self.kvs.put(self.trackResults%tinfo.taskId, str(tinfo), False)
             if self.mailTo and finished%self.mailFreq == 0:
-                try:
-                    self.sendNotification(finished, statusfo, statusfolast)
-                    statusfolast = statusfo.tell()
-                except Exception, e:
-                    logger.warn('Failed to send notification message: "%s". Disabling.', e)
-                    self.mailTo = None
-                    # Be sure to seek back to EOF to append
-                    statusfo.seek(0, 2)
+                self.sendNotification()
 
-        statusfo.close()
+        self.statusFile.close()
         self.kvs.close()
 
 # A simple class to count the number of bytes from a file stream (e.g., pipe),
-# and possibly collect the first few bytes of it
+# and possibly collect the first and/or last few bytes of it
 class OutputCollector(Thread):
-    def __init__(self, pipe, trim=0):
+    def __init__(self, pipe, takeStart=0, takeEnd=0):
         super(OutputCollector, self).__init__(name='OutputCollector')
         self.pipe = pipe
-        self.trim = trim
-        self.data = ''
+        self.takeStart = takeStart
+        self.takeEnd = takeEnd
+        self.dataStart = ''
+        self.dataEnd = ''
         self.bytes = 0
         self.daemon = True
         self.start()
 
     def run(self):
-        left = self.trim
+        start = self.takeStart
+        end = self.takeEnd
         while 1:
-            if left > 0:
-                r = self.pipe.read(left)
-                self.data += r
-                left -= len(r)
+            if start > 0:
+                r = self.pipe.read(start)
+                self.dataStart += r
+                start -= len(r)
             else:
-                r = self.pipe.read(1024)
+                r = self.pipe.read(4096)
+                if end > 0:
+                    if len(r) >= end:
+                        self.dataEnd = r[-end:]
+                    else:
+                        self.dataEnd = self.dataEnd[-end+len(r):] + r
             if not r: return
             self.bytes += len(r)
 
@@ -602,7 +617,7 @@ class OutputCollector(Thread):
 class EngineBlock(Thread):
     class Cylinder(mpProcess):
         def __init__(self, context, commonEnv, ciq, coq, cylinderId):
-            mpProcess.__init__(self)
+            super(EngineBlock.Cylinder, self).__init__()
             self.daemon = True
             self.context, self.commonEnv, self.ciq, self.coq, self.cylinderId = context, commonEnv, ciq, coq, cylinderId
             self.taskProc = None, None, None
@@ -631,10 +646,10 @@ class EngineBlock(Thread):
             baseEnv = os.environ.copy()
             baseEnv.update(self.commonEnv)
             while 1:
-                taskId, taskStreamIndex, taskRepIndex, taskCmd = self.ciq.get()
+                (taskId, taskStreamIndex, taskRepIndex, taskCmd), throttled = self.ciq.get()
                 if taskId == TaskIdOOB:
                     logger.info('Cylinder %d stopping.', self.cylinderId)
-                    self.coq.put(['done', 'stopped'])
+                    self.coq.put(('done', 'stopped', False))
                     break
                 t0 = time.time()
                 logger.info('Cylinder %d executing %s.', self.cylinderId, repr([taskId, taskStreamIndex, taskRepIndex, taskCmd]))
@@ -649,11 +664,11 @@ class EngineBlock(Thread):
                 t1 = time.time()
                 ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, self.context.node, tp.pid, tp.returncode, t0, t1, obp.bytes, ebp.bytes)
                 logger.info('Cylinder %s completed: %s', self.cylinderId, ti)
-                self.coq.put(['done', ti])
+                self.coq.put(('done', ti, throttled))
 
     class Injector(Thread):
         def __init__(self, kvsserver, key, throttle, fuelline):
-            Thread.__init__(self, name='Injector')
+            super(EngineBlock.Injector, self).__init__(name='Injector')
             self.daemon = True
             self.kvs = kvsstcp.KVSClient(kvsserver)
             self.key = key
@@ -666,10 +681,10 @@ class EngineBlock(Thread):
                 if self.throttle: self.throttle.acquire()
                 ti = self.kvs.get(self.key)
                 logger.debug('Injector got task %s', repr(ti))
-                self.fuelline.put(['task', ti])
+                self.fuelline.put(('task', ti, bool(self.throttle)))
 
     def __init__(self, kvsserver, context):
-        Thread.__init__(self, name='EngineBlock')
+        super(EngineBlock, self).__init__(name='EngineBlock')
         self.daemon = True
         self.context = context
         cylinders = context.cylinders[context.nodeId]
@@ -688,23 +703,23 @@ class EngineBlock(Thread):
     def run(self):
         inFlight, liveCylinders = 0, len(self.cylinders)
         while liveCylinders:
-            tag, o = self.coq.get()
+            tag, o, throttled = self.coq.get()
             logger.info('Run loop: %d %d %s %s', inFlight, liveCylinders, tag, repr(o))
             if tag == 'done':
                 inFlight -= 1
-                if o != 'stopped':
-                    self.kvs.put('.finished task', o)
-                    self.throttle.release()
-                else:
+                if throttled: self.throttle.release()
+                if o == 'stopped':
                     liveCylinders -= 1
+                else:
+                    self.kvs.put('.finished task', o)
             elif tag == 'task':
-                # This is a control message. The default at the moment
+                # Handle control messages (TaskIdOOB). The default at the moment
                 # is to put it back so other engines will see it. In
                 # the future we may have additional codings, perhaps
                 # ones that shouldn't auto propagate, so this sort of
                 # test will become a bit more complicated.
                 if o[0] == TaskIdOOB: self.kvs.put('.task', o)
-                self.ciq.put(o)
+                self.ciq.put((o, throttled))
                 inFlight += 1
             else:
                 logger.error('Unknown cylinder input tag: "%s" (%s)', tag, repr(o))
@@ -715,7 +730,7 @@ class EngineBlock(Thread):
 # ".shutdown" key), we kill the engine.
 class Deadman(Thread):
     def __init__(self, kvsserver, engine, main_pid):
-        Thread.__init__(self, name='Deadman')
+        super(Deadman, self).__init__(name='Deadman')
         self.daemon = True
         self.engine = engine
         self.main_pid = main_pid
@@ -745,8 +760,8 @@ class Deadman(Thread):
 
 def engine(kvsserver, context):
     import random
-    # engine makes at least 3(?) connections to kvs -- look into making client support multiple threads?
-    time.sleep(random.random()*5.0)
+    # Stagger start randomly to throttle to about 6 connects/second (3 per engine) to KVS
+    time.sleep(random.random()*len(context.nodes)/2)
     e = EngineBlock(kvsserver, context)
     d = Deadman(kvsserver, e, myPid)
     e.join()
@@ -808,7 +823,7 @@ if '__main__' == __name__:
             print >>sys.stderr, 'Cannot determine batch execution environment.'
             sys.exit(1)
 
-        # Apply -c and -t limits
+        # Apply lesser of -c and -t limits
         context.cylinders = [ min(int(c / args.cpusPerTask), args.tasksPerNode) for c in context.cylinders ]
         # TODO: communicate to jobs how many CPUs they have available?
 
@@ -818,7 +833,7 @@ if '__main__' == __name__:
             args.logfile.close()
             lconf['filename'] = args.logfile.name
         else:
-            lconf['filename'] = context.logfile('log.txt')
+            lconf['filename'] = context.logfile('driver.txt')
         logging.basicConfig(**lconf)
 
         logger.info('Starting feeder (%d) on %s in %s.', myPid, myHostname, os.getcwd())
@@ -852,7 +867,7 @@ if '__main__' == __name__:
 
         context.launch(kvsserver)
 
-        f = Finisher(kvsserver, context, taskSource, args.mailTo, args.mailFreq)
+        f = Driver(kvsserver, context, taskSource, args.mailTo, args.mailFreq)
         f.join()
 
         r = context.finish()
