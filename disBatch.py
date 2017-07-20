@@ -60,7 +60,7 @@ instructions.
 myHostname = socket.gethostname()
 myPid = os.getpid()
 
-# Note that even though these are case insensitive, only upper-case '#DISBATCH' prefixes are matched
+# Note that even though these are case insensitive, only lines that start with upper-case '#DISBATCH' prefixes are tested
 dbbarrier = re.compile('^#DISBATCH BARRIER(?: (.+)?)?$', re.I)
 dbcomment = re.compile('^\s*(#|$)')
 dbprefix  = re.compile('^#DISBATCH PREFIX (.*)$', re.I)
@@ -80,6 +80,7 @@ class BatchContext(object):
     def __init__(self, sysid, jobid, nodes, cylinders):
         self.sysid, self.jobid, self.nodes, self.cylinders = sysid, jobid, nodes, cylinders
         self.wd = os.getcwd() #TODO: Easy enough to override, but still... Is this the right place for this?
+        self.retiredNodes = set()
 
     def __str__(self):
         return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
@@ -90,8 +91,6 @@ class BatchContext(object):
         kvs = kvsstcp.KVSClient(kvsserver)
         kvs.put('.context', self)
         kvs.close()
-        # Do this here so it doesn't get unnecessarily pickled and distributed to engines:
-        self.retiredNodes = set()
 
     def launch(self, kvsserver):
         '''Launch the engine processes on all the nodes.'''
@@ -108,15 +107,6 @@ class BatchContext(object):
         '''Check that all engines completed successfully and return 0 on success, or a true value on failure (i.e., returncode).'''
         raise NotImplementedError('%s.finish is not implemented' % type(self))
 
-    def logfile(self, suffix=''):
-        '''Standardized file path construction for log files.'''
-        f = "%s_%s"%(getattr(self, 'name', 'disBatch'), self.jobid)
-        if hasattr(self, 'node'):
-            f += "_%s"%self.node
-        if suffix:
-            f += "_%s"%suffix
-        return f
-
     def setNode(self, node=None):
         '''Try to determine the hostname of this engine from the pov of the launcher.'''
         # This is just a fallback. Implementations should try to determine node as appropriate.
@@ -132,6 +122,39 @@ class BatchContext(object):
         except ValueError:
             # Should we instead assume 0 or carry on with none?
             raise LookupError('Couldn\'t find nodeId for %s in "%s".' % (node or myHostname, self.nodes))
+
+def logfile(context, suffix=''):
+    '''Standardized file path construction for log files.'''
+    f = "%s_%s"%(getattr(context, 'name', 'disBatch'), context.jobid)
+    if hasattr(context, 'node'):
+        f += "_%s"%context.node
+    if suffix:
+        f += "_%s"%suffix
+    return f
+
+def waitTimeout(sub, timeout, interval=1):
+    r = sub.poll()
+    while r is None and timeout > 0:
+        time.sleep(interval)
+        timeout -= interval
+        r = sub.poll()
+    return r
+
+def killPatiently(sub, name, timeout=15):
+    r = sub.poll()
+    if r is None:
+        logger.info('Waiting for %s to finish...', name)
+        r = waitTimeout(sub, timeout)
+    if r is None:
+        logger.warn('Terminating %s...', name)
+        sub.terminate()
+        r = waitTimeout(sub, timeout)
+    if r is None:
+        logger.warn('Killing %s.', name)
+        sub.kill()
+        r = sub.wait()
+    if r:
+        logger.warn("%s returned %d", name, r)
 
 # Convert nodelist format (slurm specific?) to an expanded list of nodes.
 #    nl     => hosts[,nl]
@@ -196,7 +219,7 @@ class SlurmContext(BatchContext):
                 logger.warn('Retirement planning needs improvement: %s', repr(e))
 
     def finish(self):
-        return self.engines.wait()
+        return not killPatiently(self.engines, 'engines')
 
     def setNode(self, node=None):
         super(SlurmContext, self).setNode(node or os.environ.get('SLURMD_NODENAME'))
@@ -234,14 +257,10 @@ class SSHContext(BatchContext):
         self.engines = list()
         for n in self.nodes:
             prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
-            self.engines.append(SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open(self.logfile('%s_engine_wrap.out'%n), 'w'), stderr=open(self.logfile('%s_engine_wrap.err'%n), 'w')))
+            self.engines.append(SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open(logfile(self, '%s_engine_wrap.out'%n), 'w'), stderr=open(logfile(self, '%s_engine_wrap.err'%n), 'w')))
 
     def finish(self):
-        failed = dict()
-        for n, e in zip(self.nodes, self.engines):
-            r = e.wait()
-            if r: failed[n] = r
-        return failed
+        return not any([ killPatiently(e, 'engine ' + n) for n, e in zip(self.nodes, self.engines) ])
 
 def probeContext():
     if 'SLURM_JOBID' in os.environ: return SlurmContext()
@@ -250,13 +269,11 @@ def probeContext():
     #if ...: PBSContext()
     if 'DISBATCH_SSH_NODELIST' in os.environ: return SSHContext()
 
+
 class TaskInfo(object):
-    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, errbytes = 0):
-        self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.host = taskId, taskStreamIndex, taskRepIndex, taskCmd, host
-        self.pid, self.returncode, self.start, self.end, self.outbytes, self.errbytes = pid, returncode, start, end, outbytes, errbytes
-        # The KVS key in which this task should be queued: per-node or global.
-        # This could even check if this is a finished tasked and return '.finished task', potentially
-        self.taskKey = '.node.%s'%self.host if self.host else '.task'
+    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, taskKey, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, outdata = '', errbytes = 0, errdata = ''):
+        self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.taskKey = taskId, taskStreamIndex, taskRepIndex, taskCmd, taskKey
+        self.host, self.pid, self.returncode, self.start, self.end, self.outbytes, self.outdata, self.errbytes, self.errdata = host, pid, returncode, start, end, outbytes, outdata, errbytes, errdata
 
     def flags(self):
         return (  ('R' if self.returncode else ' ')
@@ -265,12 +282,11 @@ class TaskInfo(object):
 
     def __str__(self):
         # If this changes, update disBatcher.py too
-        return '\t'.join([str(x) for x in [self.flags(), self.taskId, self.taskStreamIndex, self.taskRepIndex, self.host, self.pid, self.returncode, self.end - self.start, self.start, self.end, self.outbytes, self.errbytes, repr(self.taskCmd)]])
+        return '\t'.join([str(x) for x in [self.flags(), self.taskId, self.taskStreamIndex, self.taskRepIndex, self.host, self.pid, self.returncode, self.end - self.start, self.start, self.end, self.outbytes, repr(self.outdata), self.errbytes, repr(self.errdata), repr(self.taskCmd)]])
 
 class BarrierTask(TaskInfo):
     def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, key=None):
-        super(BarrierTask, self).__init__(taskId, taskStreamIndex, taskRepIndex, taskCmd, myHostname, myPid)
-        self.key = key
+        super(BarrierTask, self).__init__(taskId, taskStreamIndex, taskRepIndex, taskCmd, key, myHostname, myPid)
 
     def flags(self):
         return 'B'
@@ -282,6 +298,7 @@ class DoneTask(BarrierTask):
 
     def flags(self):
         return 'D'
+
 
 # When the user specifies a command that will be generating tasks,
 # this class wraps the command's execution so we can trigger a
@@ -296,13 +313,15 @@ class WatchIt(Thread):
         self.start()
 
     def run(self):
-        self.p.wait()
+        r = self.p.wait()
+        # TODO: send done on success
         logger.info('Task generating command has exited: %s %d.', repr(self.command), self.p.returncode)
         # allow time for a normal shutdown to complete. since this is
         # a daemon thread, its existence won't prevent an exit.
         time.sleep(30)
         # waited long enough, force a shutdown.
         logger.info('Forcing shutdown (was the done task posted?).')
+        # TODO cleanup as if KeyboardInterrupt
         os._exit(1)
 
 # When the user specifies tasks will be passed through a KVS, this
@@ -369,7 +388,7 @@ def taskGenerator(tasks, context):
                     logger.info('Processing repeat: %d %d %d', repeats, rx, step)
                     cmd = prefix + (m.group('command') or '') + suffix
                     while repeats > 0:
-                        yield TaskInfo(taskCounter, tsx, rx, cmd)
+                        yield TaskInfo(taskCounter, tsx, rx, cmd, '.task')
                         taskCounter += 1
                         rx += step
                         repeats -= 1
@@ -378,7 +397,7 @@ def taskGenerator(tasks, context):
                 if m:
                     cmd = m.group(1)
                     for rx, node in enumerate(context.nodes):
-                        yield TaskInfo(taskCounter, tsx, rx, prefix + cmd + suffix, node)
+                        yield TaskInfo(taskCounter, tsx, rx, prefix + cmd + suffix, '.node.'+node)
                         taskCounter += 1
                     continue
                 m = dbbarrier.match(t)
@@ -392,7 +411,7 @@ def taskGenerator(tasks, context):
                 # Comment or empty line, ignore
                 continue
 
-            yield TaskInfo(taskCounter, tsx, -1, prefix + t + suffix)
+            yield TaskInfo(taskCounter, tsx, -1, prefix + t + suffix, '.task')
             taskCounter += 1
 
     logger.info('Processed %d tasks.', taskCounter)
@@ -427,11 +446,11 @@ class Feeder(Thread):
                     # Post the poison pill. This may trigger retirement of engines.
                     self.kvs.put('.task', [TaskIdOOB, -1, -1, CmdPoison])
 
-                self.barrier = tinfo.key or True
+                self.barrier = tinfo.taskKey or True
                 # Enter a barrier. We'll exit when all tasks
                 # issued to this point have completed.
                 tinfo.start = time.time()
-                logger.info('Entering barrier (key is %s).', repr(tinfo.key))
+                logger.info('Entering barrier (key is %s).', repr(tinfo.taskKey))
 
                 # Wait for all the other task slots to be free (_initial_value is totalSlots)
                 # These ar ethen released by Driver when barrier is finished
@@ -474,8 +493,8 @@ class Driver(Thread):
         self.finished = 0
         self.failed = 0
 
-        self.failureFile = self.context.logfile('failed.txt')
-        self.statusFile = open(self.context.logfile('status.txt'), 'w+')
+        self.failureFile = logfile(self.context, 'failed.txt')
+        self.statusFile = open(logfile(self.context, 'status.txt'), 'w+')
         self.statusLastOffset = self.statusFile.tell()
 
         self.daemon = True
@@ -534,9 +553,9 @@ class Driver(Thread):
                 for i in range(self.taskSlots._initial_value-1):
                     self.taskSlots.release()
                 # If user specified a KVS key, use it to signal the barrier is done.
-                if tinfo.key:
-                    logger.info('put %s: %d.', tinfo.key, tinfo.taskId)
-                    self.kvs.put(tinfo.key, str(tinfo.taskId), False)
+                if tinfo.taskKey:
+                    logger.info('put %s: %d.', tinfo.taskKey, tinfo.taskId)
+                    self.kvs.put(tinfo.taskKey, str(tinfo.taskId), False)
 
                 if isinstance(tinfo, DoneTask):
                     break
@@ -601,6 +620,12 @@ class OutputCollector(Thread):
             if not r: return
             self.bytes += len(r)
 
+    def __str__(self):
+        s = self.dataStart
+        if self.dataEnd:
+            s += '...' + self.dataEnd
+        return s
+
 # Once we know the nodes participating in the run, we start an engine
 # on each node. The engine in turn starts the number of cylinders
 # (execution entities) specified for the node (a map of nodes to
@@ -621,8 +646,6 @@ class EngineBlock(Thread):
             self.daemon = True
             self.context, self.commonEnv, self.ciq, self.coq, self.cylinderId = context, commonEnv, ciq, coq, cylinderId
             self.taskProc = None, None, None
-            # TODO generalize this into context class:
-            if self.context.sysid == 'SSH': signal.signal(signal.SIGTERM, self.killTaskSubproc)
             self.start()
 
         def killTaskSubproc(self, sig, frame):
@@ -641,6 +664,8 @@ class EngineBlock(Thread):
             os._exit(0)
 
         def run(self):
+            # TODO FIXME generalize this into context class:
+            if self.context.sysid == 'SSH': signal.signal(signal.SIGTERM, self.killTaskSubproc)
             self.pgid = os.getpgid(0)
             logger.info('Cylinder %d firing, %d, %d.', self.cylinderId, self.pid, self.pgid)
             baseEnv = os.environ.copy()
@@ -657,12 +682,12 @@ class EngineBlock(Thread):
                 pfnarg = {}
                 if self.context.sysid == 'SSH': pfnarg['preexec_fn'] = os.setsid
                 tp = self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=baseEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, **pfnarg)
-                obp = OutputCollector(tp.stdout)
-                ebp = OutputCollector(tp.stderr)
+                obp = OutputCollector(tp.stdout, 40, 40)
+                ebp = OutputCollector(tp.stderr, 40, 40)
                 tp.wait()
                 self.taskProc = None
                 t1 = time.time()
-                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, self.context.node, tp.pid, tp.returncode, t0, t1, obp.bytes, ebp.bytes)
+                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, '.finished task', self.context.node, tp.pid, tp.returncode, t0, t1, obp.bytes, str(obp), ebp.bytes, str(ebp))
                 logger.info('Cylinder %s completed: %s', self.cylinderId, ti)
                 self.coq.put(('done', ti, throttled))
 
@@ -695,7 +720,7 @@ class EngineBlock(Thread):
         # mulitprocessing module---we need to coordinate between
         # independent processes.
         self.ciq, self.coq, self.throttle = mpQueue(), mpQueue(), BoundedSemaphore(cylinders)
-        self.Injector(kvsserver, ".node.%s" % context.node, None, self.coq)
+        self.Injector(kvsserver, ".node." + context.node, None, self.coq)
         self.Injector(kvsserver, ".task", self.throttle, self.coq)
         self.cylinders = [self.Cylinder(context, self.commonEnv, self.ciq, self.coq, x) for x in range(cylinders)]
         self.start()
@@ -711,7 +736,7 @@ class EngineBlock(Thread):
                 if o == 'stopped':
                     liveCylinders -= 1
                 else:
-                    self.kvs.put('.finished task', o)
+                    self.kvs.put(o.taskKey, o)
             elif tag == 'task':
                 # Handle control messages (TaskIdOOB). The default at the moment
                 # is to put it back so other engines will see it. In
@@ -723,7 +748,8 @@ class EngineBlock(Thread):
                 inFlight += 1
             else:
                 logger.error('Unknown cylinder input tag: "%s" (%s)', tag, repr(o))
-        self.kvs.put('.finished task', TaskInfo(TaskIdOOB, -1, -1, CmdRetire, self.context.node))
+        rt = TaskInfo(TaskIdOOB, -1, -1, CmdRetire, '.finished task', self.context.node)
+        self.kvs.put(rt.taskKey, rt)
         self.kvs.close()
 
 # Fail safe: if we lose KVS connectivity (or someone binds the
@@ -788,7 +814,7 @@ if '__main__' == __name__:
         context.setNode(args.node)
         logger = logging.getLogger('DisBatch Engine')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
-        lconf['filename'] = context.logfile('engine.log')
+        lconf['filename'] = logfile(context, 'engine.log')
         logging.basicConfig(**lconf)
         logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, context.nodeId, myHostname, myPid, os.getcwd())
         engine(args.kvsserver, context)
@@ -833,7 +859,7 @@ if '__main__' == __name__:
             args.logfile.close()
             lconf['filename'] = args.logfile.name
         else:
-            lconf['filename'] = context.logfile('driver.txt')
+            lconf['filename'] = logfile(context, 'driver.txt')
         logging.basicConfig(**lconf)
 
         logger.info('Starting feeder (%d) on %s in %s.', myPid, myHostname, os.getcwd())
@@ -862,7 +888,7 @@ if '__main__' == __name__:
 
         if args.web:
             from kvsstcp import wskvsmu
-            urlfile = context.logfile('url')
+            urlfile = logfile(context, 'url')
             wskvsmu.main(kvsserver, urlfile=open(urlfile, 'w'), monitorspec=':gpvw')
 
         context.launch(kvsserver)
@@ -871,7 +897,7 @@ if '__main__' == __name__:
         f.join()
 
         r = context.finish()
-        if r:
-            print >>sys.stderr, 'Some engine processes failed (%r) -- please check the logs'%r
+        if not r:
+            print >>sys.stderr, 'Some engine processes failed -- please check the logs'
 
         if kvsst: kvsst.shutdown()
