@@ -104,7 +104,7 @@ class BatchContext(object):
         logger.info('Retiring node (no op) "%s": %s', node, msg)
 
     def finish(self):
-        '''Check that all engines completed successfully and return 0 on success, or a true value on failure (i.e., returncode).'''
+        '''Check that all engines completed successfully and return True on success.'''
         raise NotImplementedError('%s.finish is not implemented' % type(self))
 
     def setNode(self, node=None):
@@ -141,20 +141,28 @@ def waitTimeout(sub, timeout, interval=1):
     return r
 
 def killPatiently(sub, name, timeout=15):
+    if not sub: return
     r = sub.poll()
     if r is None:
         logger.info('Waiting for %s to finish...', name)
         r = waitTimeout(sub, timeout)
     if r is None:
         logger.warn('Terminating %s...', name)
-        sub.terminate()
+        try:
+            sub.terminate()
+        except OSError:
+            pass
         r = waitTimeout(sub, timeout)
     if r is None:
         logger.warn('Killing %s.', name)
-        sub.kill()
+        try:
+            sub.kill()
+        except OSError:
+            pass
         r = sub.wait()
     if r:
-        logger.warn("%s returned %d", name, r)
+        logger.info("%s returned %d", name, r)
+    return r
 
 # Convert nodelist format (slurm specific?) to an expanded list of nodes.
 #    nl     => hosts[,nl]
@@ -305,29 +313,33 @@ class DoneTask(BarrierTask):
 # shutdown if the user's command fails to send an indication that task
 # generation is done.
 class WatchIt(Thread):
-    def __init__(self, command, **kwargs):
+    def __init__(self, taskSource, command, **kwargs):
         super(WatchIt, self).__init__(name='WatchIt')
         self.daemon = True
         self.command = command
         self.p = SUB.Popen(command, **kwargs)
+        self.taskSource = taskSource
         self.start()
 
     def run(self):
         r = self.p.wait()
         # TODO: send done on success
-        logger.info('Task generating command has exited: %s %d.', repr(self.command), self.p.returncode)
-        # allow time for a normal shutdown to complete. since this is
-        # a daemon thread, its existence won't prevent an exit.
-        time.sleep(30)
-        # waited long enough, force a shutdown.
-        logger.info('Forcing shutdown (was the done task posted?).')
-        # TODO cleanup as if KeyboardInterrupt
-        os._exit(1)
+        logger.info('Task generating command has exited: %s %d.', repr(self.command), r)
+        # post a done just in case the process didn't
+        self.taskSource.done()
+        if r:
+            # allow time for a normal shutdown to complete. since this is
+            # a daemon thread, its existence won't prevent an exit.
+            time.sleep(30)
+            # waited long enough, force a shutdown.
+            logger.warn('Task generator failed; forcing shutdown')
+            sys.exit(1)
 
 # When the user specifies tasks will be passed through a KVS, this
 # class generates an interable that feeds task from the KVS.
 class KVSTaskSource(object):
     def __init__(self, kvsserver):
+        self.kvsserver = kvsserver
         self.kvs = kvsstcp.KVSClient(kvsserver)
         self.name = self.kvs.get('task source name', False)
         self.taskkey = self.name + ' task'
@@ -340,6 +352,12 @@ class KVSTaskSource(object):
             self.kvs.close()
             raise StopIteration
         return t
+
+    def done(self):
+        kvs = kvsstcp.KVSClient(kvsserver)
+        kvs.put(self.taskkey, self.donetask)
+        kvs.close()
+
 
 # Given a task source (generating task command lines), parse the lines and
 # produce a TaskInfo generator.
@@ -561,7 +579,7 @@ class Driver(Thread):
                     break
 
             if tinfo.taskId == TaskIdOOB:
-                # A finished tasks with id -1 indicates some sort of OOB control message.
+                # A finished task with id -1 indicates some sort of OOB control message.
                 if tinfo.taskCmd == CmdRetire:
                     self.context.retire(tinfo.host)
                 else:
@@ -585,6 +603,7 @@ class Driver(Thread):
             if self.mailTo and finished%self.mailFreq == 0:
                 self.sendNotification()
 
+        logger.info('Driver done')
         self.statusFile.close()
         self.kvs.close()
 
@@ -645,27 +664,17 @@ class EngineBlock(Thread):
             super(EngineBlock.Cylinder, self).__init__()
             self.daemon = True
             self.context, self.commonEnv, self.ciq, self.coq, self.cylinderId = context, commonEnv, ciq, coq, cylinderId
-            self.taskProc = None, None, None
+            self.taskProc = None
             self.start()
 
-        def killTaskSubproc(self, sig, frame):
-            logger.info('Cylinder %d killing sub procs.', self.cylinderId)
-            try:
-                if self.taskProc.poll() is None:
-                    logger.info('Cylinder %d sending SIGTERM to %d.', self.cylinderId, self.taskProc.pid)
-                    self.taskProc.terminate()
-            except AttributeError:
-                # in case taskProc disappears
-                pass
-            except OSError:
-                # in case process completes
-                pass
-            logger.info('Cylinder %d exiting on interrupt, %d, %d.', self.cylinderId, self.pid, self.pgid)
-            os._exit(0)
-
         def run(self):
-            # TODO FIXME generalize this into context class:
-            if self.context.sysid == 'SSH': signal.signal(signal.SIGTERM, self.killTaskSubproc)
+            signal.signal(signal.SIGTERM, lambda s, f: sys.exit(1))
+            try:
+                self.main()
+            finally:
+                killPatiently(self.taskProc, 'cylinder %d subproc' % self.cylinderId, 2)
+
+        def main(self):
             self.pgid = os.getpgid(0)
             logger.info('Cylinder %d firing, %d, %d.', self.cylinderId, self.pid, self.pgid)
             baseEnv = os.environ.copy()
@@ -679,15 +688,14 @@ class EngineBlock(Thread):
                 t0 = time.time()
                 logger.info('Cylinder %d executing %s.', self.cylinderId, repr([taskId, taskStreamIndex, taskRepIndex, taskCmd]))
                 baseEnv['DISBATCH_STREAM_INDEX'], baseEnv['DISBATCH_REPEAT_INDEX'], baseEnv['DISBATCH_TASKID'] = str(taskStreamIndex), str(taskRepIndex), str(taskId)
-                pfnarg = {}
-                if self.context.sysid == 'SSH': pfnarg['preexec_fn'] = os.setsid
-                tp = self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=baseEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, **pfnarg)
-                obp = OutputCollector(tp.stdout, 40, 40)
-                ebp = OutputCollector(tp.stderr, 40, 40)
-                tp.wait()
+                self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=baseEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid)
+                pid = self.taskProc.pid
+                obp = OutputCollector(self.taskProc.stdout, 40, 40)
+                ebp = OutputCollector(self.taskProc.stderr, 40, 40)
+                r = self.taskProc.wait()
                 self.taskProc = None
                 t1 = time.time()
-                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, '.finished task', self.context.node, tp.pid, tp.returncode, t0, t1, obp.bytes, str(obp), ebp.bytes, str(ebp))
+                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, '.finished task', self.context.node, pid, r, t0, t1, obp.bytes, str(obp), ebp.bytes, str(ebp))
                 logger.info('Cylinder %s completed: %s', self.cylinderId, ti)
                 self.coq.put(('done', ti, throttled))
 
@@ -752,51 +760,29 @@ class EngineBlock(Thread):
         self.kvs.put(rt.taskKey, rt)
         self.kvs.close()
 
-# Fail safe: if we lose KVS connectivity (or someone binds the
-# ".shutdown" key), we kill the engine.
-class Deadman(Thread):
-    def __init__(self, kvsserver, engine, main_pid):
-        super(Deadman, self).__init__(name='Deadman')
-        self.daemon = True
-        self.engine = engine
-        self.main_pid = main_pid
-        self.kvs = kvsstcp.KVSClient(kvsserver)
-        self.start()
-
-    def run(self):
-        try:
-            self.kvs.view('.shutdown')
-        except: pass
-        self.engine.shutdown = True
-        time.sleep(1)
-        nap = False
-        for c in self.engine.cylinders:
-            if c.is_alive():
-                nap = True
-                try:
-                    logger.info('Deadman terminating %d', c.pid)
-                    os.kill(c.pid, signal.SIGTERM)
-                except Exception, e:
-                    logger.info('Deadman ignoring "%s" while terminating %d', e, c.pid)
-        if nap:
-            logger.info('Deadman saw live processes.')
-            time.sleep(5)
-            logger.info('Deadman forcing exit.')
-            os._exit(0)
-
 def engine(kvsserver, context):
     import random
     # Stagger start randomly to throttle to about 6 connects/second (3 per engine) to KVS
     time.sleep(random.random()*len(context.nodes)/2)
+    kvs = kvsstcp.KVSClient(kvsserver)
     e = EngineBlock(kvsserver, context)
-    d = Deadman(kvsserver, e, myPid)
-    e.join()
-    logger.info('Engine exiting normally.')
+    try:
+        kvs.view('.shutdown')
+        logger.info('got shutdown')
+    finally:
+        logger.info('Engine shutting down.')
+        for c in e.cylinders:
+            if c.is_alive():
+                try:
+                    c.terminate()
+                except OSError:
+                    pass
+    kvs.close()
 
 if '__main__' == __name__:
     import argparse
 
-    sys.setcheckinterval(1000000)
+    #sys.setcheckinterval(1000000)
 
     if len(sys.argv) > 1 and sys.argv[1] == '--engine':
         argp = argparse.ArgumentParser(description='Task execution engine.')
@@ -876,8 +862,8 @@ if '__main__' == __name__:
             with open('kvsinfo.txt', 'w') as kvsi:
                 kvsi.write(kvsserver)
             if args.taskcommand:
-                wit = WatchIt(args.taskcommand, shell=True, env=kvsst.env())
                 taskSource = KVSTaskSource(kvsserver)
+                wit = WatchIt(taskSource, args.taskcommand, shell=True, env=kvsst.env())
             else:
                 taskSource = args.taskfile
 
@@ -894,10 +880,20 @@ if '__main__' == __name__:
         context.launch(kvsserver)
 
         f = Driver(kvsserver, context, taskSource, args.mailTo, args.mailFreq)
-        f.join()
+        try:
+            while f.isAlive():
+                f.join(60)
+        finally:
+            try:
+                kvs = kvsstcp.KVSClient(kvsserver)
+                logger.info("posting .shutdown")
+                kvs.put('.shutdown', '', False)
+                kvs.close()
+            except:
+                pass
+            r = context.finish()
+            if kvsst: kvsst.shutdown()
 
-        r = context.finish()
         if not r:
             print >>sys.stderr, 'Some engine processes failed -- please check the logs'
 
-        if kvsst: kvsst.shutdown()
