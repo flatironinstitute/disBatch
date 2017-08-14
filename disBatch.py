@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import json, logging, os, re, signal, socket, subprocess as SUB, sys, time
+import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
 
 from multiprocessing import Process as mpProcess, Queue as mpQueue
 from Queue import Queue, Empty
@@ -85,23 +85,21 @@ class BatchContext(object):
     def __str__(self):
         return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
 
-    def _launch(self, kvsserver):
+    def _launch(self, kvs):
         '''Prepare for launch: place the context (self) in the KVS for engine
         nodes to load.'''
-        kvs = kvsstcp.KVSClient(kvsserver)
         kvs.put('.context', self)
-        kvs.close()
 
-    def launch(self, kvsserver):
+    def launch(self, kvs):
         '''Launch the engine processes on all the nodes.'''
         # Any implementation of launch must call self._launch:
-        self._launch(kvsserver)
+        self._launch(kvs)
         raise NotImplementedError('%s.launch is not implemented' % type(self))
 
-    def retire(self, node, msg='ToDo: add clean up hook here?'):
+    def retire(self, node, msg='no-op: add clean up hook here?'):
         '''Note that a node has finished all assigned tasks (and has been told there will be no more coming).'''
         self.retiredNodes.add(node)
-        logger.info('Retiring node (no op) "%s": %s', node, msg)
+        logger.info('Retiring node "%s": %s', node, msg)
 
     def finish(self):
         '''Check that all engines completed successfully and return True on success.'''
@@ -208,8 +206,8 @@ class SlurmContext(BatchContext):
 
         super(SlurmContext, self).__init__('SLURM', jobid, nodes, cylinders)
 
-    def launch(self, kvsserver):
-        self._launch(kvsserver)
+    def launch(self, kvs):
+        self._launch(kvs)
         # start one engine per node using the equivalent of:
         # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
         self.engines = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', DisBatchPath, '--engine', kvsserver])
@@ -260,15 +258,19 @@ class SSHContext(BatchContext):
 
         super(SSHContext, self).__init__('SSH', jobid, nodes, cylinders)
 
-    def launch(self, kvsserver):
-        self._launch(kvsserver)
-        self.engines = list()
+    def launch(self, kvs):
+        self._launch(kvs)
+        self.engines = dict()
         for n in self.nodes:
             prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
-            self.engines.append(SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open(logfile(self, '%s_engine_wrap.out'%n), 'w'), stderr=open(logfile(self, '%s_engine_wrap.err'%n), 'w')))
+            self.engines[n] = SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open(logfile(self, '%s_engine_wrap.out'%n), 'w'), stderr=open(logfile(self, '%s_engine_wrap.err'%n), 'w'))
+
+    def retire(self, node):
+        super(SSHContext, self).retire(node, "terminating engine")
+        killPatiently(self.engines[node], 'engine ' + node, 5)
 
     def finish(self):
-        return not any([ killPatiently(e, 'engine ' + n) for n, e in zip(self.nodes, self.engines) ])
+        return not any([ killPatiently(e, 'engine ' + n) for n, e in self.engines.iteritems() ])
 
 def probeContext():
     if 'SLURM_JOBID' in os.environ: return SlurmContext()
@@ -293,8 +295,9 @@ class TaskInfo(object):
         return '\t'.join([str(x) for x in [self.flags(), self.taskId, self.taskStreamIndex, self.taskRepIndex, self.host, self.pid, self.returncode, self.end - self.start, self.start, self.end, self.outbytes, repr(self.outdata), self.errbytes, repr(self.errdata), repr(self.taskCmd)]])
 
 class BarrierTask(TaskInfo):
-    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, key=None):
+    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, key=None, check=False):
         super(BarrierTask, self).__init__(taskId, taskStreamIndex, taskRepIndex, taskCmd, key, myHostname, myPid)
+        self.check = check
 
     def flags(self):
         return 'B'
@@ -437,13 +440,13 @@ def taskGenerator(tasks, context):
 
 # Main control loop that sends new tasks to the execution engines.
 class Feeder(Thread):
-    def __init__(self, kvsserver, context, tasks, taskSlots):
+    def __init__(self, kvs, context, tasks, taskSlots):
         super(Feeder, self).__init__(name='Feeder')
         self.daemon = True
         self.context = context
         self.taskGenerator = taskGenerator(tasks, context)
         self.taskSlots = taskSlots
-        self.kvs = kvsstcp.KVSClient(kvsserver)
+        self.kvs = kvs.clone()
         # just used for status reporting (not thread safe):
         self.done = False
         self.barrier = None
@@ -455,8 +458,11 @@ class Feeder(Thread):
             # Wait for a slot
             self.taskSlots.acquire()
 
-            # Request the next task
-            tinfo = self.taskGenerator.next()
+            if self.done:
+                tinfo = DoneTask(-2, 0)
+            else:
+                # Request the next task
+                tinfo = self.taskGenerator.next()
 
             if isinstance(tinfo, BarrierTask):
                 if isinstance(tinfo, DoneTask):
@@ -494,10 +500,10 @@ class Feeder(Thread):
 
 # Main control loop that processes completed tasks.
 class Driver(Thread):
-    def __init__(self, kvsserver, context, tasks, mailTo=None, mailFreq=1):
+    def __init__(self, kvs, context, tasks, mailTo=None, mailFreq=1):
         super(Driver, self).__init__(name='Driver')
         self.context = context
-        self.kvs = kvsstcp.KVSClient(kvsserver)
+        self.kvs = kvs.clone()
         self.mailTo = mailTo
         self.mailFreq = mailFreq
 
@@ -506,7 +512,7 @@ class Driver(Thread):
         except AttributeError:
             self.trackResults = False
         self.taskSlots = BoundedSemaphore(sum(self.context.cylinders))
-        self.feeder = Feeder(kvsserver, context, tasks, self.taskSlots)
+        self.feeder = Feeder(self.kvs, context, tasks, self.taskSlots)
 
         self.finished = 0
         self.failed = 0
@@ -524,7 +530,9 @@ class Driver(Thread):
             from email.mime.text import MIMEText
             self.statusFile.seek(self.statusLastOffset)
             msg = MIMEText('Last %d:\n\n'%self.mailFreq + self.statusFile.read())
-            msg['Subject'] = '%s (%s) has completed %d tasks.'%(self.context.name, self.context.jobid, self.finished)
+            msg['Subject'] = '%s (%s) has completed %d tasks'%(self.context.name, self.context.jobid, self.finished)
+            if self.failed:
+                msg['Subject'] += ' (%d failed)'%self.failed
             msg['From'] = self.mailTo
             msg['To'] = self.mailTo
             s = smtplib.SMTP()
@@ -561,30 +569,34 @@ class Driver(Thread):
             # Wait for a finished task
             tinfo = self.kvs.get('.finished task')
             logger.debug('Finished task: %s', tinfo)
-            self.taskSlots.release()
-
-            if isinstance(tinfo, BarrierTask):
-                changed = True
-                # Complete the barrier task itself, exit barrier mode.
-                logger.info('Finished barrier.')
-                # Release the rest of the slots (_initial_value is totalSlots)
-                for i in range(self.taskSlots._initial_value-1):
-                    self.taskSlots.release()
-                # If user specified a KVS key, use it to signal the barrier is done.
-                if tinfo.taskKey:
-                    logger.info('put %s: %d.', tinfo.taskKey, tinfo.taskId)
-                    self.kvs.put(tinfo.taskKey, str(tinfo.taskId), False)
-
-                if isinstance(tinfo, DoneTask):
-                    break
 
             if tinfo.taskId == TaskIdOOB:
                 # A finished task with id -1 indicates some sort of OOB control message.
                 if tinfo.taskCmd == CmdRetire:
                     self.context.retire(tinfo.host)
                 else:
-                    logger.error('Unrecognized oob task: %(s)', tinfo)
+                    logger.error('Unrecognized oob task: %s', tinfo)
                 continue
+
+            if isinstance(tinfo, BarrierTask):
+                changed = True
+                # Complete the barrier task itself, exit barrier mode.
+                logger.info('Finished barrier.')
+                if tinfo.check and self.failed:
+                    # a "check" barrier fails if any tasks before it do
+                    tinfo.returncode = 1
+                    # stop the feeder (prompting DoneTask)
+                    self.feeder.done = True
+                # If user specified a KVS key, use it to signal the barrier is done.
+                elif tinfo.taskKey:
+                    logger.info('put %s: %d.', tinfo.taskKey, tinfo.taskId)
+                    self.kvs.put(tinfo.taskKey, str(tinfo.taskId), False)
+                # Release the rest of the slots (_initial_value is totalSlots)
+                for i in range(self.taskSlots._initial_value-1):
+                    self.taskSlots.release()
+
+            self.taskSlots.release()
+            if isinstance(tinfo, DoneTask): break
 
             changed = True
             self.finished += 1
@@ -606,6 +618,7 @@ class Driver(Thread):
         logger.info('Driver done')
         self.statusFile.close()
         self.kvs.close()
+        self.feeder.join()
 
 # A simple class to count the number of bytes from a file stream (e.g., pipe),
 # and possibly collect the first and/or last few bytes of it
@@ -700,10 +713,10 @@ class EngineBlock(Thread):
                 self.coq.put(('done', ti, throttled))
 
     class Injector(Thread):
-        def __init__(self, kvsserver, key, throttle, fuelline):
+        def __init__(self, kvs, key, throttle, fuelline):
             super(EngineBlock.Injector, self).__init__(name='Injector')
             self.daemon = True
-            self.kvs = kvsstcp.KVSClient(kvsserver)
+            self.kvs = kvs.clone()
             self.key = key
             self.throttle = throttle
             self.fuelline = fuelline
@@ -716,24 +729,31 @@ class EngineBlock(Thread):
                 logger.debug('Injector got task %s', repr(ti))
                 self.fuelline.put(('task', ti, bool(self.throttle)))
 
-    def __init__(self, kvsserver, context):
+    def __init__(self, kvs, context):
         super(EngineBlock, self).__init__(name='EngineBlock')
         self.daemon = True
         self.context = context
         cylinders = context.cylinders[context.nodeId]
 
-        self.kvs = kvsstcp.KVSClient(kvsserver)
+        self.parent = kvs
+        self.kvs = kvs.clone()
         self.commonEnv = self.kvs.view('.common env')
         # Note we are using the Queue construct from the
         # mulitprocessing module---we need to coordinate between
         # independent processes.
         self.ciq, self.coq, self.throttle = mpQueue(), mpQueue(), BoundedSemaphore(cylinders)
-        self.Injector(kvsserver, ".node." + context.node, None, self.coq)
-        self.Injector(kvsserver, ".task", self.throttle, self.coq)
+        self.Injector(kvs, ".node." + context.node, None, self.coq)
+        self.Injector(kvs, ".task", self.throttle, self.coq)
         self.cylinders = [self.Cylinder(context, self.commonEnv, self.ciq, self.coq, x) for x in range(cylinders)]
         self.start()
 
     def run(self):
+        try:
+            self.main()
+        finally:
+            self.parent.close()
+
+    def main(self):
         inFlight, liveCylinders = 0, len(self.cylinders)
         while liveCylinders:
             tag, o, throttled = self.coq.get()
@@ -760,15 +780,15 @@ class EngineBlock(Thread):
         self.kvs.put(rt.taskKey, rt)
         self.kvs.close()
 
-def engine(kvsserver, context):
-    import random
+def engine(kvs, context):
     # Stagger start randomly to throttle to about 6 connects/second (3 per engine) to KVS
     time.sleep(random.random()*len(context.nodes)/2)
-    kvs = kvsstcp.KVSClient(kvsserver)
-    e = EngineBlock(kvsserver, context)
+    e = EngineBlock(kvs, context)
     try:
         kvs.view('.shutdown')
         logger.info('got shutdown')
+    except socket.error:
+        pass
     finally:
         logger.info('Engine shutting down.')
         for c in e.cylinders:
@@ -777,7 +797,6 @@ def engine(kvsserver, context):
                     c.terminate()
                 except OSError:
                     pass
-    kvs.close()
 
 if '__main__' == __name__:
     import argparse
@@ -792,7 +811,6 @@ if '__main__' == __name__:
         args = argp.parse_args()
         kvs = kvsstcp.KVSClient(args.kvsserver)
         context = kvs.view('.context')
-        kvs.close()
         try:
             os.chdir(context.wd)
         except Exception, e:
@@ -803,7 +821,8 @@ if '__main__' == __name__:
         lconf['filename'] = logfile(context, 'engine.log')
         logging.basicConfig(**lconf)
         logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, context.nodeId, myHostname, myPid, os.getcwd())
-        engine(args.kvsserver, context)
+        engine(kvs, context)
+        kvs.close()
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
         argp.add_argument('-l', '--logfile', default=None, type=argparse.FileType('w'), help='Log file.')
@@ -871,26 +890,26 @@ if '__main__' == __name__:
         context.name = os.path.basename(taskSource.name)
 
         logger.info('KVS Server: %s', kvsserver)
+        kvs = kvsstcp.KVSClient(kvsserver)
 
         if args.web:
             from kvsstcp import wskvsmu
             urlfile = logfile(context, 'url')
             wskvsmu.main(kvsserver, urlfile=open(urlfile, 'w'), monitorspec=':gpvw')
 
-        context.launch(kvsserver)
+        context.launch(kvs)
 
-        f = Driver(kvsserver, context, taskSource, args.mailTo, args.mailFreq)
+        f = Driver(kvs, context, taskSource, args.mailTo, args.mailFreq)
         try:
             while f.isAlive():
                 f.join(60)
         finally:
             try:
-                kvs = kvsstcp.KVSClient(kvsserver)
                 logger.info("posting .shutdown")
                 kvs.put('.shutdown', '', False)
-                kvs.close()
             except:
                 pass
+            kvs.close()
             r = context.finish()
             if kvsst: kvsst.shutdown()
 
