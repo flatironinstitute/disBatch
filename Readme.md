@@ -75,29 +75,28 @@ The `_status.txt` files contains tab-delimited lines of the form:
 
      	314	315	-1	worker032	8016	0	10.0486528873	1458660919.78	1458660929.83	0	""	0	""	'cd /path/to/workdir ; myprog argsFor314 > task314.log 2>&1'
 
-The first field, blank in this case, may contain `E`, `O`, `R`, or `B` flags.
-Each program/task should be invoked in such a way that standard error
-and standard output end up in appropriate files. If that's not the case
-`E` or `O` flags will be raised. `R` indicates that the task
-returned a non-zero exit code. `B` indicates a barrier (see below).
+These fields are:
 
-The first `314` is the 0-based index of the task (starting from the
-beginning of the task file, incremented for each task, including repeats).
-The `315` is the 1-based line number.
-The `-1` is the repeat index (or -1 for non-repeated commands).
-
-`worker032` identifies the node on which the task ran, `8016` is the
-PID of the bash shell used to run the task, `0` is the exit code
-returned.
-
-`10.0486528873 1458660919.78 1458660929.83` are the elapsed time,
-start time (since the epoch), and finish time.
-
-`0 "" 0 ""` reports the number of bytes of standard output and standard
-error that *leaked*, i.e. were not redirected to a file, along with a snippit (up to 80 bytes) of any captured output.
-
-`cd ...` is the text of the task (repeated from the task file, but
-see below).
+  1. Flags: The first field, blank in this case, may contain `E`, `O`, `R`, or `B` flags.
+     Each program/task should be invoked in such a way that standard error
+     and standard output end up in appropriate files. If that's not the case
+     `E` or `O` flags will be raised. `R` indicates that the task
+     returned a non-zero exit code. `B` indicates a barrier (see below).
+  1. Task ID: The `314` is the 0-based index of the task (starting from the beginning of the task file, incremented for each task, including repeats).
+  1. Line number: The `315` is the 1-based line from the task file.
+  1. Repeat index: The `-1` is the repeat index (or -1 for non-repeated commands).
+  1. Node: `worker032` identifies the node on which the task ran.
+  1. PID: `8016` is the PID of the bash shell used to run the task.
+  1. Exit code: `0` is the exit code returned.
+  1. Elapsed time,
+  1. Start time,
+  1. Finish time: `10.0486528873 1458660919.78 1458660929.83` are the elapsed time, start time, and finish times of the task, in unix epoch format.
+  1. Output bytes,
+  1. Output snippet,
+  1. Error bytes,
+  1. Error snippet: `0 "" 0 ""` reports the number of bytes of standard output and standard
+     error that *leaked*, i.e. were not redirected to a file, along with a snippet (up to 80 bytes) of any captured output.
+  1. Command: `cd ...` is the text of the task (repeated from the task file, but see below).
 
 The `_failed.txt` file contains commands that failed in a format
 suitable for using with another disBatch invocation. Of course, it is a
