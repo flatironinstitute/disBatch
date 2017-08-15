@@ -64,12 +64,20 @@ This particular invocation will allocate sufficient resources to process
 given node. Every node allocated will be running only tasks associated
 with this submission.
 
-Four files will be created as the run unfolds:
+Various log files will be created as the run unfolds:
 
-    -rw-r--r-- 1 carriero carriero 811   Mar 22 11:35 TaskFileName_134504_dbwrapper_log.txt
-    -rw-r--r-- 1 carriero carriero 201   Mar 22 11:35 TaskFileName_134504_failed.txt
-    -rw-r--r-- 1 carriero carriero 21591 Mar 22 11:35 TaskFileName_134504_log.txt
-    -rw-r--r-- 1 carriero carriero 8167  Mar 22 11:35 TaskFileName_134504_status.txt
+* `TaskFileName_134504_status.txt`: status of each task (details below)
+* `TaskFileName_134504_failed.txt`: The `_failed.txt` file contains commands that failed in a format
+  suitable for using with another disBatch invocation. Of course, it is a
+  very good idea to determine the cause of failures before resubmitting
+  them.
+* `disBatch_134504_driver.txt` (can be changed with `-l`), `TaskFileName_134504_worker032_engine.txt`: 
+  The disBatch log files contain details mostly of interest in case of a
+  problem with disBatch itself. These can generally be ignored by end
+  users (but keep them around in the event that something did go
+  wrong---they will aid debugging).
+
+### Status file
 
 The `_status.txt` files contains tab-delimited lines of the form:
 
@@ -98,15 +106,7 @@ These fields are:
      error that *leaked*, i.e. were not redirected to a file, along with a snippet (up to 80 bytes) of any captured output.
   1. Command: `cd ...` is the text of the task (repeated from the task file, but see below).
 
-The `_failed.txt` file contains commands that failed in a format
-suitable for using with another disBatch invocation. Of course, it is a
-very good idea to determine the cause of failures before resubmitting
-them.
-
-The disBatch log files contain details mostly of interest in case of a
-problem with disBatch itself. These can generally be ignored by end
-users (but keep them around in the event that something did go
-wrong---they will aid debugging).
+### Considerations for large runs
 
 If you do submit jobs with order 10000 or more tasks, you should
 carefully consider how you want to organize the output (and error) files
