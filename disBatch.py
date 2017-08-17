@@ -780,24 +780,6 @@ class EngineBlock(Thread):
         self.kvs.put(rt.taskKey, rt)
         self.kvs.close()
 
-def engine(kvs, context):
-    # Stagger start randomly to throttle to about 6 connects/second (3 per engine) to KVS
-    time.sleep(random.random()*len(context.nodes)/2)
-    e = EngineBlock(kvs, context)
-    try:
-        kvs.view('.shutdown')
-        logger.info('got shutdown')
-    except socket.error:
-        pass
-    finally:
-        logger.info('Engine shutting down.')
-        for c in e.cylinders:
-            if c.is_alive():
-                try:
-                    c.terminate()
-                except OSError:
-                    pass
-
 if '__main__' == __name__:
     import argparse
 
@@ -809,6 +791,8 @@ if '__main__' == __name__:
         argp.add_argument('-n', '--node', type=str, help='Name of this engine node.')
         argp.add_argument('kvsserver', help='Address of kvs sever used to relay data to this execution engine.')
         args = argp.parse_args()
+        # Stagger start randomly to throttle kvs connections
+        time.sleep(random.random()*5.0)
         kvs = kvsstcp.KVSClient(args.kvsserver)
         context = kvs.view('.context')
         try:
@@ -821,8 +805,23 @@ if '__main__' == __name__:
         lconf['filename'] = logfile(context, 'engine.log')
         logging.basicConfig(**lconf)
         logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, context.nodeId, myHostname, myPid, os.getcwd())
-        engine(kvs, context)
+
+        e = EngineBlock(kvs, context)
+        try:
+            kvs.view('.shutdown')
+            logger.info('got shutdown')
+        except socket.error:
+            pass
+        finally:
+            logger.info('Engine shutting down.')
+            for c in e.cylinders:
+                if c.is_alive():
+                    try:
+                        c.terminate()
+                    except OSError:
+                        pass
         kvs.close()
+
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
         argp.add_argument('-l', '--logfile', default=None, type=argparse.FileType('w'), help='Log file.')
