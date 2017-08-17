@@ -341,9 +341,8 @@ class WatchIt(Thread):
 # When the user specifies tasks will be passed through a KVS, this
 # class generates an interable that feeds task from the KVS.
 class KVSTaskSource(object):
-    def __init__(self, kvsserver):
-        self.kvsserver = kvsserver
-        self.kvs = kvsstcp.KVSClient(kvsserver)
+    def __init__(self, kvs):
+        self.kvs = kvs.clone()
         self.name = self.kvs.get('task source name', False)
         self.taskkey = self.name + ' task'
         self.resultkey = self.name + ' result %d'
@@ -357,7 +356,7 @@ class KVSTaskSource(object):
         return t
 
     def done(self):
-        kvs = kvsstcp.KVSClient(kvsserver)
+        kvs = self.kvs.clone()
         kvs.put(self.taskkey, self.donetask)
         kvs.close()
 
@@ -831,10 +830,11 @@ if '__main__' == __name__:
         argp.add_argument('-t', '--tasksPerNode', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
         argp.add_argument('--web', action='store_true', help='Enable web interface.')
         argp.add_argument('--fix-paths', action='store_true', help='Configure fixed path to script and modules.')
+        argp.add_argument('--kvsserver', nargs='?', default=True, metavar='HOST:PORT', help='Use a running KVS server.')
         source = argp.add_mutually_exclusive_group(required=True)
-        source.add_argument('--taskcommand', default=None, help='Tasks will come from the command specified via a kvs server instantiated for that purpose.')
-        source.add_argument('--taskserver', default=None, help='Tasks will come via the specified kvs server.')
-        source.add_argument('taskfile', nargs='?', default=None,  type=argparse.FileType('r'), help='File with tasks, one task per line.')
+        source.add_argument('--taskcommand', default=None, metavar='COMMAND', help='Tasks will come from the command specified via the KVS server (passed in the environment).')
+        source.add_argument('--taskserver', nargs='?', default=False, metavar='HOST:PORT', help='Tasks will come from the KVS server.')
+        source.add_argument('taskfile', nargs='?', default=None, type=argparse.FileType('r'), help='File with tasks, one task per line.')
         args = argp.parse_args()
 
         if args.fix_paths:
@@ -846,6 +846,14 @@ if '__main__' == __name__:
             sys.exit(1)
         if not args.mailFreq and args.mailTo:
             args.mailFreq = 1
+
+        if not args.kvsserver:
+            args.kvsserver = args.taskserver
+        elif args.taskserver is None: # --taskserver with no argument
+            args.taskserver = args.kvsserver
+        elif args.taskserver and args.kvsserver != args.taskserver:
+            print >>sys.stderr, 'Cannot use different --kvsserver and --taskservers.'
+            sys.exit(1)
 
         # Try to find a batch context.
         context = probeContext()
@@ -869,27 +877,31 @@ if '__main__' == __name__:
         logger.info('Starting feeder (%d) on %s in %s.', myPid, myHostname, os.getcwd())
         logger.info('Context: %s', context)
 
-        #TODO: Resist rush to judgment. Could we, for example, want to have tasks from a file, but reporting via kvs?
-        if args.taskserver:
-            kvsst = None
-            kvsserver = args.taskserver
-            taskSource = KVSTaskSource(kvsserver)
-        else:
+        if args.kvsserver is True:
+            # start our own
             kvsst = kvsstcp.KVSServerThread(socket.gethostname(), 0)
             kvsserver = '%s:%d'%kvsst.cinfo
             with open('kvsinfo.txt', 'w') as kvsi:
                 kvsi.write(kvsserver)
-            if args.taskcommand:
-                taskSource = KVSTaskSource(kvsserver)
-                wit = WatchIt(taskSource, args.taskcommand, shell=True, env=kvsst.env())
-            else:
-                taskSource = args.taskfile
-
-        # Could reorder initialization some to pass this as argument
-        context.name = os.path.basename(taskSource.name)
+            kvsenv = kvsst.env()
+        else:
+            # use one given (possibly via environment)
+            kvsst = None
+            kvsserver = args.kvsserver
+            kvsenv = None
 
         logger.info('KVS Server: %s', kvsserver)
         kvs = kvsstcp.KVSClient(kvsserver)
+
+        if args.taskfile:
+            taskSource = args.taskfile
+        else:
+            taskSource = KVSTaskSource(kvs)
+            if args.taskcommand:
+                WatchIt(taskSource, args.taskcommand, shell=True, env=kvsenv)
+
+        # Could reorder initialization some to pass this as argument
+        context.name = os.path.basename(taskSource.name)
 
         if args.web:
             from kvsstcp import wskvsmu
