@@ -4,6 +4,7 @@ import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, ti
 from multiprocessing import Process as mpProcess, Queue as mpQueue
 from Queue import Queue, Empty
 from threading import BoundedSemaphore, Thread, Lock
+from ast import literal_eval
 
 DisBatchPath, ImportDir, PathsFixed = None, None, False # <= May need to set these, setting PathsFixed to True as well.
 
@@ -280,22 +281,30 @@ def probeContext():
 
 
 class TaskInfo(object):
-    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, taskKey, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, outdata = '', errbytes = 0, errdata = ''):
+    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, taskKey, host = '', pid = 0, returncode = 0, start = 0, end = 0, outbytes = 0, outdata = '', errbytes = 0, errdata = '', skip = False):
         self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.taskKey = taskId, taskStreamIndex, taskRepIndex, taskCmd, taskKey
         self.host, self.pid, self.returncode, self.start, self.end, self.outbytes, self.outdata, self.errbytes, self.errdata = host, pid, returncode, start, end, outbytes, outdata, errbytes, errdata
+        self.skip = skip
 
     def flags(self):
         return (  ('R' if self.returncode else ' ')
                 + ('O' if self.outbytes   else ' ')
-                + ('E' if self.errbytes   else ' '))
+                + ('E' if self.errbytes   else ' ')
+                + ('S' if self.skip       else ''))
 
     def __str__(self):
-        # If this changes, update disBatcher.py too
+        # If this changes, update parseStatusFile below and disBatcher.py too
         return '\t'.join([str(x) for x in [self.flags(), self.taskId, self.taskStreamIndex, self.taskRepIndex, self.host, self.pid, self.returncode, self.end - self.start, self.start, self.end, self.outbytes, repr(self.outdata), self.errbytes, repr(self.errdata), repr(self.taskCmd)]])
 
+    def __eq__(self, other):
+        return type(self) is type(other) and self.taskId == other.taskId and self.taskStreamIndex == other.taskStreamIndex and self.taskRepIndex == other.taskRepIndex and self.taskCmd == other.taskCmd # and self.taskKey == other.taskKey
+
+    def __ne__(self, other):
+        return not self == other
+
 class BarrierTask(TaskInfo):
-    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, key=None, check=False):
-        super(BarrierTask, self).__init__(taskId, taskStreamIndex, taskRepIndex, taskCmd, key, myHostname, myPid)
+    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, key=None, check=False, returncode=0, errdata=''):
+        super(BarrierTask, self).__init__(taskId, taskStreamIndex, taskRepIndex, taskCmd, key, myHostname, myPid, returncode=returncode, errdata=errdata)
         self.check = check
 
     def flags(self):
@@ -303,11 +312,21 @@ class BarrierTask(TaskInfo):
 
 class DoneTask(BarrierTask):
     '''Implicit barrier posted when there are no more tasks.'''
-    def __init__(self, taskId, taskStreamIndex):
-        super(DoneTask, self).__init__(taskId, taskStreamIndex, -1, '', 'done!')
+    def __init__(self, taskId, taskStreamIndex, err=''):
+        super(DoneTask, self).__init__(taskId, taskStreamIndex, -1, '', 'done!', returncode=1 if err else 0, errdata=err)
 
     def flags(self):
         return 'D'
+
+def parseStatusFile(f):
+    status = dict()
+    with open(f, 'r') as s:
+        for l in s:
+            d = l.split('\t')
+            if len(d) != 15: raise Exception('Invalid status line: %r'%l)
+            if d[0] in 'BD': continue
+            status[int(d[1])] = TaskInfo(int(d[1]), int(d[2]), int(d[3]), literal_eval(d[14]), '.task', d[4], int(d[5]), int(d[6]), float(d[8]), float(d[9]), int(d[10]), literal_eval(d[11]), int(d[12]), literal_eval(d[13]), True)
+    return status
 
 ##################################################################### DRIVER
 
@@ -429,13 +448,25 @@ def taskGenerator(tasks, context):
     logger.info('Processed %d tasks.', taskCounter)
     yield DoneTask(taskCounter, tsx)
 
+def statusTaskFilter(tasks, status):
+    while True:
+        t = tasks.next()
+        s = status.get(t.taskId)
+        # optionally check for that status info matches:
+        if s and s != t: raise Exception('Recovery status file task mismatch:\n%s\n%s' % (s, t))
+        if s == t and s.returncode == 0:
+            # skip
+            yield s
+        else:
+            yield t
+
 # Main control loop that sends new tasks to the execution engines.
 class Feeder(Thread):
     def __init__(self, kvs, context, tasks, taskSlots):
         super(Feeder, self).__init__(name='Feeder')
         self.daemon = True
         self.context = context
-        self.taskGenerator = taskGenerator(tasks, context)
+        self.taskGenerator = tasks
         self.taskSlots = taskSlots
         self.kvs = kvs.clone()
         # just used for status reporting (not thread safe):
@@ -444,16 +475,28 @@ class Feeder(Thread):
         self.start()
 
     def run(self):
+        try:
+            self.main()
+        except Exception, e:
+            logger.error('Feeder error: %s', e)
+            self.kvs.put('.finished task', DoneTask(-1, 0, str(e)))
+            raise
+
+    def main(self):
         self.kvs.put('.common env', {'DISBATCH_JOBID': str(self.context.jobid), 'DISBATCH_NAMETASKS': self.context.name}) #TODO: Add more later?
-        while 1:
+        while True:
             # Wait for a slot
             self.taskSlots.acquire()
 
             if self.done:
-                tinfo = DoneTask(-2, 0)
+                tinfo = DoneTask(-1, 0, 'aborted')
             else:
                 # Request the next task
                 tinfo = self.taskGenerator.next()
+
+            if tinfo.skip:
+                self.kvs.put('.finished task', tinfo)
+                continue
 
             if isinstance(tinfo, BarrierTask):
                 if isinstance(tinfo, DoneTask):
@@ -491,17 +534,14 @@ class Feeder(Thread):
 
 # Main control loop that processes completed tasks.
 class Driver(Thread):
-    def __init__(self, kvs, context, tasks, mailTo=None, mailFreq=1):
+    def __init__(self, kvs, context, tasks, trackResults=None, mailTo=None, mailFreq=1):
         super(Driver, self).__init__(name='Driver')
         self.context = context
         self.kvs = kvs.clone()
         self.mailTo = mailTo
         self.mailFreq = mailFreq
 
-        try:
-            self.trackResults = tasks.resultkey
-        except AttributeError:
-            self.trackResults = False
+        self.trackResults = trackResults
         self.taskSlots = BoundedSemaphore(sum(self.context.cylinders))
         self.feeder = Feeder(self.kvs, context, tasks, self.taskSlots)
 
@@ -548,21 +588,15 @@ class Driver(Thread):
 
     def run(self):
         self.kvs.put('DisBatch status', '<Starting...>', False)
-        changed = False
         while 1:
             logger.debug('Driver loop: %d', self.finished)
-
-            # Make changes visible via KVS.
-            if changed:
-                self.updateStatus()
-                changed = False
 
             # Wait for a finished task
             tinfo = self.kvs.get('.finished task')
             logger.debug('Finished task: %s', tinfo)
 
             if isinstance(tinfo, BarrierTask):
-                changed = True
+                if isinstance(tinfo, DoneTask): break
                 # Complete the barrier task itself, exit barrier mode.
                 logger.info('Finished barrier.')
                 if tinfo.check and self.failed:
@@ -579,9 +613,6 @@ class Driver(Thread):
                     self.taskSlots.release()
 
             self.taskSlots.release()
-            if isinstance(tinfo, DoneTask): break
-
-            changed = True
             self.finished += 1
             self.statusFile.write(str(tinfo)+'\n')
             self.statusFile.flush()
@@ -597,6 +628,9 @@ class Driver(Thread):
             if self.trackResults: self.kvs.put(self.trackResults%tinfo.taskId, str(tinfo), False)
             if self.mailTo and finished%self.mailFreq == 0:
                 self.sendNotification()
+
+            # Make changes visible via KVS.
+            self.updateStatus()
 
         logger.info('Driver done')
         self.statusFile.close()
@@ -809,13 +843,14 @@ if '__main__' == __name__:
 
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
+        argp.add_argument('--fix-paths', action='store_true', help='Configure fixed path to script and modules.')
         argp.add_argument('-l', '--logfile', default=None, type=argparse.FileType('w'), help='Log file.')
         argp.add_argument('--mailFreq', default=None, type=int, metavar='N', help='Send email every N task completions (default: 1). "--mailTo" must be given.')
         argp.add_argument('--mailTo', default=None, help='Mail address for task completion notification(s).')
         argp.add_argument('-c', '--cpusPerTask', default=1, type=float, help='Number of cores used per task; may be fractional (default: 1).')
         argp.add_argument('-t', '--tasksPerNode', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
+        argp.add_argument('-r', '--resume-from', metavar='STATUSFILE', help='Read the given status file from a previous run and skip any sucessful tasks.')
         argp.add_argument('--web', action='store_true', help='Enable web interface.')
-        argp.add_argument('--fix-paths', action='store_true', help='Configure fixed path to script and modules.')
         argp.add_argument('--kvsserver', nargs='?', default=True, metavar='HOST:PORT', help='Use a running KVS server.')
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, metavar='COMMAND', help='Tasks will come from the command specified via the KVS server (passed in the environment).')
@@ -887,6 +922,11 @@ if '__main__' == __name__:
             if args.taskcommand:
                 taskProcess = TaskProcess(taskSource, args.taskcommand, shell=True, env=kvsenv)
 
+        tasks = taskGenerator(taskSource, context)
+
+        if args.resume_from:
+            tasks = statusTaskFilter(tasks, parseStatusFile(args.resume_from))
+
         siglock = Lock()
         def sigChild(s, f):
             # signal handlers need to be reentrant
@@ -912,7 +952,7 @@ if '__main__' == __name__:
 
         context.launch(kvs)
 
-        f = Driver(kvs, context, taskSource, args.mailTo, args.mailFreq)
+        f = Driver(kvs, context, tasks, getattr(taskSource, 'resultkey', None), args.mailTo, args.mailFreq)
         try:
             while f.isAlive():
                 if not context.engines:
