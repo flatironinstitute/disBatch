@@ -311,33 +311,6 @@ class DoneTask(BarrierTask):
 
 ##################################################################### DRIVER
 
-# When the user specifies a command that will be generating tasks,
-# this class wraps the command's execution so we can trigger a
-# shutdown if the user's command fails to send an indication that task
-# generation is done.
-class WatchIt(Thread):
-    def __init__(self, taskSource, command, **kwargs):
-        super(WatchIt, self).__init__(name='WatchIt')
-        self.daemon = True
-        self.command = command
-        self.p = SUB.Popen(command, **kwargs)
-        self.taskSource = taskSource
-        self.start()
-
-    def run(self):
-        r = self.p.wait()
-        # TODO: send done on success
-        logger.info('Task generating command has exited: %s %d.', repr(self.command), r)
-        # post a done just in case the process didn't
-        self.taskSource.done()
-        if r:
-            # allow time for a normal shutdown to complete. since this is
-            # a daemon thread, its existence won't prevent an exit.
-            time.sleep(30)
-            # waited long enough, force a shutdown.
-            logger.warn('Task generator failed; forcing shutdown')
-            sys.exit(1)
-
 # When the user specifies tasks will be passed through a KVS, this
 # class generates an interable that feeds task from the KVS.
 class KVSTaskSource(object):
@@ -360,6 +333,25 @@ class KVSTaskSource(object):
         kvs.put(self.taskkey, self.donetask)
         kvs.close()
 
+# When the user specifies a command that will be generating tasks,
+# this class wraps the command's execution so we can trigger a
+# shutdown if the user's command fails to send an indication that task
+# generation is done.
+class TaskProcess():
+    def __init__(self, taskSource, command, **kwargs):
+        self.taskSource = taskSource
+        self.command = command
+        self.p = SUB.Popen(command, **kwargs)
+        self.r = None
+
+    def poll(self):
+        if self.r is not None: return
+        self.r = self.p.poll()
+        if self.r is None: return
+        # TODO: send done on success
+        logger.info('Task generating command has exited: %s %d.', repr(self.command), self.r)
+        # post a done just in case the process didn't
+        self.taskSource.done()
 
 # Given a task source (generating task command lines), parse the lines and
 # produce a TaskInfo generator.
@@ -568,11 +560,6 @@ class Driver(Thread):
             # Wait for a finished task
             tinfo = self.kvs.get('.finished task')
             logger.debug('Finished task: %s', tinfo)
-
-            if tinfo.taskId == TaskIdOOB:
-                # A finished task with id -1 indicates some sort of OOB control message.
-                logger.error('Unrecognized oob task: %s', tinfo)
-                continue
 
             if isinstance(tinfo, BarrierTask):
                 changed = True
@@ -892,12 +879,13 @@ if '__main__' == __name__:
         logger.info('KVS Server: %s', kvsserver)
         kvs = kvsstcp.KVSClient(kvsserver)
 
+        taskProcess = None
         if args.taskfile:
             taskSource = args.taskfile
         else:
             taskSource = KVSTaskSource(kvs)
             if args.taskcommand:
-                WatchIt(taskSource, args.taskcommand, shell=True, env=kvsenv)
+                taskProcess = TaskProcess(taskSource, args.taskcommand, shell=True, env=kvsenv)
 
         siglock = Lock()
         def sigChild(s, f):
@@ -909,6 +897,7 @@ if '__main__' == __name__:
                 while sigact:
                     sigact = False
                     context.poll()
+                    if taskProcess: taskProcess.poll()
             finally:
                 siglock.release()
         signal.signal(signal.SIGCHLD, sigChild)
@@ -926,6 +915,12 @@ if '__main__' == __name__:
         f = Driver(kvs, context, taskSource, args.mailTo, args.mailFreq)
         try:
             while f.isAlive():
+                if not context.engines:
+                    logger.warn('All engines terminated; shutting down')
+                    break
+                if taskProcess and taskProcess.r:
+                    logger.warn('Task generator failed; forcing shutdown')
+                    sys.exit(taskProcess.r)
                 f.join(60)
         finally:
             try:
@@ -939,4 +934,5 @@ if '__main__' == __name__:
 
         if not r:
             print >>sys.stderr, 'Some engine processes failed -- please check the logs'
+            sys.exit(1)
 
