@@ -3,7 +3,7 @@ import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, ti
 
 from multiprocessing import Process as mpProcess, Queue as mpQueue
 from Queue import Queue, Empty
-from threading import BoundedSemaphore, Thread
+from threading import BoundedSemaphore, Thread, Lock
 
 DisBatchPath, ImportDir, PathsFixed = None, None, False # <= May need to set these, setting PathsFixed to True as well.
 
@@ -71,7 +71,6 @@ dbpernode = re.compile('^#DISBATCH PERNODE (.*)$', re.I)
 # Special ID for "out of band" task events
 TaskIdOOB = -1
 CmdPoison = '!!Poison!!'
-CmdRetire = '!!Retire Me!!'
 
 def compHostnames(h0, h1):
     return h0.split('.', 1)[0] == h1.split('.', 1)[0]
@@ -121,26 +120,42 @@ class BatchContext(object):
     def __init__(self, sysid, jobid, nodes, cylinders):
         self.sysid, self.jobid, self.nodes, self.cylinders = sysid, jobid, nodes, cylinders
         self.wd = os.getcwd() #TODO: Easy enough to override, but still... Is this the right place for this?
-        self.retiredNodes = set()
+        self.error = False # engine errors (non-zero return values)
 
     def __str__(self):
         return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
 
     def launch(self, kvs):
-        '''Launch the engine processes on all the nodes.'''
+        '''Launch the engine processes on all the nodes by calling launchNode for each.'''
         kvs.put('.context', self)
-        self.engines = dict()
+        self.engines = dict() # live subprocesses
         for n in self.nodes:
             self.engines[n] = self.launchNode(n)
 
-    def retire(self, node, msg='no-op: add clean up hook here?'):
-        '''Note that a node has finished all assigned tasks (and has been told there will be no more coming).'''
-        self.retiredNodes.add(node)
+    def poll(self):
+        '''Check if any engines have stopped.'''
+        for n, e in self.engines.items():
+            r = e.poll()
+            if r is not None:
+                logger.info('Engine %s exited: %d', n, r)
+                del self.engines[n]
+                self.retireNode(n, r)
+
+    def launchNode(self, node):
+        '''Launch an engine for a single node.  Should return a subprocess handle (unless launch itself is overridden).'''
+        raise NotImplementedError('%s.launchNode is not implemented' % type(self))
+
+    def retireNode(self, node, ret, msg='no-op: add clean up hook here?'):
+        '''Called when a node has exited.  May be overridden to release resources.'''
+        if ret: self.error = True
         logger.info('Retiring node "%s": %s', node, msg)
 
     def finish(self):
         '''Check that all engines completed successfully and return True on success.'''
-        return not any([ killPatiently(e, 'engine ' + n) for n, e in self.engines.iteritems() ])
+        for n, e in self.engines.items():
+            r = killPatiently(e, 'engine ' + n)
+            if r: self.error = True # also handled by retireNode
+        return not self.error
 
     def setNode(self, node=None):
         '''Try to determine the hostname of this engine from the pov of the launcher.'''
@@ -200,17 +215,21 @@ class SlurmContext(BatchContext):
             if m == None: m = '1'
             cylinders += [int(c)]*int(m)
 
+        self.driverNode = None
         super(SlurmContext, self).__init__('SLURM', jobid, nodes, cylinders)
 
     def launchNode(self, n):
         return SUB.Popen(['srun', '-N', '1', '-n', '1', '-w', n, DisBatchPath, '--engine', '-n', n, kvsserver])
 
-    def retire(self, node):
+    def retireNode(self, node, ret):
         if compHostnames(node, myHostname):
-            logger.info('Refusing to retire "%s" on "%s".', node, myHostname)
+            super(SlurmContext, self).retireNode(node, ret, 'refusing to retire driver node "%s".' % myHostname)
+            self.driverNode = node
         else:
-            super(SlurmContext, self).retire(node, "updating node list")
-            command = ['scontrol', 'update', 'JobId=%s'%self.jobid, 'NodeList=' + ','.join([n for n in self.nodes if n not in self.retiredNodes])]
+            super(SlurmContext, self).retireNode(node, ret, "updating node list")
+            nodes = ','.join(self.engines.iterkeys())
+            if self.driverNode: nodes += ',' + self.driverNode
+            command = ['scontrol', 'update', 'JobId=%s'%self.jobid, 'NodeList='+nodes]
             logger.debug("Retirement: %s", repr(command))
             try:
                 SUB.check_call(command)
@@ -252,10 +271,6 @@ class SSHContext(BatchContext):
         prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
         return SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open(logfile(self, '%s_engine_wrap.out'%n), 'w'), stderr=open(logfile(self, '%s_engine_wrap.err'%n), 'w'))
 
-    def retire(self, node):
-        super(SSHContext, self).retire(node, "terminating engine")
-        killPatiently(self.engines[node], 'engine ' + node, 5)
-
 def probeContext():
     if 'SLURM_JOBID' in os.environ: return SlurmContext()
     #if ...: return GEContext()
@@ -294,6 +309,7 @@ class DoneTask(BarrierTask):
     def flags(self):
         return 'D'
 
+##################################################################### DRIVER
 
 # When the user specifies a command that will be generating tasks,
 # this class wraps the command's execution so we can trigger a
@@ -555,10 +571,7 @@ class Driver(Thread):
 
             if tinfo.taskId == TaskIdOOB:
                 # A finished task with id -1 indicates some sort of OOB control message.
-                if tinfo.taskCmd == CmdRetire:
-                    self.context.retire(tinfo.host)
-                else:
-                    logger.error('Unrecognized oob task: %s', tinfo)
+                logger.error('Unrecognized oob task: %s', tinfo)
                 continue
 
             if isinstance(tinfo, BarrierTask):
@@ -602,6 +615,8 @@ class Driver(Thread):
         self.statusFile.close()
         self.kvs.close()
         self.feeder.join()
+
+##################################################################### ENGINE
 
 # A simple class to count the number of bytes from a file stream (e.g., pipe),
 # and possibly collect the first and/or last few bytes of it
@@ -759,9 +774,9 @@ class EngineBlock(Thread):
                 inFlight += 1
             else:
                 logger.error('Unknown cylinder input tag: "%s" (%s)', tag, repr(o))
-        rt = TaskInfo(TaskIdOOB, -1, -1, CmdRetire, '.finished task', self.context.node)
-        self.kvs.put(rt.taskKey, rt)
         self.kvs.close()
+
+##################################################################### MAIN
 
 if '__main__' == __name__:
     import argparse
@@ -883,6 +898,20 @@ if '__main__' == __name__:
             taskSource = KVSTaskSource(kvs)
             if args.taskcommand:
                 WatchIt(taskSource, args.taskcommand, shell=True, env=kvsenv)
+
+        siglock = Lock()
+        def sigChild(s, f):
+            # signal handlers need to be reentrant
+            global sigact
+            sigact = True
+            if not siglock.acquire(False): return
+            try:
+                while sigact:
+                    sigact = False
+                    context.poll()
+            finally:
+                siglock.release()
+        signal.signal(signal.SIGCHLD, sigChild)
 
         # Could reorder initialization some to pass this as argument
         context.name = os.path.basename(taskSource.name)
