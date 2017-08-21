@@ -76,51 +76,6 @@ CmdRetire = '!!Retire Me!!'
 def compHostnames(h0, h1):
     return h0.split('.', 1)[0] == h1.split('.', 1)[0]
 
-class BatchContext(object):
-    def __init__(self, sysid, jobid, nodes, cylinders):
-        self.sysid, self.jobid, self.nodes, self.cylinders = sysid, jobid, nodes, cylinders
-        self.wd = os.getcwd() #TODO: Easy enough to override, but still... Is this the right place for this?
-        self.retiredNodes = set()
-
-    def __str__(self):
-        return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
-
-    def _launch(self, kvs):
-        '''Prepare for launch: place the context (self) in the KVS for engine
-        nodes to load.'''
-        kvs.put('.context', self)
-
-    def launch(self, kvs):
-        '''Launch the engine processes on all the nodes.'''
-        # Any implementation of launch must call self._launch:
-        self._launch(kvs)
-        raise NotImplementedError('%s.launch is not implemented' % type(self))
-
-    def retire(self, node, msg='no-op: add clean up hook here?'):
-        '''Note that a node has finished all assigned tasks (and has been told there will be no more coming).'''
-        self.retiredNodes.add(node)
-        logger.info('Retiring node "%s": %s', node, msg)
-
-    def finish(self):
-        '''Check that all engines completed successfully and return True on success.'''
-        raise NotImplementedError('%s.finish is not implemented' % type(self))
-
-    def setNode(self, node=None):
-        '''Try to determine the hostname of this engine from the pov of the launcher.'''
-        # This is just a fallback. Implementations should try to determine node as appropriate.
-        # Could just default to node=myHostname, but then we lose special domain-name matching
-        if not node:
-            for n in self.nodes:
-                if compHostnames(n, myHostname):
-                    node = n
-                    break
-        self.node = node
-        try:
-            self.nodeId = self.nodes.index(self.node)
-        except ValueError:
-            # Should we instead assume 0 or carry on with none?
-            raise LookupError('Couldn\'t find nodeId for %s in "%s".' % (node or myHostname, self.nodes))
-
 def logfile(context, suffix=''):
     '''Standardized file path construction for log files.'''
     f = "%s_%s"%(getattr(context, 'name', 'disBatch'), context.jobid)
@@ -161,6 +116,47 @@ def killPatiently(sub, name, timeout=15):
     if r:
         logger.info("%s returned %d", name, r)
     return r
+
+class BatchContext(object):
+    def __init__(self, sysid, jobid, nodes, cylinders):
+        self.sysid, self.jobid, self.nodes, self.cylinders = sysid, jobid, nodes, cylinders
+        self.wd = os.getcwd() #TODO: Easy enough to override, but still... Is this the right place for this?
+        self.retiredNodes = set()
+
+    def __str__(self):
+        return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
+
+    def launch(self, kvs):
+        '''Launch the engine processes on all the nodes.'''
+        kvs.put('.context', self)
+        self.engines = dict()
+        for n in self.nodes:
+            self.engines[n] = self.launchNode(n)
+
+    def retire(self, node, msg='no-op: add clean up hook here?'):
+        '''Note that a node has finished all assigned tasks (and has been told there will be no more coming).'''
+        self.retiredNodes.add(node)
+        logger.info('Retiring node "%s": %s', node, msg)
+
+    def finish(self):
+        '''Check that all engines completed successfully and return True on success.'''
+        return not any([ killPatiently(e, 'engine ' + n) for n, e in self.engines.iteritems() ])
+
+    def setNode(self, node=None):
+        '''Try to determine the hostname of this engine from the pov of the launcher.'''
+        # This is just a fallback. Implementations should try to determine node as appropriate.
+        # Could just default to node=myHostname, but then we lose special domain-name matching
+        if not node:
+            for n in self.nodes:
+                if compHostnames(n, myHostname):
+                    node = n
+                    break
+        self.node = node
+        try:
+            self.nodeId = self.nodes.index(self.node)
+        except ValueError:
+            # Should we instead assume 0 or carry on with none?
+            raise LookupError('Couldn\'t find nodeId for %s in "%s".' % (node or myHostname, self.nodes))
 
 # Convert nodelist format (slurm specific?) to an expanded list of nodes.
 #    nl     => hosts[,nl]
@@ -206,11 +202,8 @@ class SlurmContext(BatchContext):
 
         super(SlurmContext, self).__init__('SLURM', jobid, nodes, cylinders)
 
-    def launch(self, kvs):
-        self._launch(kvs)
-        # start one engine per node using the equivalent of:
-        # srun -n $SLURM_JOB_NUM_NODES --ntasks-per-node=1 thisScript --engine
-        self.engines = SUB.Popen(['srun', '-n', os.environ['SLURM_JOB_NUM_NODES'], '--ntasks-per-node=1', DisBatchPath, '--engine', kvsserver])
+    def launchNode(self, n):
+        return SUB.Popen(['srun', '-N', '1', '-n', '1', '-w', n, DisBatchPath, '--engine', '-n', n, kvsserver])
 
     def retire(self, node):
         if compHostnames(node, myHostname):
@@ -223,9 +216,6 @@ class SlurmContext(BatchContext):
                 SUB.check_call(command)
             except Exception, e:
                 logger.warn('Retirement planning needs improvement: %s', repr(e))
-
-    def finish(self):
-        return not killPatiently(self.engines, 'engines')
 
     def setNode(self, node=None):
         super(SlurmContext, self).setNode(node or os.environ.get('SLURMD_NODENAME'))
@@ -258,19 +248,13 @@ class SSHContext(BatchContext):
 
         super(SSHContext, self).__init__('SSH', jobid, nodes, cylinders)
 
-    def launch(self, kvs):
-        self._launch(kvs)
-        self.engines = dict()
-        for n in self.nodes:
-            prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
-            self.engines[n] = SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open(logfile(self, '%s_engine_wrap.out'%n), 'w'), stderr=open(logfile(self, '%s_engine_wrap.err'%n), 'w'))
+    def launchNode(self, n):
+        prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
+        return SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open(logfile(self, '%s_engine_wrap.out'%n), 'w'), stderr=open(logfile(self, '%s_engine_wrap.err'%n), 'w'))
 
     def retire(self, node):
         super(SSHContext, self).retire(node, "terminating engine")
         killPatiently(self.engines[node], 'engine ' + node, 5)
-
-    def finish(self):
-        return not any([ killPatiently(e, 'engine ' + n) for n, e in self.engines.iteritems() ])
 
 def probeContext():
     if 'SLURM_JOBID' in os.environ: return SlurmContext()
