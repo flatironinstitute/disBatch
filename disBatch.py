@@ -318,14 +318,23 @@ class DoneTask(BarrierTask):
     def flags(self):
         return 'D'
 
-def parseStatusFile(f):
+def parseStatusFiles(*files):
     status = dict()
-    with open(f, 'r') as s:
-        for l in s:
-            d = l.split('\t')
-            if len(d) != 15: raise Exception('Invalid status line: %r'%l)
-            if d[0] in 'BD': continue
-            status[int(d[1])] = TaskInfo(int(d[1]), int(d[2]), int(d[3]), literal_eval(d[14]), '.task', d[4], int(d[5]), int(d[6]), float(d[8]), float(d[9]), int(d[10]), literal_eval(d[11]), int(d[12]), literal_eval(d[13]), True)
+    for f in files:
+        with open(f, 'r') as s:
+            for l in s:
+                d = l.split('\t')
+                if len(d) != 15:
+                    logger.warn('Invalid status line (ignoring): %r'%l)
+                    continue
+                if d[0] in 'BD': continue
+                ti = TaskInfo(int(d[1]), int(d[2]), int(d[3]), literal_eval(d[14]), '.task', d[4], int(d[5]), int(d[6]), float(d[8]), float(d[9]), int(d[10]), literal_eval(d[11]), int(d[12]), literal_eval(d[13]), True)
+                try:
+                    # successful tasks take precedence
+                    if status[ti.taskId].returncode <= ti.returncode: continue
+                except KeyError:
+                    pass
+                status[ti.taskId] = ti
     return status
 
 ##################################################################### DRIVER
@@ -448,14 +457,18 @@ def taskGenerator(tasks, context):
     logger.info('Processed %d tasks.', taskCounter)
     yield DoneTask(taskCounter, tsx)
 
-def statusTaskFilter(tasks, status):
+def statusTaskFilter(tasks, status, retry=False, force=False):
     while True:
         t = tasks.next()
         s = status.get(t.taskId)
-        # optionally check for that status info matches:
-        if s and s != t: raise Exception('Recovery status file task mismatch:\n%s\n%s' % (s, t))
-        if s == t and s.returncode == 0:
+        if s and (not retry or s.returncode == 0):
             # skip
+            if s != t:
+                msg = 'Recovery status file task mismatch %s:\n' + str(s) + '\n' + str(t)
+                if force:
+                    logger.warn(msg, '-- proceeding anyway')
+                else:
+                    raise Exception(msg % '(use --force-resume to proceed anyway)')
             yield s
         else:
             yield t
@@ -850,8 +863,10 @@ if '__main__' == __name__:
         argp.add_argument('--mailTo', default=None, help='Mail address for task completion notification(s).')
         argp.add_argument('-c', '--cpusPerTask', default=1, type=float, help='Number of cores used per task; may be fractional (default: 1).')
         argp.add_argument('-t', '--tasksPerNode', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
-        argp.add_argument('-r', '--resume-from', metavar='STATUSFILE', help='Read the given status file from a previous run and skip any sucessful tasks.')
-        argp.add_argument('--web', action='store_true', help='Enable web interface.')
+        argp.add_argument('-r', '--resume-from', metavar='STATUSFILE', action='append', help='Read the status file from a previous run and skip any completed tasks (may be specified multiple times).')
+        argp.add_argument('-R', '--retry', action='store_true', help='With -r, also retry any tasks which failed in previous runs (non-zero return).')
+        argp.add_argument('--force-resume', action='store_true', help="With -r, proceed even if task commands/lines are different.")
+        argp.add_argument('-w', '--web', action='store_true', help='Enable web interface.')
         argp.add_argument('--kvsserver', nargs='?', default=True, metavar='HOST:PORT', help='Use a running KVS server.')
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, metavar='COMMAND', help='Tasks will come from the command specified via the KVS server (passed in the environment).')
@@ -926,7 +941,7 @@ if '__main__' == __name__:
         tasks = taskGenerator(taskSource, context)
 
         if args.resume_from:
-            tasks = statusTaskFilter(tasks, parseStatusFile(args.resume_from))
+            tasks = statusTaskFilter(tasks, parseStatusFiles(*args.resume_from), args.retry, args.force_resume)
 
         siglock = Lock()
         def sigChild(s, f):
