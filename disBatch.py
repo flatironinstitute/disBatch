@@ -220,7 +220,7 @@ class SlurmContext(BatchContext):
         super(SlurmContext, self).__init__('SLURM', jobid, nodes, cylinders)
 
     def launchNode(self, n):
-        return SUB.Popen(['srun', '-N', '1', '-n', '1', '-w', n, DisBatchPath, '--engine', '-n', n, kvsserver])
+        return SUB.Popen(['srun', '-N', '1', '-n', '1', '-w', n, DisBatchPath, '--engine', '-n', n, kvsserver], close_fds=True)
 
     def retireNode(self, node, ret):
         if compHostnames(node, myHostname):
@@ -233,7 +233,7 @@ class SlurmContext(BatchContext):
             command = ['scontrol', 'update', 'JobId=%s'%self.jobid, 'NodeList='+nodes]
             logger.debug("Retirement: %s", repr(command))
             try:
-                SUB.check_call(command)
+                SUB.check_call(command, close_fds=True)
             except Exception, e:
                 logger.warn('Retirement planning needs improvement: %s', repr(e))
 
@@ -270,7 +270,7 @@ class SSHContext(BatchContext):
 
     def launchNode(self, n):
         prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
-        return SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open(logfile(self, '%s_engine_wrap.out'%n), 'w'), stderr=open(logfile(self, '%s_engine_wrap.err'%n), 'w'))
+        return SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver], stdin=open(os.devnull, 'r'), stdout=open(logfile(self, '%s_engine_wrap.out'%n), 'w'), stderr=open(logfile(self, '%s_engine_wrap.err'%n), 'w'), close_fds=True)
 
 def probeContext():
     if 'SLURM_JOBID' in os.environ: return SlurmContext()
@@ -720,7 +720,8 @@ class EngineBlock(Thread):
                 t0 = time.time()
                 logger.info('Cylinder %d executing %s.', self.cylinderId, repr([taskId, taskStreamIndex, taskRepIndex, taskCmd]))
                 baseEnv['DISBATCH_STREAM_INDEX'], baseEnv['DISBATCH_REPEAT_INDEX'], baseEnv['DISBATCH_TASKID'] = str(taskStreamIndex), str(taskRepIndex), str(taskId)
-                self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=baseEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid)
+                # TODO check close fds
+                self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=baseEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
                 pid = self.taskProc.pid
                 obp = OutputCollector(self.taskProc.stdout, 40, 40)
                 ebp = OutputCollector(self.taskProc.stderr, 40, 40)
@@ -920,7 +921,7 @@ if '__main__' == __name__:
         else:
             taskSource = KVSTaskSource(kvs)
             if args.taskcommand:
-                taskProcess = TaskProcess(taskSource, args.taskcommand, shell=True, env=kvsenv)
+                taskProcess = TaskProcess(taskSource, args.taskcommand, shell=True, env=kvsenv, close_fds=True)
 
         tasks = taskGenerator(taskSource, context)
 
