@@ -67,10 +67,6 @@ with this submission.
 Various log files will be created as the run unfolds:
 
 * `TaskFileName_134504_status.txt`: status of each task (details below)
-* `TaskFileName_134504_failed.txt`: The `_failed.txt` file contains commands that failed in a format
-  suitable for using with another disBatch invocation. Of course, it is a
-  very good idea to determine the cause of failures before resubmitting
-  them.
 * `disBatch_134504_driver.txt` (can be changed with `-l`), `TaskFileName_134504_worker032_engine.txt`: 
   The disBatch log files contain details mostly of interest in case of a
   problem with disBatch itself. These can generally be ignored by end

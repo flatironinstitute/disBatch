@@ -561,7 +561,6 @@ class Driver(Thread):
         self.finished = 0
         self.failed = 0
 
-        self.failureFile = logfile(self.context, 'failed.txt')
         self.statusFile = open(logfile(self.context, 'status.txt'), 'w+')
         self.statusLastOffset = self.statusFile.tell()
 
@@ -627,15 +626,9 @@ class Driver(Thread):
 
             self.taskSlots.release()
             self.finished += 1
+            if tinfo.returncode: self.failed += 1
             self.statusFile.write(str(tinfo)+'\n')
             self.statusFile.flush()
-
-            if tinfo.returncode:
-                self.failed += 1
-                with open(self.failureFile, 'a') as f:
-                    if tinfo.taskRepIndex >= 0:
-                        f.write("#DISBATCH REPEAT 1 start %d " % tinfo.taskRepIndex)
-                    f.write(tinfo.taskCmd+'\n')
 
             # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than one per key.
             if self.trackResults: self.kvs.put(self.trackResults%tinfo.taskId, str(tinfo), False)
