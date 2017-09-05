@@ -987,6 +987,8 @@ if '__main__' == __name__:
             kvs.close()
             r = context.finish()
             if kvsst: kvsst.shutdown()
+            if args.kvsserver is True: os.unlink('kvsinfo.txt')
+            if args.web: os.unlink(urlfile)
 
         if not r:
             print >>sys.stderr, 'Some engine processes failed -- please check the logs'
