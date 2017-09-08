@@ -102,7 +102,7 @@ You can do this automatically by running `./disBatch.py --fix-paths`. This shoul
                         Tasks will come from the KVS server.
 ~~~~
 
-The options for mail will only work if you computing environment permits processes to access mail via SMTP.
+The options for mail will only work if your computing environment permits processes to access mail via SMTP.
 
 A value for `-c` < 1 effectively allows you to run more tasks concurrently than CPUs specified for the run. This is somewhat unusual, and generally not recommended, but could be appropriate in some cases.
 
