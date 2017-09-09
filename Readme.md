@@ -108,7 +108,7 @@ A value for `-c` < 1 effectively allows you to run more tasks concurrently than 
 
 `-r` uses the status file of a previous run to determine what tasks to run during this disBatch invocation. Only those tasks that haven't yet run (or with `-R`, those that haven't run or did but returned a non-0 exit code) are run this time. By default, the numeric task identifier and the text of the command are used to determine if a current task is the same as one found in the status file. `--force-resume` restricts the comparison to just the numeric identifier.
 
-`--kvsserver`, `--taskcommand`, and `--taskserver` implement advance functionality (placing disBatch in an existing shared key store context and allowing for a programmatic rather than textual task interface). Contact the authors for more details.
+`--kvsserver`, `--taskcommand`, and `--taskserver` implement advanced functionality (placing disBatch in an existing shared key store context and allowing for a programmatic rather than textual task interface). Contact the authors for more details.
 
 
 ### Status file
@@ -123,9 +123,9 @@ These fields are:
      Each program/task should be invoked in such a way that standard error
      and standard output end up in appropriate files. If that's not the case
      `E` or `O` flags will be raised. `R` indicates that the task
-     returned a non-zero exit code. `B` indicates a barrier (see below). `S` indicates the job was skip (this may happen during "resume" runs).
+     returned a non-zero exit code. `B` indicates a barrier (see below). `S` indicates the job was skipped (this may happen during "resume" runs).
   1. Task ID: The `314` is the 0-based index of the task (starting from the beginning of the task file, incremented for each task, including repeats).
-  1. Line number: The `315` is the 1-based line from the task file. Blank lines, directives and comments may cause this to drift considerably from the value of Task ID.
+  1. Line number: The `315` is the 1-based line from the task file. Blank lines, comments, directives and repeats may cause this to drift considerably from the value of Task ID.
   1. Repeat index: The `-1` is the repeat index (as in this example, `-1` indicates this task was not part of a repeat directive).
   1. Node: `worker032` identifies the node on which the task ran.
   1. PID: `8016` is the PID of the bash shell used to run the task.
@@ -165,7 +165,7 @@ submission. Here's an example
 
 These are textually prepended and appended, respectively, to the text of
 each task line. If the suffix includes redirection and a task is a proper command sequence (a series of
-program invocations joined by `;`), then the task should be wrapped in `( ...)` so that the standard error and standard output of the whole sequence
+program invocations joined by `;`), then the task should be wrapped in `( ... )` (which may also be added to suffix and prefix respectively) so that the standard error and standard output of the whole sequence
 will be redirected to the log file. If this is not done, only standard
 error and standard output for the last component of the command sequence
 will be captured. This is probably not what you want unless you have
@@ -207,7 +207,7 @@ For those problems that are easily handled via a job-array-like approach:
 
 will expand into five tasks, each with the environment variable
 `DISBATCH_REPEAT_INDEX` set to one of 100, 150, 200, 250, or 300.
-The tasks will consists of the concatenation of the prefix, command (if provided),
+The tasks will consist of the concatenation of the prefix, command (if provided),
 and the suffix currently in effect. `start` defaults to 0, `step`
 to 1. Note: the semantics here differ somewhat from many range
 constructs, the number immediately following `REPEAT` sets the
