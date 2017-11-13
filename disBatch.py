@@ -911,7 +911,8 @@ if '__main__' == __name__:
             # start our own
             kvsst = kvsstcp.KVSServerThread(socket.gethostname(), 0)
             kvsserver = '%s:%d'%kvsst.cinfo
-            with open('kvsinfo.txt', 'w') as kvsi:
+            kvsinfotxt = logfile(context, 'kvsinfo.txt')
+            with open(kvsinfotxt, 'w') as kvsi:
                 kvsi.write(kvsserver)
             kvsenv = kvsst.env()
         else:
@@ -982,7 +983,7 @@ if '__main__' == __name__:
             if kvsst: kvsst.shutdown()
             if args.kvsserver is True:
                 try:
-                    os.unlink('kvsinfo.txt')
+                    os.unlink(kvsinfotxt)
                 except OSError:
                     # may have been already removed -- can happen if multiple disbatch runs in same directory
                     pass

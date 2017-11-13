@@ -56,6 +56,7 @@ Various log files will be created as the run unfolds:
   problem with disBatch itself. It can generally be ignored by end
   users (but keep it around in the event that something did go
   wrong---it will aid debugging). The ``*_engine.txt'' files contain similar information for each node acting as an execution resource.
+* `disBatch_134504_kvsinfo.txt`: TCP address of invoked KVS server if any (for additional advanced status monitoring)
 
 ## Installation
 
