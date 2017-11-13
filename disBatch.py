@@ -864,7 +864,7 @@ if '__main__' == __name__:
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, metavar='COMMAND', help='Tasks will come from the command specified via the KVS server (passed in the environment).')
         source.add_argument('--taskserver', nargs='?', default=False, metavar='HOST:PORT', help='Tasks will come from the KVS server.')
-        source.add_argument('taskfile', nargs='?', default=None, type=argparse.FileType('r'), help='File with tasks, one task per line.')
+        source.add_argument('taskfile', nargs='?', default=None, type=argparse.FileType('r'), help='File with tasks, one task per line ("-" for stdin)')
         args = argp.parse_args()
 
         if args.fix_paths:
@@ -953,7 +953,7 @@ if '__main__' == __name__:
         signal.signal(signal.SIGCHLD, sigChild)
 
         # Could reorder initialization some to pass this as argument
-        context.name = os.path.basename(taskSource.name)
+        context.name = os.path.basename(taskSource.name).strip('<>')
 
         if args.web:
             from kvsstcp import wskvsmu

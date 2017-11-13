@@ -80,6 +80,19 @@ You can do this automatically by running `./disBatch.py --fix-paths`. This shoul
 
 ## Invocation
 ~~~~
+usage: disBatch.py [-h] [--fix-paths] [-l LOGFILE] [--mailFreq N]
+                   [--mailTo MAILTO] [-c CPUSPERTASK] [-t TASKSPERNODE]
+                   [-r STATUSFILE] [-R] [--force-resume] [-w]
+                   [--kvsserver [HOST:PORT]] [--taskcommand COMMAND]
+                   [--taskserver [HOST:PORT]]
+                   [taskfile]
+
+Use batch resources to process a file of tasks, one task per line.
+
+positional arguments:
+  taskfile              File with tasks, one task per line ("-" for stdin)
+
+optional arguments:
   -h, --help            show this help message and exit
   --fix-paths           Configure fixed path to script and modules.
   -l LOGFILE, --logfile LOGFILE
