@@ -980,7 +980,12 @@ if '__main__' == __name__:
             kvs.close()
             r = context.finish()
             if kvsst: kvsst.shutdown()
-            if args.kvsserver is True: os.unlink('kvsinfo.txt')
+            if args.kvsserver is True:
+                try:
+                    os.unlink('kvsinfo.txt')
+                except OSError:
+                    # may have been already removed -- can happen if multiple disbatch runs in same directory
+                    pass
             if args.web: os.unlink(urlfile)
 
         if not r:
