@@ -833,12 +833,8 @@ if '__main__' == __name__:
         logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, context.nodeId, myHostname, myPid, os.getcwd())
 
         e = EngineBlock(kvs, context)
-        try:
-            kvs.view('.shutdown')
-            logger.info('got shutdown')
-        except socket.error:
-            pass
-        finally:
+
+        def shutdown(s=None, f=None):
             logger.info('Engine shutting down.')
             for c in e.cylinders:
                 if c.is_alive():
@@ -846,6 +842,16 @@ if '__main__' == __name__:
                         c.terminate()
                     except OSError:
                         pass
+            if s: sys.exit(1)
+        signal.signal(signal.SIGTERM, shutdown)
+
+        try:
+            kvs.view('.shutdown')
+            logger.info('got shutdown')
+        except socket.error:
+            pass
+        finally:
+            shutdown()
         kvs.close()
 
     else:
