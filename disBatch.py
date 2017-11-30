@@ -937,21 +937,6 @@ if '__main__' == __name__:
         if args.resume_from:
             tasks = statusTaskFilter(tasks, parseStatusFiles(*args.resume_from), args.retry, args.force_resume)
 
-        siglock = Lock()
-        def sigChild(s, f):
-            # signal handlers need to be reentrant
-            global sigact
-            sigact = True
-            if not siglock.acquire(False): return
-            try:
-                while sigact:
-                    sigact = False
-                    context.poll()
-                    if taskProcess: taskProcess.poll()
-            finally:
-                siglock.release()
-        signal.signal(signal.SIGCHLD, sigChild)
-
         # Could reorder initialization some to pass this as argument
         context.name = os.path.basename(taskSource.name).strip('<>')
 
@@ -965,13 +950,14 @@ if '__main__' == __name__:
         f = Driver(kvs, context, tasks, getattr(taskSource, 'resultkey', None), args.mailTo, args.mailFreq)
         try:
             while f.isAlive():
+                context.poll()
                 if not context.engines:
                     logger.warn('All engines terminated; shutting down')
                     break
                 if taskProcess and taskProcess.r:
                     logger.warn('Task generator failed; forcing shutdown')
                     sys.exit(taskProcess.r)
-                f.join(60)
+                f.join(15)
         finally:
             try:
                 logger.info("posting .shutdown")
