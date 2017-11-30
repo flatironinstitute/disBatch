@@ -127,7 +127,7 @@ A value for `-c` < 1 effectively allows you to run more tasks concurrently than 
 
 ### Status file
 
-The `_status.txt` files contains tab-delimited lines of the form:
+The `_status.txt` file contains tab-delimited lines of the form:
 
      	314	315	-1	worker032	8016	0	10.0486528873	1458660919.78	1458660929.83	0	""	0	""	'cd /path/to/workdir ; myprog argsFor314 > task314.log 2>&1'
 
