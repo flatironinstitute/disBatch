@@ -82,9 +82,9 @@ You can do this automatically by running `./disBatch.py --fix-paths`. This shoul
 ~~~~
 usage: disBatch.py [-h] [--fix-paths] [-l LOGFILE] [--mailFreq N]
                    [--mailTo MAILTO] [-c CPUSPERTASK] [-t TASKSPERNODE]
-                   [-r STATUSFILE] [-R] [--force-resume] [-w]
-                   [--kvsserver [HOST:PORT]] [--taskcommand COMMAND]
-                   [--taskserver [HOST:PORT]]
+                   [-k COMMAND] [-K] [-s HOST:COUNT] [-r STATUSFILE] [-R]
+                   [--force-resume] [-w] [--kvsserver [HOST:PORT]]
+                   [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
                    [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
@@ -103,6 +103,11 @@ optional arguments:
                         Number of cores used per task; may be fractional (default: 1).
   -t TASKSPERNODE, --tasksPerNode TASKSPERNODE
                         Maximum concurrently executing tasks per node (up to cores/cpusPerTask).
+  -k COMMAND, --retire-cmd COMMAND
+                        Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system).
+  -K, --no-retire       Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.
+  -s HOST:COUNT, --ssh-node HOST:COUNT
+                        Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)
   -r STATUSFILE, --resume-from STATUSFILE
                         Read the status file from a previous run and skip any completed tasks (may be specified multiple times).
   -R, --retry           With -r, also retry any tasks which failed in previous runs (non-zero return).
@@ -119,6 +124,15 @@ optional arguments:
 The options for mail will only work if your computing environment permits processes to access mail via SMTP.
 
 A value for `-c` < 1 effectively allows you to run more tasks concurrently than CPUs specified for the run. This is somewhat unusual, and generally not recommended, but could be appropriate in some cases.
+
+The `-k` and `-K` flags allow you to control what disBatch does when a node is no longer needed to run jobs.
+When running under slurm, disBatch will by default run the command:
+
+  scontrol update JobId="$SLURM_JOBID" NodeList="${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE"
+
+which will tell slurm to release any nodes no longer being used.
+You can set this to run a different command, or nothing at all.
+While running this command, the follow environment variables will be set: `NODE` (the node that is no longer needed), `ACTIVE` (a comma-delimited list of nodes that are still active), `RETIRED` (a comma-delimited list of nodes that are no longer active, including `$NODE`), and possibly `DRIVER_NODE` (the node still running the main disBatch script, if it's not in `ACTIVE`).
 
 `-r` uses the status file of a previous run to determine what tasks to run during this disBatch invocation. Only those tasks that haven't yet run (or with `-R`, those that haven't run or did but returned a non-0 exit code) are run this time. By default, the numeric task identifier and the text of the command are used to determine if a current task is the same as one found in the status file. `--force-resume` restricts the comparison to just the numeric identifier.
 

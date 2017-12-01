@@ -37,7 +37,7 @@ if not PathsFixed:
     DisBatchPath = os.path.realpath(__file__)
     ImportDir = os.path.dirname(DisBatchPath)
 
-PythonPath = os.environ.get('PYTHONPATH', '')
+PythonPath = os.getenv('PYTHONPATH', '')
 if ImportDir:
     # to find kvsstcp:
     sys.path.append(ImportDir)
@@ -122,6 +122,7 @@ class BatchContext(object):
         self.sysid, self.jobid, self.nodes, self.cylinders = sysid, jobid, nodes, cylinders
         self.wd = os.getcwd() #TODO: Easy enough to override, but still... Is this the right place for this?
         self.error = False # engine errors (non-zero return values)
+        self.retireCmd = None
 
     def __str__(self):
         return 'Batch system: %s\nJobID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.jobid, self.nodes, self.cylinders)
@@ -146,10 +147,27 @@ class BatchContext(object):
         '''Launch an engine for a single node.  Should return a subprocess handle (unless launch itself is overridden).'''
         raise NotImplementedError('%s.launchNode is not implemented' % type(self))
 
-    def retireNode(self, node, ret, msg='no-op: add clean up hook here?'):
+    def retireEnv(self, node, ret):
+        '''Generate an environment for running the retirement command for a given node.'''
+        env = os.environ.copy()
+        env['NODE'] = node
+        env['RETCODE'] = str(ret)
+        env['ACTIVE'] = ','.join(self.engines.iterkeys())
+        env['RETIRED'] = ','.join(set(self.nodes).difference(self.engines))
+        return env
+
+    def retireNode(self, node, ret):
         '''Called when a node has exited.  May be overridden to release resources.'''
         if ret: self.error = True
-        logger.info('Retiring node "%s": %s', node, msg)
+        if self.retireCmd:
+            logger.info('Retiring node "%s" with command', node)
+            env = self.retireEnv(node, ret)
+            try:
+                SUB.check_call(self.retireCmd, close_fds=True, shell=True, env=env)
+            except Exception, e:
+                logger.warn('Retirement planning needs improvement: %s', repr(e))
+        else:
+            logger.info('Retiring node "%s" (no-op)', node)
 
     def finish(self):
         '''Check that all engines completed successfully and return True on success.'''
@@ -216,29 +234,26 @@ class SlurmContext(BatchContext):
             if m == None: m = '1'
             cylinders += [int(c)]*int(m)
 
-        self.driverNode = None
         super(SlurmContext, self).__init__('SLURM', jobid, nodes, cylinders)
+        self.driverNode = None
+        self.retireCmd = "scontrol update JobId=\"$SLURM_JOBID\" NodeList=\"${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE\""
 
     def launchNode(self, n):
         return SUB.Popen(['srun', '-N', '1', '-n', '1', '-w', n, DisBatchPath, '--engine', '-n', n, kvsserver], close_fds=True)
 
+    def retireEnv(self, node, ret):
+        env = super(SlurmContext, self).retireEnv(node, ret)
+        if self.driverNode:
+            env['DRIVER_NODE'] = self.driverNode
+        return env
+
     def retireNode(self, node, ret):
         if compHostnames(node, myHostname):
-            super(SlurmContext, self).retireNode(node, ret, 'refusing to retire driver node "%s".' % myHostname)
             self.driverNode = node
-        else:
-            super(SlurmContext, self).retireNode(node, ret, "updating node list")
-            nodes = ','.join(self.engines.iterkeys())
-            if self.driverNode: nodes += ',' + self.driverNode
-            command = ['scontrol', 'update', 'JobId=%s'%self.jobid, 'NodeList='+nodes]
-            logger.debug("Retirement: %s", repr(command))
-            try:
-                SUB.check_call(command, close_fds=True)
-            except Exception, e:
-                logger.warn('Retirement planning needs improvement: %s', repr(e))
+        super(SlurmContext, self).retireNode(node, ret)
 
     def setNode(self, node=None):
-        super(SlurmContext, self).setNode(node or os.environ.get('SLURMD_NODENAME'))
+        super(SlurmContext, self).setNode(node or os.getenv('SLURMD_NODENAME'))
 
 #TODO:
 #class GEContext(BatchContext):
@@ -256,15 +271,20 @@ class SlurmContext(BatchContext):
 # You can also specify a "job id" via DISBATCH_SSH_JOBID. If you do
 # not provide one, one will be created from the PID and epoch time.
 class SSHContext(BatchContext):
-    def __init__(self):
-        jobid = os.environ.get('DISBATCH_SSH_JOBID', '%d_%.6f'%(myPid, time.time()))
+    def __init__(self, nodelist=os.getenv('DISBATCH_SSH_NODELIST')):
+        jobid = os.getenv('DISBATCH_SSH_JOBID', '%d_%.6f'%(myPid, time.time()))
 
         cylinders, nodes = [], []
-        for p in os.environ['DISBATCH_SSH_NODELIST'].split(','):
-            n, e = p.split(':')
+        if type(nodelist) is not str: nodelist = ','.join(nodelist)
+        for p in nodelist.split(','):
+            try:
+                n, e = p.rsplit(':', 1)
+                e = int(e)
+            except ValueError:
+                raise ValueError('SSH nodelist items must be HOST:COUNT')
             if n == 'localhost': n = myHostname
             nodes.append(n)
-            cylinders.append(int(e))
+            cylinders.append(e)
 
         super(SSHContext, self).__init__('SSH', jobid, nodes, cylinders)
 
@@ -862,6 +882,9 @@ if '__main__' == __name__:
         argp.add_argument('--mailTo', default=None, help='Mail address for task completion notification(s).')
         argp.add_argument('-c', '--cpusPerTask', default=1, type=float, help='Number of cores used per task; may be fractional (default: 1).')
         argp.add_argument('-t', '--tasksPerNode', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
+        argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help="Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system).")
+        argp.add_argument('-K', '--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
+        argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:COUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
         argp.add_argument('-r', '--resume-from', metavar='STATUSFILE', action='append', help='Read the status file from a previous run and skip any completed tasks (may be specified multiple times).')
         argp.add_argument('-R', '--retry', action='store_true', help='With -r, also retry any tasks which failed in previous runs (non-zero return).')
         argp.add_argument('--force-resume', action='store_true', help="With -r, proceed even if task commands/lines are different.")
@@ -892,7 +915,10 @@ if '__main__' == __name__:
             sys.exit(1)
 
         # Try to find a batch context.
-        context = probeContext()
+        if args.ssh_node:
+            context = SSHContext(args.ssh_node)
+        else:
+            context = probeContext()
         if not context:
             print >>sys.stderr, 'Cannot determine batch execution environment.'
             sys.exit(1)
@@ -900,6 +926,9 @@ if '__main__' == __name__:
         # Apply lesser of -c and -t limits
         context.cylinders = [ min(int(c / args.cpusPerTask), args.tasksPerNode) for c in context.cylinders ]
         # TODO: communicate to jobs how many CPUs they have available?
+
+        if args.retire_cmd is not None:
+            context.retireCmd = args.retire_cmd
 
         logger = logging.getLogger('DisBatch')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
