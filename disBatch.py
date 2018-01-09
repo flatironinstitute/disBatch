@@ -858,21 +858,28 @@ if '__main__' == __name__:
             logger.info('Engine shutting down.')
             for c in e.cylinders:
                 if c.is_alive():
+                    logger.info('forcing cylinder termination')
                     try:
                         c.terminate()
                     except OSError:
                         pass
-            if s: sys.exit(1)
+            if s:
+                logger.info('exiting on signal')
+                sys.exit(1)
         signal.signal(signal.SIGTERM, shutdown)
 
         try:
             kvs.view('.shutdown')
             logger.info('got shutdown')
-        except socket.error:
+        except socket.error, r:
+            logger.info('got socket error waiting on shutdown: %r'%r)
             pass
         finally:
             shutdown()
         kvs.close()
+        logger.info('Remaining processes:\n' + SUB.check_output(['ps', 'fuhx']))
+        logger.info('exiting successfully')
+        sys.exit(0)
 
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
