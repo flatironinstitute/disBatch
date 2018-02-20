@@ -80,12 +80,7 @@ You can do this automatically by running `./disBatch.py --fix-paths`. This shoul
 
 ## Invocation
 ~~~~
-usage: disBatch.py [-h] [--fix-paths] [-l LOGFILE] [--mailFreq N]
-                   [--mailTo MAILTO] [-c CPUSPERTASK] [-t TASKSPERNODE]
-                   [-k COMMAND] [-K] [-s HOST:COUNT] [-r STATUSFILE] [-R]
-                   [--force-resume] [-w] [--kvsserver [HOST:PORT]]
-                   [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
-                   [taskfile]
+usage: disBatch.py [-h] [--fix-paths] [-p PATH] [-l LOGFILE] [--mailFreq N] [--mailTo MAILTO] [-c CPUSPERTASK] [-t TASKSPERNODE] [-k COMMAND] [-K] [-s HOST:COUNT] [-r STATUSFILE] [-R] [--force-resume] [-w] [--kvsserver [HOST:PORT]] [--taskcommand COMMAND] [--taskserver [HOST:PORT]] [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
 
@@ -95,6 +90,8 @@ positional arguments:
 optional arguments:
   -h, --help            show this help message and exit
   --fix-paths           Configure fixed path to script and modules.
+  -p PATH, --prefix PATH
+                        Prefix path and name for log and status files (default: ./TASKFILE_JOBID).
   -l LOGFILE, --logfile LOGFILE
                         Log file.
   --mailFreq N          Send email every N task completions (default: 1). "--mailTo" must be given.

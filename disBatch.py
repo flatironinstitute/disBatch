@@ -78,9 +78,11 @@ def compHostnames(h0, h1):
 
 def logfile(context, suffix=''):
     '''Standardized file path construction for log files.'''
-    f = "%s_%s"%(getattr(context, 'name', 'disBatch'), context.jobid)
-    if hasattr(context, 'node'):
+    f = context.name
+    try:
         f += "_%s"%context.node
+    except AttributeError:
+        pass
     if suffix:
         f += "_%s"%suffix
     return f
@@ -884,6 +886,7 @@ if '__main__' == __name__:
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
         argp.add_argument('--fix-paths', action='store_true', help='Configure fixed path to script and modules.')
+        argp.add_argument('-p', '--prefix', metavar='PATH', default=None, help='Prefix path and name for log and status files (default: ./TASKFILE_JOBID).')
         argp.add_argument('-l', '--logfile', default=None, type=argparse.FileType('w'), help='Log file.')
         argp.add_argument('--mailFreq', default=None, type=int, metavar='N', help='Send email every N task completions (default: 1). "--mailTo" must be given.')
         argp.add_argument('--mailTo', default=None, help='Mail address for task completion notification(s).')
@@ -929,6 +932,15 @@ if '__main__' == __name__:
         if not context:
             print >>sys.stderr, 'Cannot determine batch execution environment.'
             sys.exit(1)
+
+        if args.prefix:
+            context.name = args.prefix
+        else:
+            try:
+                context.name = os.path.basename(args.taskfile.name).strip('<>')
+            except AttributeError:
+                context.name = 'disBatch'
+            context.name += '_'+str(context.jobid)
 
         # Apply lesser of -c and -t limits
         context.cylinders = [ min(int(c / args.cpusPerTask), args.tasksPerNode) for c in context.cylinders ]
@@ -978,9 +990,6 @@ if '__main__' == __name__:
 
         if args.resume_from:
             tasks = statusTaskFilter(tasks, parseStatusFiles(*args.resume_from), args.retry, args.force_resume)
-
-        # Could reorder initialization some to pass this as argument
-        context.name = os.path.basename(taskSource.name).strip('<>')
 
         if args.web:
             from kvsstcp import wskvsmu
