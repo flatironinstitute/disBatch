@@ -672,7 +672,9 @@ class Driver(Thread):
 class OutputCollector(Thread):
     def __init__(self, pipe, takeStart=0, takeEnd=0):
         super(OutputCollector, self).__init__(name='OutputCollector')
-        self.pipe = pipe
+        # We don't really care for python's file abstraction -- get back a real fd
+        self.pipefd = os.dup(pipe.fileno())
+        pipe.close()
         self.takeStart = takeStart
         self.takeEnd = takeEnd
         self.dataStart = ''
@@ -681,16 +683,22 @@ class OutputCollector(Thread):
         self.daemon = True
         self.start()
 
+    def read(self, count):
+        try:
+            return os.read(self.pipefd, count)
+        except OSError:
+            return ''
+
     def run(self):
         start = self.takeStart
         end = self.takeEnd
         while 1:
             if start > 0:
-                r = self.pipe.read(start)
+                r = self.read(start)
                 self.dataStart += r
                 start -= len(r)
             else:
-                r = self.pipe.read(4096)
+                r = self.read(4096)
                 if end > 0:
                     if len(r) >= end:
                         self.dataEnd = r[-end:]
@@ -698,6 +706,14 @@ class OutputCollector(Thread):
                         self.dataEnd = self.dataEnd[-end+len(r):] + r
             if not r: return
             self.bytes += len(r)
+
+    def stop(self):
+        self.join(5)
+        try:
+            # In case someone still has the pipe open, close our end to force this thread to stop
+            os.close(self.pipefd)
+        except OSError:
+            pass
 
     def __str__(self):
         s = self.dataStart
@@ -745,10 +761,9 @@ class EngineBlock(Thread):
                     logger.info('Cylinder %d stopping.', self.cylinderId)
                     self.coq.put(('done', 'stopped', False))
                     break
-                t0 = time.time()
                 logger.info('Cylinder %d executing %s.', self.cylinderId, repr([taskId, taskStreamIndex, taskRepIndex, taskCmd]))
                 baseEnv['DISBATCH_STREAM_INDEX'], baseEnv['DISBATCH_REPEAT_INDEX'], baseEnv['DISBATCH_TASKID'] = str(taskStreamIndex), str(taskRepIndex), str(taskId)
-                # TODO check close fds
+                t0 = time.time()
                 self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=baseEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
                 pid = self.taskProc.pid
                 obp = OutputCollector(self.taskProc.stdout, 40, 40)
@@ -756,6 +771,9 @@ class EngineBlock(Thread):
                 r = self.taskProc.wait()
                 self.taskProc = None
                 t1 = time.time()
+
+                obp.stop()
+                ebp.stop()
                 ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, '.finished task', self.context.node, pid, r, t0, t1, obp.bytes, str(obp), ebp.bytes, str(ebp))
                 logger.info('Cylinder %s completed: %s', self.cylinderId, ti)
                 self.coq.put(('done', ti, throttled))
