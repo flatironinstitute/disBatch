@@ -80,7 +80,12 @@ You can do this automatically by running `./disBatch.py --fix-paths`. This shoul
 
 ## Invocation
 ~~~~
-usage: disBatch.py [-h] [--fix-paths] [-p PATH] [-l LOGFILE] [--mailFreq N] [--mailTo MAILTO] [-c CPUSPERTASK] [-t TASKSPERNODE] [-k COMMAND] [-K] [-s HOST:COUNT] [-r STATUSFILE] [-R] [--force-resume] [-w] [--kvsserver [HOST:PORT]] [--taskcommand COMMAND] [--taskserver [HOST:PORT]] [taskfile]
+usage: disBatch.py [-h] [--fix-paths] [-p PATH] [-l LOGFILE] [--mailFreq N]
+                   [--mailTo MAILTO] [-c CPUSPERTASK] [-t TASKSPERNODE]
+                   [-k COMMAND] [-K] [-s HOST:COUNT] [-r STATUSFILE] [-R]
+                   [--force-resume] [-w] [--kvsserver [HOST:PORT]]
+                   [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
+                   [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
 
@@ -91,29 +96,43 @@ optional arguments:
   -h, --help            show this help message and exit
   --fix-paths           Configure fixed path to script and modules.
   -p PATH, --prefix PATH
-                        Prefix path and name for log and status files (default: ./TASKFILE_JOBID).
+                        Prefix path and name for log and status files
+                        (default: ./TASKFILE_JOBID).
   -l LOGFILE, --logfile LOGFILE
                         Log file.
-  --mailFreq N          Send email every N task completions (default: 1). "--mailTo" must be given.
+  --mailFreq N          Send email every N task completions (default: 1). "--
+                        mailTo" must be given.
   --mailTo MAILTO       Mail address for task completion notification(s).
   -c CPUSPERTASK, --cpusPerTask CPUSPERTASK
-                        Number of cores used per task; may be fractional (default: 1).
+                        Number of cores used per task; may be fractional
+                        (default: 1).
   -t TASKSPERNODE, --tasksPerNode TASKSPERNODE
-                        Maximum concurrently executing tasks per node (up to cores/cpusPerTask).
+                        Maximum concurrently executing tasks per node (up to
+                        cores/cpusPerTask).
   -k COMMAND, --retire-cmd COMMAND
-                        Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system).
-  -K, --no-retire       Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.
+                        Shell command to run to retire a node (environment
+                        includes $NODE being retired, remaining $ACTIVE node
+                        list, $RETIRED node list; default based on batch
+                        system).
+  -K, --no-retire       Don't retire nodes from the batch system (e.g., if
+                        running as part of a larger job); equivalent to -k ''.
   -s HOST:COUNT, --ssh-node HOST:COUNT
-                        Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)
+                        Run tasks over SSH on the given nodes (can be
+                        specified multiple times for additional hosts;
+                        equivalent to setting DISBATCH_SSH_NODELIST)
   -r STATUSFILE, --resume-from STATUSFILE
-                        Read the status file from a previous run and skip any completed tasks (may be specified multiple times).
-  -R, --retry           With -r, also retry any tasks which failed in previous runs (non-zero return).
-  --force-resume        With -r, proceed even if task commands/lines are different.
+                        Read the status file from a previous run and skip any
+                        completed tasks (may be specified multiple times).
+  -R, --retry           With -r, also retry any tasks which failed in previous
+                        runs (non-zero return).
+  --force-resume        With -r, proceed even if task commands/lines are
+                        different.
   -w, --web             Enable web interface.
   --kvsserver [HOST:PORT]
                         Use a running KVS server.
   --taskcommand COMMAND
-                        Tasks will come from the command specified via the KVS server (passed in the environment).
+                        Tasks will come from the command specified via the KVS
+                        server (passed in the environment).
   --taskserver [HOST:PORT]
                         Tasks will come from the KVS server.
 ~~~~
