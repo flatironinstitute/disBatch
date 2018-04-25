@@ -1,8 +1,12 @@
 #!/usr/bin/env python2
+from __future__ import print_function
 import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
 
 from multiprocessing import Process as mpProcess, Queue as mpQueue
-from Queue import Queue, Empty
+try:
+    from queue import Queue, Empty
+except ImportError:
+    from Queue import Queue, Empty
 from threading import BoundedSemaphore, Thread, Lock
 from ast import literal_eval
 
@@ -13,7 +17,7 @@ if '__main__' == __name__ and sys.argv[1:] == ["--fix-paths"]:
     import tempfile
     DisBatchPath = os.path.realpath(__file__)
     if not os.path.exists(DisBatchPath):
-        print >>sys.stderr, 'Unable to find myself; set DisBatchPath and ImportDir manually at the top of disBatch.py.'
+        print('Unable to find myself; set DisBatchPath and ImportDir manually at the top of disBatch.py.', file=sys.stderr)
         sys.exit(1)
     DisBatchDir = os.path.dirname(DisBatchPath)
     with open(DisBatchPath, 'r') as fi:
@@ -24,7 +28,7 @@ if '__main__' == __name__ and sys.argv[1:] == ["--fix-paths"]:
                     assert not found
                     found = True
                     l = 'DisBatchPath, ImportDir, PathsFixed = %r, %r, True\n'%(DisBatchPath, DisBatchDir)
-                    print >>sys.stderr, "Changing path info to %r"%l
+                    print("Changing path info to %r"%l, file=sys.stderr)
                 fo.write(l)
             assert found
             os.fchmod(fo.fileno(), os.fstat(fi.fileno()).st_mode)
@@ -49,13 +53,13 @@ try:
     import kvsstcp
 except ImportError:
     if PathsFixed:
-        print >>sys.stderr, 'This script is looking in the wrong place for "kvssctp". Try running "%s --fix-paths" or editing it by hand.'%DisBatchPath
+        print('This script is looking in the wrong place for "kvssctp". Try running "%s --fix-paths" or editing it by hand.'%DisBatchPath, file=sys.stderr)
     else:
-        print >>sys.stderr, '''
+        print('''
 Could not find kvsstcp. If there is a "kvsstcp" directory in "%s",
 try running "%s --fix-paths". Otherwise review the installation
 instructions.
-'''%(ImportDir, DisBatchPath)
+'''%(ImportDir, DisBatchPath), file=sys.stderr)
     sys.exit(1)
     
 myHostname = socket.gethostname()
@@ -154,7 +158,7 @@ class BatchContext(object):
         env = os.environ.copy()
         env['NODE'] = node
         env['RETCODE'] = str(ret)
-        env['ACTIVE'] = ','.join(self.engines.iterkeys())
+        env['ACTIVE'] = ','.join(self.engines.keys())
         env['RETIRED'] = ','.join(set(self.nodes).difference(self.engines))
         return env
 
@@ -166,7 +170,7 @@ class BatchContext(object):
             env = self.retireEnv(node, ret)
             try:
                 SUB.check_call(self.retireCmd, close_fds=True, shell=True, env=env)
-            except Exception, e:
+            except Exception as e:
                 logger.warn('Retirement planning needs improvement: %s', repr(e))
         else:
             logger.info('Retiring node "%s" (no-op)', node)
@@ -371,7 +375,7 @@ class KVSTaskSource(object):
         self.resultkey = self.name + ' result %d'
         self.donetask = self.name + ' done!'
 
-    def next(self):
+    def __next__(self):
         t = self.kvs.get(self.taskkey, False)
         if t == self.donetask:
             self.kvs.close()
@@ -413,7 +417,7 @@ def taskGenerator(tasks, context):
     while 1:
         tsx += 1
         try:
-            t = tasks.next()
+            t = next(tasks)
         except StopIteration:
             # Signals there will be no more tasks.
             break
@@ -481,7 +485,7 @@ def taskGenerator(tasks, context):
 
 def statusTaskFilter(tasks, status, retry=False, force=False):
     while True:
-        t = tasks.next()
+        t = next(tasks)
         s = status.get(t.taskId)
         if s and (not retry or s.returncode == 0):
             # skip
@@ -512,7 +516,7 @@ class Feeder(Thread):
     def run(self):
         try:
             self.main()
-        except Exception, e:
+        except Exception as e:
             logger.error('Feeder error: %s', e)
             self.kvs.put('.finished task', DoneTask(-1, 0, str(e)))
             raise
@@ -527,7 +531,7 @@ class Feeder(Thread):
                 tinfo = DoneTask(-1, 0, 'aborted')
             else:
                 # Request the next task
-                tinfo = self.taskGenerator.next()
+                tinfo = next(self.taskGenerator)
 
             if tinfo.skip:
                 self.kvs.put('.finished task', tinfo)
@@ -604,7 +608,7 @@ class Driver(Thread):
             s.connect()
             s.sendmail([self.mailTo], [self.mailTo], msg.as_string())
             self.statusLastOffset = statusfo.tell()
-        except Exception, e:
+        except Exception as e:
             logger.warn('Failed to send notification message: "%s". Disabling.', e)
             self.mailTo = None
             # Be sure to seek back to EOF to append
@@ -863,8 +867,8 @@ if '__main__' == __name__:
         context = kvs.view('.context')
         try:
             os.chdir(context.wd)
-        except Exception, e:
-            print >>sys.stderr, 'Failed to change working directory to "%s".'%context.wd
+        except Exception as e:
+            print('Failed to change working directory to "%s".'%context.wd, file=sys.stderr)
         context.setNode(args.node)
         logger = logging.getLogger('DisBatch Engine')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
@@ -891,7 +895,7 @@ if '__main__' == __name__:
         try:
             kvs.view('.shutdown')
             logger.info('got shutdown')
-        except socket.error, r:
+        except socket.error as r:
             logger.info('got socket error waiting on shutdown: %r'%r)
             pass
         finally:
@@ -925,7 +929,7 @@ if '__main__' == __name__:
         args = argp.parse_args()
 
         if args.fix_paths:
-            print >>sys.stderr, 'You must use --fix-paths without any other arguments.'
+            print('You must use --fix-paths without any other arguments.', file=sys.stderr)
             sys.exit(1)
 
         if args.mailFreq and not args.mailTo:
@@ -939,7 +943,7 @@ if '__main__' == __name__:
         elif args.taskserver is None: # --taskserver with no argument
             args.taskserver = args.kvsserver
         elif args.taskserver and args.kvsserver != args.taskserver:
-            print >>sys.stderr, 'Cannot use different --kvsserver and --taskservers.'
+            print('Cannot use different --kvsserver and --taskservers.', file=sys.stderr)
             sys.exit(1)
 
         # Try to find a batch context.
@@ -948,7 +952,7 @@ if '__main__' == __name__:
         else:
             context = probeContext()
         if not context:
-            print >>sys.stderr, 'Cannot determine batch execution environment.'
+            print('Cannot determine batch execution environment.', file=sys.stderr)
             sys.exit(1)
 
         if args.prefix:
@@ -1045,6 +1049,6 @@ if '__main__' == __name__:
             if args.web: os.unlink(urlfile)
 
         if not r:
-            print >>sys.stderr, 'Some engine processes failed -- please check the logs'
+            print('Some engine processes failed -- please check the logs', file=sys.stderr)
             sys.exit(1)
 
