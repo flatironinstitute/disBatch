@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
 
 from multiprocessing import Process as mpProcess, Queue as mpQueue

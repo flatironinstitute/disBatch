@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 from distutils.core import setup
 setup(name='disbatch', version='0',
     description="Distributed processing of a batch of tasks",
