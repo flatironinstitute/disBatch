@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 from __future__ import print_function
 import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
 
@@ -142,7 +142,7 @@ class BatchContext(object):
 
     def poll(self):
         '''Check if any engines have stopped.'''
-        for n, e in self.engines.items():
+        for n, e in list(self.engines.items()):
             r = e.poll()
             if r is not None:
                 logger.info('Engine %s exited: %d', n, r)
@@ -615,14 +615,19 @@ class Driver(Thread):
             self.statusFile.seek(0, 2)
 
     def updateStatus(self):
+        active = self.taskSlots._initial_value
+        try:
+            active -= self.taskSlots._value
+        except AttributeError:
+            active -= self.taskSlots._Semaphore__value
         status = dict(more = not self.feeder.done, barrier = self.feeder.barrier,
                 finished = self.finished, failed = self.failed,
                 # base active on semaphore value (correct except for barriers)
-                active = self.taskSlots._initial_value - self.taskSlots._Semaphore__value)
+                active = active)
         # Make changes visible via KVS.
         logger.debug('Posting status: %r', status)
         self.kvs.get('DisBatch status', False)
-        self.kvs.put('DisBatch status', json.dumps(status, default=repr), 'JSON')
+        self.kvs.put('DisBatch status', json.dumps(status, default=repr), b'JSON')
 
     def run(self):
         self.kvs.put('DisBatch status', '<Starting...>', False)
@@ -681,8 +686,8 @@ class OutputCollector(Thread):
         pipe.close()
         self.takeStart = takeStart
         self.takeEnd = takeEnd
-        self.dataStart = ''
-        self.dataEnd = ''
+        self.dataStart = b''
+        self.dataEnd = b''
         self.bytes = 0
         self.daemon = True
         self.start()
@@ -722,7 +727,10 @@ class OutputCollector(Thread):
     def __str__(self):
         s = self.dataStart
         if self.dataEnd:
-            s += '...' + self.dataEnd
+            s += b'...' + self.dataEnd
+        if type(s) is not str:
+            # for python3... would be better to keep raw bytes
+            s = s.decode('utf-8', 'ignore')
         return s
 
 # Once we know the nodes participating in the run, we start an engine
@@ -827,7 +835,7 @@ class EngineBlock(Thread):
         inFlight, liveCylinders = 0, len(self.cylinders)
         while liveCylinders:
             tag, o, throttled = self.coq.get()
-            logger.info('Run loop: %d %d %s %s', inFlight, liveCylinders, tag, repr(o))
+            logger.info('Run loop: %d %d %s %s', inFlight, liveCylinders, tag, str(o))
             if tag == 'done':
                 inFlight -= 1
                 if throttled: self.throttle.release()
@@ -901,7 +909,7 @@ if '__main__' == __name__:
         finally:
             shutdown()
         kvs.close()
-        logger.info('Remaining processes:\n' + SUB.check_output(['ps', 'fuhx']))
+        logger.info('Remaining processes:\n' + SUB.check_output(['ps', 'fuhx']).decode('utf-8', 'ignore'))
         logger.info('exiting successfully')
         sys.exit(0)
 
