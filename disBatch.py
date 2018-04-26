@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/python
 from __future__ import print_function
 import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
 
