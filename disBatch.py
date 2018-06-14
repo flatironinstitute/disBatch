@@ -776,17 +776,24 @@ class EngineBlock(Thread):
                 logger.info('Cylinder %d executing %s.', self.cylinderId, repr([taskId, taskStreamIndex, taskRepIndex, taskCmd]))
                 baseEnv['DISBATCH_STREAM_INDEX'], baseEnv['DISBATCH_REPEAT_INDEX'], baseEnv['DISBATCH_TASKID'] = str(taskStreamIndex), str(taskRepIndex), str(taskId)
                 t0 = time.time()
-                self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=baseEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
-                pid = self.taskProc.pid
-                obp = OutputCollector(self.taskProc.stdout, 40, 40)
-                ebp = OutputCollector(self.taskProc.stderr, 40, 40)
-                r = self.taskProc.wait()
-                self.taskProc = None
-                t1 = time.time()
+                try:
+                    self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=baseEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
+                    pid = self.taskProc.pid
+                    obp = OutputCollector(self.taskProc.stdout, 40, 40)
+                    ebp = OutputCollector(self.taskProc.stderr, 40, 40)
+                    r = self.taskProc.wait()
+                    self.taskProc = None
+                    t1 = time.time()
+                    
+                    obp.stop()
+                    ebp.stop()
+                    ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, '.finished task', self.context.node, pid, r, t0, t1, obp.bytes, str(obp), ebp.bytes, str(ebp))
+                except Exception, e:
+                    self.taskProc = None
+                    t1 = time.time()
+                    estr = str(e)
+                    ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, '.finished task', self.context.node, -1, getattr(e, 'errno', 200), t0, t1, 0, '', len(estr), estr)
 
-                obp.stop()
-                ebp.stop()
-                ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, '.finished task', self.context.node, pid, r, t0, t1, obp.bytes, str(obp), ebp.bytes, str(ebp))
                 logger.info('Cylinder %s completed: %s', self.cylinderId, ti)
                 self.coq.put(('done', ti, throttled))
 
