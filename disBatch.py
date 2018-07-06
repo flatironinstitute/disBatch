@@ -992,7 +992,7 @@ if '__main__' == __name__:
             args.logfile.close()
             lconf['filename'] = args.logfile.name
         else:
-            lconf['filename'] = logfile(context, 'driver.txt')
+            lconf['filename'] = logfile(context, 'driver.log')
         logging.basicConfig(**lconf)
 
         logger.info('Starting feeder (%d) on %s in %s.', myPid, myHostname, os.getcwd())
