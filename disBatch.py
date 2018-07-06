@@ -760,6 +760,8 @@ class EngineBlock(Thread):
             try:
                 self.main()
             finally:
+                logger.info('Cylinder %d stopping.', self.cylinderId)
+                self.coq.put(('done', 'stopped', False))
                 killPatiently(self.taskProc, 'cylinder %d subproc' % self.cylinderId, 2)
 
         def main(self):
@@ -770,8 +772,6 @@ class EngineBlock(Thread):
             while 1:
                 (taskId, taskStreamIndex, taskRepIndex, taskCmd), throttled = self.ciq.get()
                 if taskId == TaskIdOOB:
-                    logger.info('Cylinder %d stopping.', self.cylinderId)
-                    self.coq.put(('done', 'stopped', False))
                     break
                 logger.info('Cylinder %d executing %s.', self.cylinderId, repr([taskId, taskStreamIndex, taskRepIndex, taskCmd]))
                 baseEnv['DISBATCH_STREAM_INDEX'], baseEnv['DISBATCH_REPEAT_INDEX'], baseEnv['DISBATCH_TASKID'] = str(taskStreamIndex), str(taskRepIndex), str(taskId)
