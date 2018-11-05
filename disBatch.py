@@ -748,10 +748,17 @@ class OutputCollector(Thread):
 # engine can retire.
 class EngineBlock(Thread):
     class Cylinder(mpProcess):
-        def __init__(self, context, commonEnv, ciq, coq, cylinderId):
+        def __init__(self, context, env, envres, ciq, coq, cylinderId):
             super(EngineBlock.Cylinder, self).__init__()
             self.daemon = True
-            self.context, self.commonEnv, self.ciq, self.coq, self.cylinderId = context, commonEnv, ciq, coq, cylinderId
+            self.context, self.ciq, self.coq, self.cylinderId = context, ciq, coq, cylinderId
+            self.env = env.copy()
+            for v, l in envres.items():
+                try:
+                    self.env[v] = l[cylinderId]
+                except IndexError:
+                    # safer to set it empty than delete it for most cases
+                    self.env[v] = ''
             self.taskProc = None
             self.start()
 
@@ -767,17 +774,15 @@ class EngineBlock(Thread):
         def main(self):
             self.pgid = os.getpgid(0)
             logger.info('Cylinder %d firing, %d, %d.', self.cylinderId, self.pid, self.pgid)
-            baseEnv = os.environ.copy()
-            baseEnv.update(self.commonEnv)
             while 1:
                 (taskId, taskStreamIndex, taskRepIndex, taskCmd), throttled = self.ciq.get()
                 if taskId == TaskIdOOB:
                     break
                 logger.info('Cylinder %d executing %s.', self.cylinderId, repr([taskId, taskStreamIndex, taskRepIndex, taskCmd]))
-                baseEnv['DISBATCH_STREAM_INDEX'], baseEnv['DISBATCH_REPEAT_INDEX'], baseEnv['DISBATCH_TASKID'] = str(taskStreamIndex), str(taskRepIndex), str(taskId)
+                self.env['DISBATCH_STREAM_INDEX'], self.env['DISBATCH_REPEAT_INDEX'], self.env['DISBATCH_TASKID'] = str(taskStreamIndex), str(taskRepIndex), str(taskId)
                 t0 = time.time()
                 try:
-                    self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=baseEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
+                    self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=self.env, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
                     pid = self.taskProc.pid
                     obp = OutputCollector(self.taskProc.stdout, 40, 40)
                     ebp = OutputCollector(self.taskProc.stderr, 40, 40)
@@ -788,7 +793,7 @@ class EngineBlock(Thread):
                     obp.stop()
                     ebp.stop()
                     ti = TaskInfo(taskId, taskStreamIndex, taskRepIndex, taskCmd, '.finished task', self.context.node, pid, r, t0, t1, obp.bytes, str(obp), ebp.bytes, str(ebp))
-                except Exception, e:
+                except Exception as e:
                     self.taskProc = None
                     t1 = time.time()
                     estr = str(e)
@@ -820,16 +825,30 @@ class EngineBlock(Thread):
         self.context = context
         cylinders = context.cylinders[context.nodeId]
 
+        env = os.environ
+        envres = {}
+        for v in context.envres:
+            e = env.get(v)
+            if e:
+                l = e.split(',')
+                if len(l) < cylinders:
+                    logger.error('Requested envres variable "%s" has too few values, so some tasks will not be assigned resources: %s', v, e)
+                elif len(l) > cylinders:
+                    logger.warning('Requested envres variable "%s" has too many values, so some resources will not be used: %s', v, e)
+                envres[v] = l
+            else:
+                logger.warning('Requested envres variable "%s" not found', v)
+
         self.parent = kvs
         self.kvs = kvs.clone()
-        self.commonEnv = self.kvs.view('.common env')
+        env.update(self.kvs.view('.common env'))
         # Note we are using the Queue construct from the
         # mulitprocessing module---we need to coordinate between
         # independent processes.
         self.ciq, self.coq, self.throttle = mpQueue(), mpQueue(), BoundedSemaphore(cylinders)
         self.Injector(kvs, ".node." + context.node, None, self.coq)
         self.Injector(kvs, ".task", self.throttle, self.coq)
-        self.cylinders = [self.Cylinder(context, self.commonEnv, self.ciq, self.coq, x) for x in range(cylinders)]
+        self.cylinders = [self.Cylinder(context, env, envres, self.ciq, self.coq, x) for x in range(cylinders)]
         self.start()
 
     def run(self):
@@ -924,11 +943,13 @@ if '__main__' == __name__:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
         argp.add_argument('--fix-paths', action='store_true', help='Configure fixed path to script and modules.')
         argp.add_argument('-p', '--prefix', metavar='PATH', default=None, help='Prefix path and name for log and status files (default: ./TASKFILE_JOBID).')
-        argp.add_argument('-l', '--logfile', default=None, type=argparse.FileType('w'), help='Log file.')
+        argp.add_argument('-l', '--logfile', metavar='FILE', default=None, type=argparse.FileType('w'), help='Log file.')
         argp.add_argument('--mailFreq', default=None, type=int, metavar='N', help='Send email every N task completions (default: 1). "--mailTo" must be given.')
-        argp.add_argument('--mailTo', default=None, help='Mail address for task completion notification(s).')
-        argp.add_argument('-c', '--cpusPerTask', default=1, type=float, help='Number of cores used per task; may be fractional (default: 1).')
-        argp.add_argument('-t', '--tasksPerNode', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
+        argp.add_argument('--mailTo', metavar='ADDR', default=None, help='Mail address for task completion notification(s).')
+        argp.add_argument('-c', '--cpusPerTask', metavar='N', default=1, type=float, help='Number of cores used per task; may be fractional (default: 1).')
+        argp.add_argument('-t', '--tasksPerNode', metavar='N', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
+        argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', help='Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)')
+        argp.add_argument('-g', '--gpu', action='append_const', dest='env_resource', const='CUDA_VISIBLE_DEVICES,GPU_DEVICE_ORDINAL', help='Use assigned GPU resources')
         argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help="Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system).")
         argp.add_argument('-K', '--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
         argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:COUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
@@ -982,6 +1003,8 @@ if '__main__' == __name__:
         # Apply lesser of -c and -t limits
         context.cylinders = [ min(int(c / args.cpusPerTask), args.tasksPerNode) for c in context.cylinders ]
         # TODO: communicate to jobs how many CPUs they have available?
+
+        context.envres = ','.join(args.env_resource).split(',')
 
         if args.retire_cmd is not None:
             context.retireCmd = args.retire_cmd
