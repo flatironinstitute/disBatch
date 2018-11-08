@@ -832,7 +832,8 @@ class EngineBlock(Thread):
             if e:
                 l = e.split(',')
                 if len(l) < cylinders:
-                    logger.error('Requested envres variable "%s" has too few values, so some tasks will not be assigned resources: %s', v, e)
+                    logger.error('Requested envres variable "%s" has too few values, decreasing cylinders to match: %s', v, e)
+                    cylinders = len(l)
                 elif len(l) > cylinders:
                     logger.warning('Requested envres variable "%s" has too many values, so some resources will not be used: %s', v, e)
                 envres[v] = l
