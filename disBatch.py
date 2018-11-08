@@ -948,7 +948,7 @@ if '__main__' == __name__:
         argp.add_argument('--mailTo', metavar='ADDR', default=None, help='Mail address for task completion notification(s).')
         argp.add_argument('-c', '--cpusPerTask', metavar='N', default=1, type=float, help='Number of cores used per task; may be fractional (default: 1).')
         argp.add_argument('-t', '--tasksPerNode', metavar='N', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
-        argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', help='Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)')
+        argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', help=argparse.SUPPRESS) #'Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)'
         argp.add_argument('-g', '--gpu', action='append_const', dest='env_resource', const='CUDA_VISIBLE_DEVICES,GPU_DEVICE_ORDINAL', help='Use assigned GPU resources')
         argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help="Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system).")
         argp.add_argument('-K', '--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
