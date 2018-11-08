@@ -752,13 +752,13 @@ class EngineBlock(Thread):
             super(EngineBlock.Cylinder, self).__init__()
             self.daemon = True
             self.context, self.ciq, self.coq, self.cylinderId = context, ciq, coq, cylinderId
-            self.env = env.copy()
+            self.localEnv = env.copy()
             for v, l in envres.items():
                 try:
-                    self.env[v] = l[cylinderId]
+                    self.localEnv[v] = l[cylinderId]
                 except IndexError:
                     # safer to set it empty than delete it for most cases
-                    self.env[v] = ''
+                    self.localEnv[v] = ''
             self.taskProc = None
             self.start()
 
@@ -779,10 +779,10 @@ class EngineBlock(Thread):
                 if taskId == TaskIdOOB:
                     break
                 logger.info('Cylinder %d executing %s.', self.cylinderId, repr([taskId, taskStreamIndex, taskRepIndex, taskCmd]))
-                self.env['DISBATCH_STREAM_INDEX'], self.env['DISBATCH_REPEAT_INDEX'], self.env['DISBATCH_TASKID'] = str(taskStreamIndex), str(taskRepIndex), str(taskId)
+                self.localEnv['DISBATCH_STREAM_INDEX'], self.localEnv['DISBATCH_REPEAT_INDEX'], self.localEnv['DISBATCH_TASKID'] = str(taskStreamIndex), str(taskRepIndex), str(taskId)
                 t0 = time.time()
                 try:
-                    self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=self.env, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
+                    self.taskProc = SUB.Popen(['/bin/bash', '-c', taskCmd], env=self.localEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
                     pid = self.taskProc.pid
                     obp = OutputCollector(self.taskProc.stdout, 40, 40)
                     ebp = OutputCollector(self.taskProc.stderr, 40, 40)
