@@ -8,7 +8,7 @@ long list of commands (aka *tasks*):
 
     cd /path/to/workdir ; myprog argsFor000 > task000.log 2>&1
     cd /path/to/workdir ; myprog argsFor001 > task001.log 2>&1
-     ... 
+    ... 
     cd /path/to/workdir ; myprog argsFor998 > task998.log 2>&1
     cd /path/to/workdir ; myprog argsFor999 > task999.log 2>&1
 
@@ -68,7 +68,7 @@ It currently supports SLURM and can be executed from `sbatch`, but it is archite
 
 You can also run directly on one or more machines over ssh by setting an environment variable:
 
-         DISBATCH_SSH_NODELIST=host1:7,host2:3
+    DISBATCH_SSH_NODELIST=host1:7,host2:3
 
 This allows execution via ssh (or directly on `localhost`) without the need for a resource management system.
 In this example, disBatch is told it can use seven CPUs on host1 and three on host2. Assuming the default mapping of one task to one CPU applies in this example, seven tasks could be in progress at any given time on host1, and three on host2.
@@ -145,7 +145,7 @@ A value for `-c` < 1 effectively allows you to run more tasks concurrently than 
 The `-k` and `-K` flags allow you to control what disBatch does when a node is no longer needed to run jobs.
 When running under slurm, disBatch will by default run the command:
 
-  scontrol update JobId="$SLURM_JOBID" NodeList="${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE"
+    scontrol update JobId="$SLURM_JOBID" NodeList="${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE"
 
 which will tell slurm to release any nodes no longer being used.
 You can set this to run a different command, or nothing at all.
@@ -153,7 +153,7 @@ While running this command, the follow environment variables will be set: `NODE`
 
 The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, `GPU_DEVICE_ORDINAL`) provided on each node and divides the resources between the running tasks.  For example, with slurm, if you want to run on _n_ nodes, with _t_ tasks per node, each using _c_ CPUs and 1 GPU (that is, _tc_ CPUs and _t_ GPUs per node, or _ntc_ CPUs and _nt_ GPUs total), you can do:
 
-  sbatch -N$n -c$c --ntasks-per-node=$t --gres=gpu:$t -p gpu --wrap 'disBatch.py -g $taskfile'`
+    sbatch -N$n -c$c --ntasks-per-node=$t --gres=gpu:$t -p gpu --wrap 'disBatch.py -g $taskfile'`
 
 `-r` uses the status file of a previous run to determine what tasks to run during this disBatch invocation. Only those tasks that haven't yet run (or with `-R`, those that haven't run or did but returned a non-0 exit code) are run this time. By default, the numeric task identifier and the text of the command are used to determine if a current task is the same as one found in the status file. `--force-resume` restricts the comparison to just the numeric identifier.
 
@@ -164,7 +164,7 @@ The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, 
 
 The `_status.txt` file contains tab-delimited lines of the form:
 
-     	314	315	-1	worker032	8016	0	10.0486528873	1458660919.78	1458660929.83	0	""	0	""	'cd /path/to/workdir ; myprog argsFor314 > task314.log 2>&1'
+    314	315	-1	worker032	8016	0	10.0486528873	1458660919.78	1458660929.83	0	""	0	""	'cd /path/to/workdir ; myprog argsFor314 > task314.log 2>&1'
 
 These fields are:
 
@@ -252,7 +252,7 @@ until all tasks in progress have completed. Advanced feature: if `BARRIER` is fo
 
 For those problems that are easily handled via a job-array-like approach:
 
-         #DISBATCH REPEAT 5 start 100 step 50 [command]
+     #DISBATCH REPEAT 5 start 100 step 50 [command]
 
 will expand into five tasks, each with the environment variable
 `DISBATCH_REPEAT_INDEX` set to one of 100, 150, 200, 250, or 300.
@@ -265,8 +265,8 @@ only the value that the repeat index will have in
 the environment for each of the repeat task instances. So, returning to our earlier example, the task file
 could be:
 
-        #DISBATCH PREFIX cd /path/to/workdir ; myprog argsFor$(printf "%03d" ${DISBATCH_REPEAT_INDEX}) > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log 2>&1
-        #DISBATCH REPEAT 1000
+    #DISBATCH PREFIX cd /path/to/workdir ; myprog argsFor$(printf "%03d" ${DISBATCH_REPEAT_INDEX}) > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log 2>&1
+    #DISBATCH REPEAT 1000
 
 ## License
 
