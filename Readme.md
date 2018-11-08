@@ -80,11 +80,11 @@ You can do this automatically by running `./disBatch.py --fix-paths`. This shoul
 
 ## Invocation
 ~~~~
-usage: disBatch.py [-h] [--fix-paths] [-p PATH] [-l LOGFILE] [--mailFreq N]
-                   [--mailTo MAILTO] [-c CPUSPERTASK] [-t TASKSPERNODE]
-                   [-k COMMAND] [-K] [-s HOST:COUNT] [-r STATUSFILE] [-R]
-                   [--force-resume] [-w] [--kvsserver [HOST:PORT]]
-                   [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
+usage: disBatch.py [-h] [--fix-paths] [-p PATH] [-l FILE] [--mailFreq N]
+                   [--mailTo ADDR] [-c N] [-t N] [-g] [-k COMMAND] [-K]
+                   [-s HOST:COUNT] [-r STATUSFILE] [-R] [--force-resume] [-w]
+                   [--kvsserver [HOST:PORT]] [--taskcommand COMMAND]
+                   [--taskserver [HOST:PORT]]
                    [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
@@ -98,17 +98,18 @@ optional arguments:
   -p PATH, --prefix PATH
                         Prefix path and name for log and status files
                         (default: ./TASKFILE_JOBID).
-  -l LOGFILE, --logfile LOGFILE
+  -l FILE, --logfile FILE
                         Log file.
   --mailFreq N          Send email every N task completions (default: 1). "--
                         mailTo" must be given.
-  --mailTo MAILTO       Mail address for task completion notification(s).
-  -c CPUSPERTASK, --cpusPerTask CPUSPERTASK
+  --mailTo ADDR         Mail address for task completion notification(s).
+  -c N, --cpusPerTask N
                         Number of cores used per task; may be fractional
                         (default: 1).
-  -t TASKSPERNODE, --tasksPerNode TASKSPERNODE
+  -t N, --tasksPerNode N
                         Maximum concurrently executing tasks per node (up to
                         cores/cpusPerTask).
+  -g, --gpu             Use assigned GPU resources
   -k COMMAND, --retire-cmd COMMAND
                         Shell command to run to retire a node (environment
                         includes $NODE being retired, remaining $ACTIVE node
@@ -149,6 +150,10 @@ When running under slurm, disBatch will by default run the command:
 which will tell slurm to release any nodes no longer being used.
 You can set this to run a different command, or nothing at all.
 While running this command, the follow environment variables will be set: `NODE` (the node that is no longer needed), `ACTIVE` (a comma-delimited list of nodes that are still active), `RETIRED` (a comma-delimited list of nodes that are no longer active, including `$NODE`), and possibly `DRIVER_NODE` (the node still running the main disBatch script, if it's not in `ACTIVE`).
+
+The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, `GPU_DEVICE_ORDINAL`) provided on each node and divides the resources between the running tasks.  For example, with slurm, if you want to run on _n_ nodes, with _t_ tasks per node, each using _c_ CPUs and 1 GPU (that is, _tc_ CPUs and _t_ GPUs per node, or _ntc_ CPUs and _nt_ GPUs total), you can do:
+
+  sbatch -N$n -c$c --ntasks-per-node=$t --gres=gpu:$t -p gpu --wrap 'disBatch.py -g $taskfile'`
 
 `-r` uses the status file of a previous run to determine what tasks to run during this disBatch invocation. Only those tasks that haven't yet run (or with `-R`, those that haven't run or did but returned a non-0 exit code) are run this time. By default, the numeric task identifier and the text of the command are used to determine if a current task is the same as one found in the status file. `--force-resume` restricts the comparison to just the numeric identifier.
 
