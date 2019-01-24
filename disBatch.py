@@ -1006,7 +1006,7 @@ if '__main__' == __name__:
         context.cylinders = [ min(int(c / args.cpusPerTask), args.tasksPerNode) for c in context.cylinders ]
         # TODO: communicate to jobs how many CPUs they have available?
 
-        context.envres = ','.join(args.env_resource).split(',')
+        context.envres = ','.join(args.env_resource).split(',') if args.env_resource else []
 
         if args.retire_cmd is not None:
             context.retireCmd = args.retire_cmd
