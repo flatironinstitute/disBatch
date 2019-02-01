@@ -283,6 +283,8 @@ class SSHContext(BatchContext):
         cylinders, nodes = [], []
         if type(nodelist) is not str: nodelist = ','.join(nodelist)
         for p in nodelist.split(','):
+            p = p.strip()
+            if not p: continue
             try:
                 n, e = p.rsplit(':', 1)
                 e = int(e)
