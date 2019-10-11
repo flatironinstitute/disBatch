@@ -1,3 +1,5 @@
+**Users of Flatiron resources: disBatch is available via the module system. You do not need to clone this repo to use it.**
+
 Distributed processing of a batch of tasks.
 ===========================================
 
