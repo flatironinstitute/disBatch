@@ -1,5 +1,3 @@
-**Users of Flatiron resources: disBatch is available via the module system. You do not need to clone this repo to use it.**
-
 Distributed processing of a batch of tasks.
 ===========================================
 
@@ -61,6 +59,8 @@ Various log files will be created as the run unfolds:
 * `disBatch_134504_kvsinfo.txt`: TCP address of invoked KVS server if any (for additional advanced status monitoring)
 
 ## Installation
+
+**Users of Flatiron resources: disBatch is available via the module system. You do not need to clone this repo to use it.**
 
 `disBatch.py` requires the `kvsstcp` package, which should be installed in python's path, or placed in this directory.
 You can simply clone this git repository with `--recursive` (or run `git submodule update --init` if you've already cloned it).
