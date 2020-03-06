@@ -42,7 +42,7 @@ Each task is run in a new shell. If you want to manipulate the execution environ
 
     export PYTHONPATH=/d0/d1/d2:$PYTHONPATH ; rest ; of ; command ; sequence
     
-Or, for more complex set ups that are common to every task, you can place the relavant commands in a file like "setup.sh" and use tasks lines like:
+Or, for more complex set ups that are common to every task, you can place the relavant commands in a file like "setup.sh" and use task lines like:
 
     source setup.sh ; rest ; of ; command ; sequence
          
