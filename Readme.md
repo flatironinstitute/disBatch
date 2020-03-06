@@ -38,6 +38,16 @@ after the other until all specified execution resources are in use. Then as one
 executing task exits, the next task in the file is launched until all
 the lines in the file have been processed.
 
+Each task is run in a new shell. If you want to manipulate the execution environment of a task, add the appropriate operations to the command sequence. For example, if you need to set an environment variable, each task line would look something like:
+
+    export PYTHONPATH=/d0/d1/d2:$PYTHONPATH ; rest ; of ; command ; sequence
+    
+Or, for more complex set ups that are common to every task, you can place the relavant commands in a file like "setup.sh" and use tasks lines like:
+
+    source setup.sh ; rest ; of ; command ; sequence
+         
+See \#DISBATCH directives below for another alternative.
+
 In the simplest case, working with a cluster managed by SLURM, all that needs to be done is to write the command
 sequences to a file and then submit a job like the following:
 
