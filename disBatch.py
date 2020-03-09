@@ -1100,3 +1100,6 @@ if '__main__' == __name__:
             print('Some engine processes failed -- please check the logs', file=sys.stderr)
             sys.exit(1)
 
+        if f.failed:
+            print('Some tasks failed with non-zero exit codes -- please check the logs', file=sys.stderr)
+            sys.exit(1)
