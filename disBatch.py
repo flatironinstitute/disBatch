@@ -470,7 +470,13 @@ def taskGenerator(tasks, context):
                     continue
                 m = dbbarrier.match(t)
                 if m:
-                    yield BarrierTask(taskCounter, tsx, -1, t, m.group(1))
+                    bkey = m.group(1)
+                    if bkey == 'CHECK':
+                        check = True
+                        bkey = None
+                    else:
+                        check = False
+                    yield BarrierTask(taskCounter, tsx, -1, t, key=bkey, check=check)
                     taskCounter += 1
                     continue
                 logger.error('Unknown #DISBATCH directive: %s', t)
