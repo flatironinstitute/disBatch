@@ -945,6 +945,7 @@ if '__main__' == __name__:
         argp.add_argument('-r', '--resume-from', metavar='STATUSFILE', action='append', help='Read the status file from a previous run and skip any completed tasks (may be specified multiple times).')
         argp.add_argument('-R', '--retry', action='store_true', help='With -r, also retry any tasks which failed in previous runs (non-zero return).')
         argp.add_argument('--force-resume', action='store_true', help="With -r, proceed even if task commands/lines are different.")
+        argp.add_argument('-e', '--exit-code', action='store_true', help='When any task fails, exit with non-zero status (default: only if disBatch itself fails)')
         argp.add_argument('-w', '--web', action='store_true', help='Enable web interface.')
         argp.add_argument('--kvsserver', nargs='?', default=True, metavar='HOST:PORT', help='Use a running KVS server.')
         source = argp.add_mutually_exclusive_group(required=True)
@@ -1079,6 +1080,6 @@ if '__main__' == __name__:
             print('Some engine processes failed -- please check the logs', file=sys.stderr)
             sys.exit(1)
 
-        if f.failed:
+        if args.exit_code and f.failed:
             print('Some tasks failed with non-zero exit codes -- please check the logs', file=sys.stderr)
             sys.exit(1)
