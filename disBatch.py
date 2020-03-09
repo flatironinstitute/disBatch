@@ -205,28 +205,7 @@ class BatchContext(object):
 #    range  => lo[-hi]
 # where lo and hi are numbers
 def nl2flat(nl):
-    flat = []
-    prefix = None
-    # break up the node list into: non-ranges, ranges, non-ranges, ...
-    # commas in the non-ranges separate hosts, the last of which is the prefix for the following ranges.
-    for x in re.split(r'(\[.*?\])', nl):
-        if x == '': continue
-        if x[0] == '[':
-            x = x[1:-1]
-            for r in x.split(','):
-                lo = hi = r
-                if '-' in r:
-                    lo, hi = r.split('-')
-                fmt = '%s%%0%dd'%(prefix, max(len(lo), len(hi)))
-                for x in range(int(lo), int(hi)+1): flat.append(fmt%x)
-            prefix = None
-        else:
-            if prefix: flat.append(prefix)
-            pp = x.split(',')
-            [flat.append(p) for p in pp[:-1] if p]
-            prefix = pp[-1]
-    if prefix: flat.append(prefix)
-    return flat
+    return str(SUB.check_output(["scontrol", "show", "hostnames", nl])).splitlines()
 
 class SlurmContext(BatchContext):
     def __init__(self):
