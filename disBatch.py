@@ -166,7 +166,7 @@ class BatchContext(object):
         '''Called when a node has exited.  May be overridden to release resources.'''
         if ret: self.error = True
         if self.retireCmd:
-            logger.info('Retiring node "%s" with command', node)
+            logger.info('Retiring node "%s" with command %s', node, str(retireCmd))
             env = self.retireEnv(node, ret)
             try:
                 SUB.check_call(self.retireCmd, close_fds=True, shell=True, env=env)
@@ -449,7 +449,13 @@ def taskGenerator(tasks, context):
                     continue
                 m = dbbarrier.match(t)
                 if m:
-                    yield BarrierTask(taskCounter, tsx, -1, t, m.group(1))
+                    bkey = m.group(1)
+                    if bkey == 'CHECK':
+                        check = True
+                        bkey = None
+                    else:
+                        check = False
+                    yield BarrierTask(taskCounter, tsx, -1, t, key=bkey, check=check)
                     taskCounter += 1
                     continue
                 logger.error('Unknown #DISBATCH directive: %s', t)
@@ -1073,3 +1079,6 @@ if '__main__' == __name__:
             print('Some engine processes failed -- please check the logs', file=sys.stderr)
             sys.exit(1)
 
+        if f.failed:
+            print('Some tasks failed with non-zero exit codes -- please check the logs', file=sys.stderr)
+            sys.exit(1)
