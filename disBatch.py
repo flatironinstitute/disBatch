@@ -166,7 +166,7 @@ class BatchContext(object):
         '''Called when a node has exited.  May be overridden to release resources.'''
         if ret: self.error = True
         if self.retireCmd:
-            logger.info('Retiring node "%s" with command %s', node, str(retireCmd))
+            logger.info('Retiring node "%s" with command %s', node, str(self.retireCmd))
             env = self.retireEnv(node, ret)
             try:
                 SUB.check_call(self.retireCmd, close_fds=True, shell=True, env=env)
@@ -205,7 +205,7 @@ class BatchContext(object):
 #    range  => lo[-hi]
 # where lo and hi are numbers
 def nl2flat(nl):
-    return str(SUB.check_output(["scontrol", "show", "hostnames", nl])).splitlines()
+    return SUB.check_output(["scontrol", "show", "hostnames", nl], universal_newlines=True).splitlines()
 
 class SlurmContext(BatchContext):
     def __init__(self):
