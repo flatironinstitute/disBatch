@@ -129,11 +129,12 @@ class BatchContext(object):
         self.retireCmd = None
 
     def __str__(self):
-        return 'Batch system: %s\nUnique ID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.uniqueid, self.nodes, self.cylinders)
+        return 'Batch system: %s\nUnique ID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.uniqueId, self.nodes, self.cylinders)
 
     def launch(self, kvs):
         '''Launch the engine processes on all the nodes by calling launchNode for each.'''
         kvs.put(self.kvsKey, self)
+        kvs.put('.controller', ('context info', self))
         self.engines = dict() # live subprocesses
         for n in self.nodes:
             self.engines[n] = self.launchNode(n)
@@ -566,6 +567,7 @@ class Driver(Thread):
 
         self.barriers = []
         self.contextCount = 0
+        self.contexts = {}
         self.currentReturnCode = 0
         self.engineCount = 0
         self.engines = {}
@@ -607,6 +609,7 @@ class Driver(Thread):
         status = dict(more = self.feeder.shutdown or 'More tasks.',
                       age = self.age,
                       barriers = len(self.barriers),
+                      contexts = self.contexts,
                       currentReturnCode = self.currentReturnCode,
                       engines = self.engines)
         # Make changes visible via KVS.
@@ -668,6 +671,9 @@ class Driver(Thread):
             logger.debug('Incoming msg: %s %s', msg, o)
             if msg == 'clearing barriers':
                 pass
+            elif msg == 'context info':
+                context = o
+                self.contexts[context.rank] = context
             elif msg == 'cylinder available':
                 #TODO: reject if no more tasks or in shutdown?
                 engineRank, cpid, cpgid, ckey = o
