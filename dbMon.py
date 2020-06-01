@@ -102,7 +102,6 @@ def statusWindow(stdscr):
             stdscr.clear()
             try:
                 d = json.loads(o)
-                open('dmon.txt', 'a').write('\n%r\n'%d)
                 # convert keys back to ints after json transform.
                 engines = dict([(int(k), v) for k, v in d['engines'].items()])
                 contexts = dict([(int(k), v) for k, v in d['contexts'].items()])
@@ -120,7 +119,7 @@ def statusWindow(stdscr):
                     r2k[r] = rank
                     engine['slots'] = len(engine['cylinders'])
                     engine['delay'] = now - engine['last']
-                    engine['cLabel'] = contexts[engine['cRank']]['uniqueId']
+                    engine['cLabel'] = contexts[engine['cRank']]['label']
                     cp = curses.color_pair(2)
                     if engine['status'] == 'stopping':
                         cp = curses.color_pair(5)
