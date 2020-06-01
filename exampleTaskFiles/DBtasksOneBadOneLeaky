@@ -2,7 +2,7 @@
 #DISBATCH PREFIX echo 'EDIT TASK FILE, CHANGE PREFIX DIRECTIVE TO "#DISBATCH PREFIX cd /appropriate/test/output/directory ; "' > NeedToEditTaskFile; exit ; 
 #DISBATCH SUFFIX  > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log
 
-#DISBATCH PERNODE ( echo -n "pernode running on " ; hostname ; date ; sleep 10 ; date )
+#DISBATCH PERENGINE ( echo -n "pernode running on " ; hostname ; date ; sleep 10 ; date )
 #DISBATCH BARRIER
 
 # parathenses are important in this example so that all output is
