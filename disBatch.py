@@ -119,17 +119,17 @@ class DisBatchInfo(object):
         self.args, self.name, self.uniqueId, self.wd = args, name, uniqueId, wd
         
 class BatchContext(object):
-    def __init__(self, sysid, dbInfo, rank, nodes, cylinders, uniqueId=None):
-        if uniqueId is None:
-            uniqueId = 'context%05'%rank
-        self.sysid, self.dbInfo, self.rank, self.nodes, self.cylinders, self.uniqueId = sysid, dbInfo, rank, nodes, cylinders, uniqueId
+    def __init__(self, sysid, dbInfo, rank, nodes, cylinders, args, contextLabel=None):
+        if contextLabel is None:
+            contextLabel = 'context%05'%rank
+        self.sysid, self.dbInfo, self.rank, self.nodes, self.cylinders, self.args, self.label = sysid, dbInfo, rank, nodes, cylinders, args, contextLabel
             
         self.error = False # engine errors (non-zero return values)
         self.kvsKey = '.context %d'%rank
         self.retireCmd = None
 
     def __str__(self):
-        return 'Batch system: %s\nUnique ID: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.uniqueId, self.nodes, self.cylinders)
+        return 'Context type: %s\nLabel: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.label, self.nodes, self.cylinders)
 
     def launch(self, kvs):
         '''Launch the engine processes on all the nodes by calling launchNode for each.'''
@@ -207,7 +207,7 @@ def nl2flat(nl):
     return SUB.check_output(["scontrol", "show", "hostnames", nl], universal_newlines=True).splitlines()
 
 class SlurmContext(BatchContext):
-    def __init__(self, dbInfo, rank, uniqueId=None):
+    def __init__(self, dbInfo, rank, args):
         jobid = os.environ['SLURM_JOBID']
         nodes = nl2flat(os.environ['SLURM_NODELIST'])
 
@@ -218,14 +218,13 @@ class SlurmContext(BatchContext):
             if m == None: m = '1'
             cylinders += [int(c)]*int(m)
 
-        if uniqueId is None:
-            uniqueId = 'J%d'%jobid
-        super(SlurmContext, self).__init__('SLURM', dbInfo, rank, nodes, cylinders, uniqueId)
+        contextLabel = args.label if args.label else 'J%d'%jobid
+        super(SlurmContext, self).__init__('SLURM', dbInfo, rank, nodes, cylinders, args, contextLabel)
         self.driverNode = None
         self.retireCmd = "scontrol update JobId=\"$SLURM_JOBID\" NodeList=\"${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE\""
 
     def launchNode(self, n):
-        lfp = '%s_%s_%s_engine_wrap.log'%(self.dbInfo.uniqueId, self.uniqueId, n)
+        lfp = '%s_%s_%s_engine_wrap.log'%(self.dbInfo.uniqueId, self.label, n)
         return SUB.Popen(['srun', '-N', '1', '-n', '1', '-w', n, DisBatchPath, '--engine', '-n', n, kvsserver, self.kvsKey], stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
 
     def retireEnv(self, node, ret):
@@ -258,9 +257,9 @@ class SlurmContext(BatchContext):
 # You can also specify a "job id" via DISBATCH_SSH_JOBID. If you do
 # not provide one, one will be created from the PID and epoch time.
 class SSHContext(BatchContext):
-    def __init__(self, dbInfo, rank, nodelist=os.getenv('DISBATCH_SSH_NODELIST'), uniqueId=None):
-        if uniqueId is None:
-            uniqueId = 'SSH%d'%rank
+    def __init__(self, dbInfo, rank, args):
+        nodelist = args.ssh_node if args.ssh_node else os.getenv('DISBATCH_SSH_NODELIST')
+        contextLabel = args.label if args.label else 'SSH%d'%rank
 
         cylinders, nodes = [], []
         if type(nodelist) is not str: nodelist = ','.join(nodelist)
@@ -276,20 +275,20 @@ class SSHContext(BatchContext):
             nodes.append(n)
             cylinders.append(e)
 
-        super(SSHContext, self).__init__('SSH', dbInfo, rank, nodes, cylinders, uniqueId)
+        super(SSHContext, self).__init__('SSH', dbInfo, rank, nodes, cylinders, args, contextLabel)
 
     def launchNode(self, n):
         prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
-        lfp = '%s_%s_%s_engine_wrap.log'%(self.dbInfo.uniqueId, self.uniqueId, n)
+        lfp = '%s_%s_%s_engine_wrap.log'%(self.dbInfo.uniqueId, self.label, n)
         return SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver, self.kvsKey], stdin=open(os.devnull, 'r'), stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
 
 
-def probeContext(dbInfo, rank, uniqueId):
-    if 'SLURM_JOBID' in os.environ: return SlurmContext(dbInfo, rank, uniqueId)
+def probeContext(dbInfo, rank, args):
+    if 'SLURM_JOBID' in os.environ: return SlurmContext(dbInfo, rank, args)
     #if ...: return GEContext()
     #if ...: LSFContext()
     #if ...: PBSContext()
-    if 'DISBATCH_SSH_NODELIST' in os.environ: return SSHContext(dbInfo, rank, uniqueId)
+    if 'DISBATCH_SSH_NODELIST' in os.environ: return SSHContext(dbInfo, rank, args)
 
 class TaskInfo(object):
     kinds = {'B': 'barrier', 'C': 'check barrier', 'D': 'done', 'N': 'normal', 'P': 'per node', 'S': 'skip'}
@@ -647,9 +646,9 @@ class Driver(Thread):
             logger.info('Stopping engine %s', e )
             for c in e.cylinders:
                 try:
+                    availSlots.remove(c)
                     # Try to reclaim a slot.
                     # Not important if we fail---slots are just flow control.
-                    availSlots.remove(c)
                     try:
                         self.slots.get(False)
                     except Empty:
@@ -660,7 +659,7 @@ class Driver(Thread):
 
         self.kvs.put('DisBatch status', '<Starting...>', False)
 
-        availSlots, ckey2erank, finishedTasks, pending, retired = [], {}, {}, DD(list), -1
+        availSlots, cRank2taskCount, cylKey2eRank, finishedTasks, pending, retired = [], DD(int), {}, {}, DD(list), -1
 
         while 1:
             logger.debug('Driver loop: Age %d, Finished %d, Retired %d, Available %d, Pending %s', self.age, self.finished, retired, len(availSlots), [(a, len(l)) for a, l in sorted(pending.items())])
@@ -677,7 +676,7 @@ class Driver(Thread):
             elif msg == 'cylinder available':
                 #TODO: reject if no more tasks or in shutdown?
                 engineRank, cpid, cpgid, ckey = o
-                ckey2erank[ckey] = engineRank
+                cylKey2eRank[ckey] = engineRank
                 self.engines[engineRank].addCylinder(cpid, cpgid, ckey)
                 availSlots.append(ckey)
                 self.slots.put(True)
@@ -692,7 +691,7 @@ class Driver(Thread):
             elif msg == 'engine started':
                 #TODO: reject if no more tasks or in shutdown?
                 rank, cRank, hn, pid, start = o
-                self.engines[o[0]] = self.EngineProxy(rank, cRank, hn, pid, start, kvs)
+                self.engines[rank] = self.EngineProxy(rank, cRank, hn, pid, start, kvs)
             elif msg == 'engine stopped':
                 status, rank = o
                 self.engines[rank].status = 'stopped'
@@ -820,13 +819,18 @@ class Driver(Thread):
                     self.currentReturnCode = 0
                     bTinfo = None
 
-            if self.barriers == []:
-                while pending[self.age] and availSlots:
-                    ckey = availSlots.pop(0)
-                    tinfo = pending[self.age].pop(0)
-                    self.engines[ckey2erank[ckey]].assigned += 1
-                    logger.info('Giving %s %s', ckey, tinfo)
-                    self.kvs.put(ckey, ('task', tinfo))
+            while pending[self.age] and availSlots:
+                ckey = availSlots.pop(0)
+                tinfo = pending[self.age].pop(0)
+                logger.info('Giving %s %s', ckey, tinfo)
+                self.kvs.put(ckey, ('task', tinfo))
+
+                e = self.engines[cylKey2eRank[ckey]]
+                e.assigned += 1
+                cRank2taskCount[e.cRank] += 1
+                limit = self.contexts[e.cRank].args.context_task_limit
+                if limit and cRank2taskCount[e.cRank] == limit:
+                    shutDownEngine(e)
                 
             # Make changes visible via KVS.
             self.updateStatus()
@@ -1092,7 +1096,7 @@ if '__main__' == __name__:
         context.setNode(args.node)
         logger = logging.getLogger('DisBatch Engine')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.DEBUG}
-        lconf['filename'] = '%s_%s_%s_engine_%d.log'%(dbInfo.uniqueId, context.uniqueId, args.node, rank)
+        lconf['filename'] = '%s_%s_%s_engine_%d.log'%(dbInfo.uniqueId, context.label, args.node, rank)
         logging.basicConfig(**lconf)
         logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, rank, myHostname, myPid, os.getcwd())
 
@@ -1130,6 +1134,7 @@ if '__main__' == __name__:
         argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', help=argparse.SUPPRESS) #'Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)'
         argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help="Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system).")
         argp.add_argument('-l', '--label', type=str, metavar='COMMAND', help="Label for this context. Should be unique.")        
+        argp.add_argument('--context-task-limit', type=int, metavar='COUNT', default=0, help="Shutdown after running COUNT tasks (0 => no limit).")        
         argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:COUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
         argp.add_argument('kvsserver', help='Address of kvs sever used to relay data.')
         args = argp.parse_args()
@@ -1145,16 +1150,16 @@ if '__main__' == __name__:
 
         # Try to find a batch context.
         if args.ssh_node:
-            context = SSHContext(dbInfo, rank, args.ssh_node, args.label)
+            context = SSHContext(dbInfo, rank, args)
         else:
-            context = probeContext(dbInfo, rank, args.label)
+            context = probeContext(dbInfo, rank, args)
         if not context:
             print('Cannot determine batch execution environment.', file=sys.stderr)
             sys.exit(1)
 
         logger = logging.getLogger('DisBatch Context')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
-        lconf['filename'] = '%s_%s.context.log'%(dbInfo.uniqueId, context.uniqueId)
+        lconf['filename'] = '%s_%s.context.log'%(dbInfo.uniqueId, context.label)
         logging.basicConfig(**lconf)
         logging.info('%s context started on %s (%d).', context.sysid, myHostname, myPid)
 
