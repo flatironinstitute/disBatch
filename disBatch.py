@@ -67,12 +67,12 @@ myHostname = socket.gethostname()
 myPid = os.getpid()
 
 # Note that even though these are case insensitive, only lines that start with upper-case '#DISBATCH' prefixes are tested
-dbbarrier = re.compile('^#DISBATCH BARRIER(?: (.+)?)?$', re.I)
-dbcomment = re.compile('^\s*(#|$)')
-dbprefix  = re.compile('^#DISBATCH PREFIX (.*)$', re.I)
-dbrepeat  = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>.+))?\s*$', re.I)
-dbsuffix  = re.compile('^#DISBATCH SUFFIX (.*)$', re.I)
-dbpernode = re.compile('^#DISBATCH PERNODE (.*)$', re.I)
+dbbarrier   = re.compile('^#DISBATCH BARRIER(?: (.+)?)?$', re.I)
+dbcomment   = re.compile('^\s*(#|$)')
+dbprefix    = re.compile('^#DISBATCH PREFIX (.*)$', re.I)
+dbrepeat    = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>.+))?\s*$', re.I)
+dbsuffix    = re.compile('^#DISBATCH SUFFIX (.*)$', re.I)
+dbperengine = re.compile('^#DISBATCH (?:PERENGINE|PERNODE) (.*)$', re.I) # PERNODE os deprecated. TODO: warn about this?
 
 def compHostnames(h0, h1):
     return h0.split('.', 1)[0] == h1.split('.', 1)[0]
@@ -446,11 +446,11 @@ def taskGenerator(tasks):
                         rx += step
                         repeats -= 1
                     continue
-                mpn, mb = dbpernode.match(t), dbbarrier.match(t)
-                if mpn or mb:
+                mpe, mb = dbperengine.match(t), dbbarrier.match(t)
+                if mpe or mb:
                     bKey = None
-                    if mpn:
-                        cmd = prefix + mpn.group(1) + suffix
+                    if mpe:
+                        cmd = prefix + mpe.group(1) + suffix
                         kind = 'P'
                     else:
                         cmd = t
