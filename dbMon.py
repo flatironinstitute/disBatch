@@ -1,7 +1,10 @@
 #!/usr/bin/python
 import curses, json, os, socket, sys, time
 
-import Queue
+try:
+    from queue import Queue
+except ImportError:
+    from Queue import Queue
 from threading import Thread
 
 from kvsstcp import KVSClient
@@ -80,7 +83,7 @@ def statusWindow(stdscr):
     curses.init_pair(5, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.curs_set(False)
     
-    q = Queue.Queue()
+    q = Queue()
     gc = Thread(target=waitGetch, args=(stdscr, q))
     gc.daemon = True
     gc.start()
