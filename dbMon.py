@@ -149,30 +149,31 @@ def statusWindow(stdscr):
             elif k == curses.KEY_LEFT:
                 pass
                 #col = col - 1
-            elif k == ord('?'):
+            elif k in [ord('h'), ord('?')]:
                 statusLine = 'C: Shutdown context; E: Shutdown engine; q: quit'
             elif k in [ord('C'), ord('E')]:
                 if not done:
-                    target = r2k.get(row, 'No Man')
-                    if k == ord('C'):
-                        cRank = engines[target]['cRank']
-                        r = popYNC('Stopping context {cLabel:s} ({cRank:d})'.format(**engines[target]) + ' %d'%row, stdscr, q)
-                        if r == 'Y':
-                            try:
-                                kvsc.put('.controller', ('stop context', cRank))
-                                for rank, e in engines.items():
-                                    if e['cRank'] == cRank:
-                                        localEngineStatus[rank] = 'requesting shutdown'
-                            except socket.error:
-                                pass
-                    elif k == ord('E'):
-                        r = popYNC('Stopping engine {rank:d} ({hostname:s}, {pid:d})'.format(**engines[target]), stdscr, q)
-                        if r == 'Y':
-                            try:
-                                kvsc.put('.controller', ('stop engine', target))
-                                localEngineStatus[target] = 'requesting shutdown'
-                            except socket.error:
-                                pass
+                    target = r2k.get(row)
+                    if target:
+                        if k == ord('C'):
+                            cRank = engines[target]['cRank']
+                            r = popYNC('Stopping context {cLabel:s} ({cRank:d})'.format(**engines[target]) + ' %d'%row, stdscr, q)
+                            if r == 'Y':
+                                try:
+                                    kvsc.put('.controller', ('stop context', cRank))
+                                    for rank, e in engines.items():
+                                        if e['cRank'] == cRank:
+                                            localEngineStatus[rank] = 'requesting shutdown'
+                                except socket.error:
+                                    pass
+                        elif k == ord('E'):
+                            r = popYNC('Stopping engine {rank:d} ({hostname:s}, {pid:d})'.format(**engines[target]), stdscr, q)
+                            if r == 'Y':
+                                try:
+                                    kvsc.put('.controller', ('stop engine', target))
+                                    localEngineStatus[target] = 'requesting shutdown'
+                                except socket.error:
+                                    pass
             else:
                 statusLine = 'Last unrecognized key %d'%k
         elif tag == 'stop':
