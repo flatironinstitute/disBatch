@@ -57,7 +57,7 @@ def popYNC(msg, parent, q, title='Confirm'):
     nw.addstr(r+2, int((w - len(title))*.5), '[Y]es/[N]o/[C]ancel', curses.A_REVERSE)
     nw.refresh()
 
-    resp = {'y': 'Y', 'Y':  'y', 'n': 'N', 'N': 'N', 'c': 'C', 'C': 'C'}
+    resp = {'y': 'Y', 'Y':  'Y', 'n': 'N', 'N': 'N', 'c': 'C', 'C': 'C'}
     while True:
         tag, o = q.get()
         if tag != 'key': continue
@@ -154,7 +154,7 @@ def statusWindow(stdscr):
             elif k in [ord('C'), ord('E')]:
                 if not done:
                     target = r2k.get(row)
-                    if target:
+                    if target is not None:
                         if k == ord('C'):
                             cRank = engines[target]['cRank']
                             r = popYNC('Stopping context {cLabel:s} ({cRank:d})'.format(**engines[target]) + ' %d'%row, stdscr, q)
