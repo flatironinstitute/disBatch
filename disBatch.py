@@ -650,7 +650,7 @@ class Driver(Thread):
 
             # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than one per key.
             if self.trackResults: self.kvs.put(self.trackResults%tinfo.taskId, str(tinfo), False)
-            if self.mailTo and finished%self.mailFreq == 0:
+            if self.mailTo and self.finished%self.mailFreq == 0:
                 self.sendNotification()
 
             # Make changes visible via KVS.
