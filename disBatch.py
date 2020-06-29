@@ -72,7 +72,7 @@ dbcomment   = re.compile('^\s*(#|$)')
 dbprefix    = re.compile('^#DISBATCH PREFIX (.*)$', re.I)
 dbrepeat    = re.compile('^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>.+))?\s*$', re.I)
 dbsuffix    = re.compile('^#DISBATCH SUFFIX (.*)$', re.I)
-dbperengine = re.compile('^#DISBATCH (?:PERENGINE|PERNODE) (.*)$', re.I) # PERNODE os deprecated. TODO: warn about this?
+dbperengine = re.compile('^#DISBATCH (?:PERENGINE|PERNODE) (.*)$', re.I) # PERNODE is deprecated. TODO: warn about this?
 
 def compHostnames(h0, h1):
     return h0.split('.', 1)[0] == h1.split('.', 1)[0]
@@ -659,7 +659,7 @@ class Driver(Thread):
 
         self.kvs.put('DisBatch status', '<Starting...>', False)
 
-        availSlots, cRank2taskCount, cylKey2eRank, finishedTasks, pending, retired = [], DD(int), {}, {}, DD(list), -1
+        availSlots, cRank2taskCount, cylKey2eRank, finishedTasks, noMore, pending, retired = [], DD(int), {}, {}, False, DD(list), -1
 
         while 1:
             logger.debug('Driver loop: Age %d, Finished %d, Retired %d, Available %d, Pending %s', self.age, self.finished, retired, len(availSlots), [(a, len(l)) for a, l in sorted(pending.items())])
@@ -701,6 +701,7 @@ class Driver(Thread):
                 logger.info('Emergency shutdown')
                 break
             elif msg == 'no more tasks':
+                noMore = True
                 logger.info('No more tasks: %d accepted', o)
                 self.barriers.append(TaskReport(TaskInfo(o, -1, -1, -1, None, None, kind='D'), start=time.time()))
             elif msg == 'register':
@@ -708,7 +709,7 @@ class Driver(Thread):
                 if which == 'context':
                     self.kvs.put(key, self.contextCount)
                     self.contextCount += 1
-                if which == 'engine':
+                elif which == 'engine':
                     self.kvs.put(key, self.engineCount)
                     self.engineCount += 1
                 else:
@@ -772,7 +773,7 @@ class Driver(Thread):
                 # one per key
                 if self.trackResults:
                     self.kvs.put(self.trackResults%tinfo.taskId, str(tReport), False)
-                if self.mailTo and finished%self.mailFreq == 0:
+                if self.mailTo and self.finished%self.mailFreq == 0:
                     self.sendNotification()
             else:
                 raise Exception('Weird message: ' + msg)
@@ -831,6 +832,13 @@ class Driver(Thread):
                 limit = self.contexts[e.cRank].args.context_task_limit
                 if limit and cRank2taskCount[e.cRank] == limit:
                     shutDownEngine(e)
+                
+            if noMore and sum([len(p) for p in pending.values()]) == 0:
+                # Really nothing more to do.
+                for ckey in availSlots:
+                    logger.info('Notifying "%s" there is no more work.', ckey)
+                    self.kvs.put(ckey, ('stop', None))
+                availSlots = []
                 
             # Make changes visible via KVS.
             self.updateStatus()
@@ -899,19 +907,16 @@ class OutputCollector(Thread):
             s = s.decode('utf-8', 'ignore')
         return s
 
-# Once we know the nodes participating in the run, we start an engine
-# on each node. The engine in turn starts the number of cylinders
+# Once a context knows the nodes that it will be adding to a disBatch
+# run, it starts an engine on each node. The engine registers with the
+# controller (driver) and then starts the number of cylinders
 # (execution entities) specified for the node (a map of nodes to
-# cylinder count is conveyed via the KVS). Each cylinder executes one
-# task at a time. The Injector waits for an available cylinder and
-# then waits for a task (grabbing a task before a cylinder is ready
-# would prevent an idle cylinder of another engine from performing the
-# task). The task is passed to the run method via a queue. The run
-# method uses queues to feed tasks to the cylinders and accept
-# results from them. It tracks work in progress and notes when the
-# "poison" task has been received. This indicates no more tasks will
-# be coming. At this point, once all work in progress is done, the
-# engine can retire.
+# cylinder count is conveyed via the KVS). Each cylinder registers
+# with the controller and waits for a task to be assinged to it by the
+# controller. It executes the task and upon completion sends a report
+# to the controller. A cylinder exits when it receives a stop message
+# from the controller. The engine waits for cylinder threads to exit,
+# and will itself exit when all cylinders have exited.
 class EngineBlock(Thread):
     class Cylinder(Thread):
         def __init__(self, context, env, envres, ageQs, kvs, engineRank, cylinderId):
