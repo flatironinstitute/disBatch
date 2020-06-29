@@ -1303,12 +1303,11 @@ if '__main__' == __name__:
             # Is there a cleaner way to do this?
             extraArgs = []
             if args.env_resource:
-                map(lambda x: extraArgs.extend(['--env-resource', x]), args.env_resource)
+                for x in args.env_resource: extraArgs.extend(['--env-resource', x])
             if args.retire_cmd:   extraArgs += ['--retire-cmd', args.retire_cmd]
             if args.ssh_node:
-                map(lambda x: extraArgs.extend(['--ssh-node', x]), args.ssh_node)
+                for x in args.ssh_node: extraArgs.extend(['--ssh-node', x])
             
-            print(repr(extraArgs))
             subContext = SUB.Popen([DisBatchPath, '--context'] + extraArgs + [kvsserver], stdin=open(os.devnull, 'r'), stdout=open(uniqueId + '_context_wrap.out', 'w'), stderr=open(uniqueId + '_context_wrap.err', 'w'), close_fds=True)
         else:
             print('Run this script to add compute contexts:\n   ' + ecfn)
