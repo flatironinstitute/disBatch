@@ -9,7 +9,7 @@ try:
     from queue import Queue, Empty
 except ImportError:
     from Queue import Queue, Empty
-from threading import enumerate as ListThreads, Thread
+from threading import Thread
 
 DisBatchPath, ImportDir, PathsFixed = None, None, False # <= May need to set these, setting PathsFixed to True as well.
 
@@ -293,60 +293,73 @@ def probeContext(dbInfo, rank, args):
 class TaskInfo(object):
     kinds = {'B': 'barrier', 'C': 'check barrier', 'D': 'done', 'N': 'normal', 'P': 'per node', 'S': 'skip'}
 
-    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskAge, taskCmd, taskKey, kind = 'N', bKey=None):
+    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskAge, taskCmd, taskKey, kind = 'N', bKey=None, skipInfo=None):
         self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskAge, self.taskCmd, self.taskKey, self.bKey = taskId, taskStreamIndex, taskRepIndex, taskAge, taskCmd, taskKey, bKey
         assert kind in TaskInfo.kinds
         self.kind = kind
+        assert skipInfo is None or self.kind == 'S'
+        self.skipInfo = skipInfo
+        
+    def __eq__(self, other):
+        if type(self) is not type(other): return False
+        sti, oti = self, other
+        # TODO: Not tracking age in the status file, so ignoring for the time being.
+        return sti.taskId == oti.taskId and sti.taskStreamIndex == oti.taskStreamIndex and sti.taskRepIndex == oti.taskRepIndex and sti.taskCmd == oti.taskCmd # and sti.taskKey == oti.taskKey
+
+    def __ne__(self, other): return not (self == other)
 
     def __str__(self):
-        # If this changes, update parseStatusFile below and disBatcher.py too
         return '\t'.join([str(x) for x in [self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskAge, self.kind, repr(self.taskCmd)]])
 
 class TaskReport(object):
-    def __init__(self, taskInfo, host = myHostname, pid = myPid, returncode = 0, start = 0, end = 0, outbytes = 0, outdata = '', errbytes = 0, errdata = ''):
+    def __init__(self, *args, **kwargs):
+        if len(args) == 1 and len(kwargs) == 0 and type(args[0]) == str:
+            # In effect this undoes __str__, so this must be kept in sync with __str__.
+            ff = args[0].split('\t', 14)
+            ti = TaskInfo(int(ff[1]), int(ff[2]), int (ff[3]), -1, literal_eval(ff[14]), '')
+            self.do_init(ti, ff[4], int(ff[5]), int(ff[6]), float(ff[8]), float(ff[9]), int(ff[10]), ff[11], int(ff[12]), ff[13])
+        else:
+            self.do_init(*args, **kwargs)
+            
+    def do_init(self, taskInfo, host = myHostname, pid = myPid, returncode = 0, start = 0, end = 0, outbytes = 0, outdata = '', errbytes = 0, errdata = ''):
         self.taskInfo = taskInfo
         self.host, self.pid, self.returncode, self.start, self.end, self.outbytes, self.outdata, self.errbytes, self.errdata = host, pid, returncode, start, end, outbytes, outdata, errbytes, errdata
         self.engineReport = None # This will be filled in by EngineBlock.
 
     def flags(self):
-        if self.taskInfo.kind in 'NP':
+        if self.taskInfo.kind in 'NPS':
             return (  ('R' if self.returncode  else ' ')
                     + ('O' if self.outbytes    else ' ')
                     + ('E' if self.errbytes    else ' ')
-                    + ('P' if self.taskInfo.kind == 'P' else  ''))
+                    + (self.taskInfo.kind if self.taskInfo.kind in 'PS' else ''))
         else:
             return self.taskInfo.kind + '    '
         
     def __str__(self):
         # If this changes, update parseStatusFile below and disBatcher.py too
         ti = self.taskInfo
-        return '\t'.join([str(x) for x in [self.flags(), ti.taskId, ti.taskStreamIndex, ti.taskRepIndex, ti.taskAge, self.host, self.pid, self.returncode, self.end - self.start, self.start, self.end, self.outbytes, repr(self.outdata), self.errbytes, repr(self.errdata), repr(ti.taskCmd)]])
-
-    def __eq__(self, other):
-        if type(self) is not type(other): return False
-        sti, oti = self.taskInfo, other.taskInfo
-        return sti.taskId == oti.taskId and sti.taskStreamIndex == oti.taskStreamIndex and sti.taskRepIndex == oti.taskRepIndex and sti.taskAge == oti.taskAge and sti.taskCmd == oti.taskCmd # and sti.taskKey == oti.taskKey
-
-    def __ne__(self, other):
-        return not self == other
+        return '\t'.join([str(x) for x in [self.flags(), ti.taskId, ti.taskStreamIndex, ti.taskRepIndex, self.host, self.pid, self.returncode, '%.2f'%(self.end - self.start), self.start, self.end, self.outbytes, repr(self.outdata), self.errbytes, repr(self.errdata), repr(ti.taskCmd)]])
 
 def parseStatusFiles(*files):
     status = dict()
     for f in files:
         with open(f, 'r') as s:
             for l in s:
+                l = l[:-1]
                 d = l.split('\t')
                 if len(d) != 15:
                     logger.warn('Invalid status line (ignoring): %r'%l)
                     continue
-                if d[0] in 'BCDP': continue
-                tr = TaskReport(TaskInfo(int(d[1]), int(d[2]), int(d[3]), int(d[4]), literal_eval(d[15]), '.task', kind='S'), d[5], int(d[6]), int(d[7]), float(d[9]), float(d[10]), int(d[11]), literal_eval(d[12]), int(d[13]), literal_eval(d[14]))
+                if d[0] in 'BC': continue
+                tr = TaskReport(l)
+                ti = tr.taskInfo
+                ti.kind, ti.skipInfo = 'S', tr # This creates a reference loop!
                 try:
                     # successful tasks take precedence
-                    if status[tr.taskInfo.taskId].returncode <= tr.taskinfo.returncode: continue
+                    if status[ti.taskId].skipInfo.returncode <= tr.returncode: continue
                 except KeyError:
                     pass
-                status[tr.taskInfo.taskId] = tr
+                status[ti.taskId] = ti
     return status
 
 ##################################################################### DRIVER
@@ -420,8 +433,6 @@ def taskGenerator(tasks):
         # inside this loop instead.)
         for t in t.splitlines():
 
-            logger.debug('Task: %s', t)
-
             if t.startswith('#DISBATCH '):
                 m = dbprefix.match(t)
                 if m:
@@ -479,18 +490,20 @@ def taskGenerator(tasks):
 def statusTaskFilter(tasks, status, retry=False, force=False):
     while True:
         t = next(tasks)
-        s = status.get(t.taskId)
-        if s and (not retry or s.returncode == 0):
-            # skip
-            if s != t:
-                msg = 'Recovery status file task mismatch %s:\n' + str(s) + '\n' + str(t)
-                if force:
-                    logger.warn(msg, '-- proceeding anyway')
-                else:
-                    raise Exception(msg % '(use --force-resume to proceed anyway)')
-            yield s
-        else:
-            yield t
+        if t.kind == 'N':
+            s = status.get(t.taskId)
+            if s and (not retry or s.returncode == 0):
+                # skip
+                if s != t:
+                    msg = 'Recovery status file task mismatch %s:\n' + str(s) + '\n' + str(t)
+                    if force:
+                        logger.warn(msg, '-- proceeding anyway')
+                    else:
+                        raise Exception(msg % '(use --force-resume to proceed anyway)')
+                s.taskAge = t.taskAge # TODO Think longer and think harder about this.
+                yield s
+                continue
+        yield t
 
 # Main control loop that sends new tasks to the execution engines.
 class Feeder(Thread):
@@ -527,22 +540,23 @@ class Feeder(Thread):
                 self.kvs.put('.controller', ('no more tasks', lastId+1))
                 self.shutdown = 'No more tasks.'
                 break
-            
+
             lastId = tinfo.taskId
-            if tinfo.kind in 'BCDS':
+            if tinfo.kind in 'BCD':
                 self.kvs.put('.controller', ('special task', tinfo))
                 continue
 
-            # At this point, we have a task that needs to go to the engines.
-            if tinfo.kind == 'N':
+            # At this point, we have a task that needs to go to the engines (or be skipped).
+            if tinfo.kind in 'NPS':
                 while tinfo.taskAge != self.age:
                     # Don't get ahead of ourselves.
                     self.age = self.ageQ.get()
                     logger.info('Feeder stepping age to %d, looking to reach %d.', self.age, tinfo.taskAge)
                 # Do a little flow control for normal tasks. Wait for a slot.
-                self.slots.get()
+                if tinfo.kind == 'N':
+                    self.slots.get()
 
-            logger.info('Posting task: %s', tinfo)
+            logger.info('Feeding task: %s', tinfo)
             self.kvs.put('.controller', ('task', tinfo))
 
         self.kvs.close()
@@ -659,10 +673,10 @@ class Driver(Thread):
 
         self.kvs.put('DisBatch status', '<Starting...>', False)
 
-        availSlots, cRank2taskCount, cylKey2eRank, finishedTasks, noMore, pending, retired = [], DD(int), {}, {}, False, DD(list), -1
+        availSlots, cRank2taskCount, cylKey2eRank, finishedTasks, noMore, pending, retired = [], DD(int), {}, {}, False, [], -1
 
         while 1:
-            logger.debug('Driver loop: Age %d, Finished %d, Retired %d, Available %d, Pending %s', self.age, self.finished, retired, len(availSlots), [(a, len(l)) for a, l in sorted(pending.items())])
+            logger.debug('Driver loop: Age %d, Finished %d, Retired %d, Available %d, Pending %d', self.age, self.finished, retired, len(availSlots), len(pending))
 
             # Wait for a message.
             msg, o = self.kvs.get('.controller')
@@ -716,14 +730,11 @@ class Driver(Thread):
                     logger.error('Register? %s for %s', which , key)
             elif msg == 'special task':
                 tinfo = o
-                finishedTasks[tinfo.taskId] = True # TODO: For barriers, set finished wehn barrier is met?
+                finishedTasks[tinfo.taskId] = True # TODO: For barriers, set finished when barrier is met?
                 if tinfo.kind in 'BCD':
                     logger.info('Finishing barrier %d.'%tinfo.taskId)
                     # TODO: Add assertion to verify ordering property?
                     self.barriers.append(TaskReport(tinfo, start=time.time()))
-                else:
-                    assert tinfo.kind == 'S'
-                    self.recordResult(tReport)
             elif msg == 'stop context':
                 cRank = o
                 for e in self.engines.values():
@@ -735,44 +746,59 @@ class Driver(Thread):
                 shutDownEngine(self.engines[rank])
             elif msg == 'task':
                 tinfo = o
+                assert tinfo.taskAge == self.age
                 if tinfo.kind == 'P':
                     logger.info('Posting per engine task "%s" %s', tinfo.taskKey, tinfo)
                     self.kvs.put(tinfo.taskKey, ('task', tinfo))
+                elif tinfo.kind == 'S':
+                    logger.info('Skipping %s', tinfo.skipInfo)
+                    self.kvs.put('.controller', ('task skipped', tinfo))
                 else:
-                    pending[tinfo.taskAge].append(tinfo)
-            elif msg == 'task done':    
-                tReport, engineRank, cid, cAge, ckey = o
-                assert isinstance(tReport, TaskReport)
-                e = self.engines[engineRank]
-                e.last = time.time()
-                assert e.age <= cAge
-                e.age = max(e.age, cAge)
-                tinfo = tReport.taskInfo
+                    pending.append(tinfo)
+            elif msg == 'task done' or msg == 'task skipped':
+                if msg == 'task skipped':
+                    tinfo = o
+                    assert tinfo.kind == 'S'
+                    tReport = tinfo.skipInfo
+                    tinfo.skipReport = None # break circular reference.
+                    skipped = True
+                else:
+                    tReport, engineRank, cid, cAge, ckey = o
+                    assert isinstance(tReport, TaskReport)
+                    tinfo = tReport.taskInfo
+                    skipped = False
+                rc, report = tReport.returncode, str(tReport)
                 finishedTasks[tinfo.taskId] = True
 
-                assert tinfo.kind in 'NP'
-                self.recordResult(tReport)
+                assert tinfo.kind in 'NPS'
+                self.recordResult(report)
                 # TODO: Count per engine?
                 self.finished += 1
-                e.finished += 1
-                if tinfo.kind == 'N':
-                    e.assigned -= 1
-                    if e.status == 'running':
-                        availSlots.append(ckey)
-                        self.slots.put(True)
+                
+                if not skipped:
+                    e = self.engines[engineRank]
+                    e.last = time.time()
+                    assert e.age <= cAge
+                    e.age = cAge
+                    e.finished += 1
+                    if tinfo.kind == 'N':
+                        e.assigned -= 1
+                        if e.status == 'running':
+                            availSlots.append(ckey)
+                            self.slots.put(True)
 
-                if tReport.returncode:
+                if rc:
                     self.failed += 1
-                    self.engines[engineRank].failed += 1
-                    assert self.barriers == [] or tReport.taskInfo.taskId < self.barriers[0].taskInfo.taskId
+                    if not skipped: self.engines[engineRank].failed += 1
+                    assert self.barriers == [] or tinfo.taskId < self.barriers[0].taskInfo.taskId
                     if self.currentReturnCode == 0:
                         # Remember the first failure. Somewhat arbitrary.
-                        self.currentReturnCode = tReport.returncode
+                        self.currentReturnCode = rc
 
                 # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than
                 # one per key
                 if self.trackResults:
-                    self.kvs.put(self.trackResults%tinfo.taskId, str(tReport), False)
+                    self.kvs.put(self.trackResults%tinfo.taskId, report, False)
                 if self.mailTo and self.finished%self.mailFreq == 0:
                     self.sendNotification()
             else:
@@ -783,6 +809,7 @@ class Driver(Thread):
                 for x in range(retired+1, self.barriers[0].taskInfo.taskId):
                     if x not in finishedTasks:
                         retired = x - 1
+                        logger.info('Barrier waiting for %d (%d)', x, self.barriers[0].taskInfo.taskId)
                         break
                 else:
                     # we could prune finsihedTasks at this point.
@@ -799,6 +826,7 @@ class Driver(Thread):
                     newAge = bTinfo.taskAge + 1
                     for x in range(self.age+1, newAge+1):
                         self.ageQ.put(x)
+                    assert 0 == len(pending)
                     self.age = newAge
                     # If user specified a KVS key, use it to signal the barrier is done.
                     if bTinfo.bKey:
@@ -820,9 +848,9 @@ class Driver(Thread):
                     self.currentReturnCode = 0
                     bTinfo = None
 
-            while pending[self.age] and availSlots:
+            while pending and availSlots:
                 ckey = availSlots.pop(0)
-                tinfo = pending[self.age].pop(0)
+                tinfo = pending.pop(0)
                 logger.info('Giving %s %s', ckey, tinfo)
                 self.kvs.put(ckey, ('task', tinfo))
 
@@ -833,7 +861,7 @@ class Driver(Thread):
                 if limit and cRank2taskCount[e.cRank] == limit:
                     shutDownEngine(e)
                 
-            if noMore and sum([len(p) for p in pending.values()]) == 0:
+            if noMore and not pending:
                 # Really nothing more to do.
                 for ckey in availSlots:
                     logger.info('Notifying "%s" there is no more work.', ckey)
@@ -1042,11 +1070,7 @@ class EngineBlock(Thread):
             else:
                 logger.warning('Requested envres variable "%s" not found', v)
 
-        self.parent = kvs
         self.kvs = kvs.clone()
-        # Get rank. TODO: Convert to a request to driver in order to avoid possiblity of crashing here and hanging other engine
-        # signons.
-        self.rank = rank
         self.kvs.put('.controller', ('engine started', (self.rank, context.rank, myHostname, myPid, time.time())))
         env.update(self.kvs.view('.common env'))
         # Note we are using the Queue construct from the
@@ -1060,6 +1084,9 @@ class EngineBlock(Thread):
         self.start()
 
     def run(self):
+        #TODO: not currentlly checking for a per engine clean up
+        #task. Probably need to explicitly join pec, which means
+        #sendind that a shutdown message too.
         try:
             for c in self.cylinders:
                 c.join()
@@ -1071,7 +1098,6 @@ class EngineBlock(Thread):
             self.kvs.get('engine %d'%self.rank)
             self.kvs.put('engine %d'%self.rank, 'engine stopped')
             self.kvs.close()
-            self.parent.close()
 
 
 ##################################################################### MAIN
@@ -1212,7 +1238,7 @@ if '__main__' == __name__:
         args = argp.parse_args()
 
         # A lone '--fix-paths' option is handled at the beginning of
-        # this script.  Anything other invocation with '--fix-paths'
+        # this script.  Any other invocation with '--fix-paths'
         # is an error.
         if args.fix_paths:
             print('You must use --fix-paths without any other arguments.', file=sys.stderr)
