@@ -1,5 +1,5 @@
-#!/usr/bin/python
-import curses, json, os, socket, sys, time
+#!/usr/bin/python3
+import curses, json, socket, sys, time
 
 try:
     from queue import Queue
@@ -82,7 +82,7 @@ def statusWindow(stdscr):
     curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLACK)
     curses.init_pair(5, curses.COLOR_RED, curses.COLOR_BLACK)
     curses.curs_set(False)
-    
+
     q = Queue()
     gc = Thread(target=waitGetch, args=(stdscr, q))
     gc.daemon = True
@@ -90,14 +90,16 @@ def statusWindow(stdscr):
     db = Thread(target=dbStatus, args=(q,))
     db.daemon = True
     db.start()
+
+    HelpMe = 'For help, press\'?\''
     
-    col, row, done, r2k, statusLine = 0, 0, False, {}, ''
+    col, row, done, r2k, statusLine = 0, 0, False, {}, HelpMe
     cursorLimits = None
     localEngineStatus = {}
-    while (True):
+    while True:
         lRow, lCol = row, col
         tag, o = q.get()
-        
+
         height, width = stdscr.getmaxyx()
 
         if tag == 'status':
@@ -106,15 +108,15 @@ def statusWindow(stdscr):
             try:
                 d = json.loads(o)
                 # convert keys back to ints after json transform.
-                engines = dict([(int(k), v) for k, v in d['engines'].items()])
-                contexts = dict([(int(k), v) for k, v in d['contexts'].items()])
+                engines = {int(k): v for k, v in d['engines'].items()}
+                contexts = {int(k): v for k, v in d['contexts'].items()}
                 ee = engines.values()
                 d['slots'] = sum([len(e['cylinders']) for e in ee if e['status'] == 'running'])
                 d['finished'] = sum([e['finished'] for e in ee])
                 d['failed'] = sum([e['failed'] for e in ee])
                 stdscr.addstr(0, 0, uniqueId + (': {more:15s}  Run{finished:7d}  Failed{failed:7d}  Barriers{barriers:4d}  Total slots{slots:4d}'.format(**d)), curses.color_pair(1))
-                #                       '01234 012345678901 01234567890123456789 0123456789 01234 012345678 0123456 0123456789 0123456789 0123456789'
-                stdscr.addstr(2, 0,     ' Rank    Context           Host            PID      Age     Last    Avail   Assigned   Finished    Failed  ', curses.color_pair(1) | curses.A_UNDERLINE)
+                #                   '01234 012345678901 01234567890123456789 0123456789 01234 012345678 0123456 0123456789 0123456789 0123456789'
+                stdscr.addstr(2, 0, ' Rank    Context           Host            PID      Age     Last    Avail   Assigned   Finished    Failed  ', curses.color_pair(1) | curses.A_UNDERLINE)
                 r, r2k = FirstEngineRow, {}
                 ee = sorted(engines.items())
                 for rank, engine in ee:
@@ -134,7 +136,7 @@ def statusWindow(stdscr):
             except ValueError:
                 stdscr.addstr(0, 0, o, curses.color_pair(1))
         elif tag == 'key':
-            statusLine = ''
+            statusLine = HelpMe
             k = o
             if   k == ord('q'):
                 break
@@ -144,11 +146,8 @@ def statusWindow(stdscr):
                 row = row - 1
             elif k == curses.KEY_RIGHT:
                 pass
-                #Ignore horizontal motion for the time being.
-                #col = col + 1
             elif k == curses.KEY_LEFT:
                 pass
-                #col = col - 1
             elif k in [ord('h'), ord('?')]:
                 statusLine = 'C: Shutdown context; E: Shutdown engine; q: quit'
             elif k in [ord('C'), ord('E')]:
@@ -175,7 +174,7 @@ def statusWindow(stdscr):
                                 except socket.error:
                                     pass
             else:
-                statusLine = 'Last unrecognized key %d'%k
+                statusLine = 'Last unrecognized key code %d. %s'%(k, HelpMe)
         elif tag == 'stop':
             done = True
             statusLine = 'Run ended.'
@@ -189,7 +188,7 @@ def statusWindow(stdscr):
             row = FirstEngineRow
 
         stdscr.move(height-1, 0)
-        stdscr.clrtoeol();
+        stdscr.clrtoeol()
         stdscr.addstr(statusLine, curses.color_pair(3))
 
         stdscr.chgat(lRow, lCol, 1, curses.A_NORMAL)
