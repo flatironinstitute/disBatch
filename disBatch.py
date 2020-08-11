@@ -218,7 +218,7 @@ class SlurmContext(BatchContext):
             if m == None: m = '1'
             cylinders += [int(c)]*int(m)
 
-        contextLabel = args.label if args.label else 'J%d'%jobid
+        contextLabel = args.label if args.label else 'J%s'%jobid
         super(SlurmContext, self).__init__('SLURM', dbInfo, rank, nodes, cylinders, args, contextLabel)
         self.driverNode = None
         self.retireCmd = "scontrol update JobId=\"$SLURM_JOBID\" NodeList=\"${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE\""
