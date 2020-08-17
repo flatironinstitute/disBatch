@@ -28,7 +28,7 @@ In any event, when processing such a list of tasks, it is helpful to
 acquire metadata about the execution of each task: where it ran, how
 long it took, its exit return code, etc.
 
-**disBatch.py** has been designed to support this usage in a simple and
+**disBatch** has been designed to support this usage in a simple and
 portable way, as well as to provide the sort of metadata that can be
 helpful for debugging and reissuing failed tasks.
 
@@ -51,7 +51,7 @@ See \#DISBATCH directives below for another alternative.
 In the simplest case, working with a cluster managed by SLURM, all that needs to be done is to write the command
 sequences to a file and then submit a job like the following:
 
-    sbatch -n 20 --ntasks-per-node 5 --exclusive --wrap "disBatch.py TaskFileName"
+    sbatch -n 20 --ntasks-per-node 5 --exclusive disBatch TaskFileName
 
 This particular invocation will allocate sufficient resources to process
 20 tasks at a time, with no more than five running concurrently on any
@@ -87,17 +87,17 @@ In this example, disBatch is told it can use seven CPUs on host1 and three on ho
 Hosts used via ssh must be set up to allow ssh to work without a password.
 
 Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. If you get errors about not finding disBatch or kvsstcp, you may need to hard-code the paths for your setup into the script.
-You can do this automatically by running `./disBatch.py --fix-paths`. This should only need to be done once.
+You can do this automatically by running `./disBatch --fix-paths`. This should only need to be done once.
 
 
 ## Invocation
 ~~~~
-usage: disBatch.py [-h] [--fix-paths] [-p PATH] [-l FILE] [--mailFreq N]
-                   [--mailTo ADDR] [-c N] [-t N] [-g] [-k COMMAND] [-K]
-                   [-s HOST:COUNT] [-r STATUSFILE] [-R] [--force-resume] [-w]
-                   [--kvsserver [HOST:PORT]] [--taskcommand COMMAND]
-                   [--taskserver [HOST:PORT]]
-                   [taskfile]
+usage: disBatch [-h] [--fix-paths] [-p PATH] [-l FILE] [--mailFreq N]
+                [--mailTo ADDR] [-c N] [-t N] [-g] [-k COMMAND] [-K]
+                [-s HOST:COUNT] [-S] [-r STATUSFILE] [-R] [--force-resume]
+                [-e] [-w] [--kvsserver [HOST:PORT]] [--taskcommand COMMAND]
+                [--taskserver [HOST:PORT]]
+                [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
 
@@ -108,12 +108,12 @@ optional arguments:
   -h, --help            show this help message and exit
   --fix-paths           Configure fixed path to script and modules.
   -p PATH, --prefix PATH
-                        Prefix path and name for log and status files
-                        (default: ./TASKFILE_JOBID).
+                        Prefix path and name for log, dbUtil.sh, and status
+                        files(default: ./TASKFILE_JOBID).
   -l FILE, --logfile FILE
                         Log file.
-  --mailFreq N          Send email every N task completions (default: 1). "--
-                        mailTo" must be given.
+  --mailFreq N          Send email every N task completions (default: 1).
+                        "--mailTo" must be given.
   --mailTo ADDR         Mail address for task completion notification(s).
   -c N, --cpusPerTask N
                         Number of cores used per task; may be fractional
@@ -126,13 +126,16 @@ optional arguments:
                         Shell command to run to retire a node (environment
                         includes $NODE being retired, remaining $ACTIVE node
                         list, $RETIRED node list; default based on batch
-                        system).
+                        system). Incompatible with "--ssh-node".
   -K, --no-retire       Don't retire nodes from the batch system (e.g., if
                         running as part of a larger job); equivalent to -k ''.
   -s HOST:COUNT, --ssh-node HOST:COUNT
                         Run tasks over SSH on the given nodes (can be
                         specified multiple times for additional hosts;
                         equivalent to setting DISBATCH_SSH_NODELIST)
+  -S, --startup-only    Startup only the disBatch server (and KVS server
+                        if appropriate). Use "...dbUtil.sh" script to add
+                        execution contexts. Incompatible with "--ssh-node".
   -r STATUSFILE, --resume-from STATUSFILE
                         Read the status file from a previous run and skip any
                         completed tasks (may be specified multiple times).
@@ -140,6 +143,8 @@ optional arguments:
                         runs (non-zero return).
   --force-resume        With -r, proceed even if task commands/lines are
                         different.
+  -e, --exit-code       When any task fails, exit with non-zero status
+                        (default: only if disBatch itself fails)
   -w, --web             Enable web interface.
   --kvsserver [HOST:PORT]
                         Use a running KVS server.
@@ -148,6 +153,7 @@ optional arguments:
                         server (passed in the environment).
   --taskserver [HOST:PORT]
                         Tasks will come from the KVS server.
+
 ~~~~
 
 The options for mail will only work if your computing environment permits processes to access mail via SMTP.
@@ -166,6 +172,26 @@ While running this command, the follow environment variables will be set: `NODE`
 The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, `GPU_DEVICE_ORDINAL`) provided on each node and divides the resources between the running tasks.  For example, with slurm, if you want to run on _n_ nodes, with _t_ tasks per node, each using _c_ CPUs and 1 GPU (that is, _tc_ CPUs and _t_ GPUs per node, or _ntc_ CPUs and _nt_ GPUs total), you can do:
 
     sbatch -N$n -c$c --ntasks-per-node=$t --gres=gpu:$t -p gpu --wrap 'disBatch.py -g $taskfile'`
+
+`-S` Starts disBatch in a mode in which it waits for execution resources to be added. In this mode, disBatch starts up the task management system and
+generates a script `<Prefix>_dbUtil.sh`, where `<Prefix>` refers to the `-p` option or default, see above. We'll call this simply `dbUtils.sh` here,
+but remember to include `<Prefix>_` in actual use. You can add execution resources by doing one or more of the following multiple times:
+1. Submit `dbUtils.sh` as a job, e.g.:
+
+    `sbatch -N 5 --ntasks-per-node 7 dbUtil.sh`
+
+2. Use ssh, e.g.:
+
+    `./dbUtil.sh -s localhost:4,friendlyNeighbor:5`
+
+Each of these creates an execution *context*, which contains one of more execution *engines* (five engines in the first, two in the second).
+`./dbUtil.sh --mon` will start a simple ASCII-based monitor that tracks the overall state of the disBatch run, and the activity of the individual
+contexts and engines. By cursoring over an engine, you can send a shutdown signal to the engine or its context. This signal is *soft*, triggering
+a graceful shutdown only after all currently assigned tasks are complete.
+
+When a context is started, you can also supply the argument `--context-task-limit N`. This will shutdown the context and all associated engines
+after it has run `N` tasks.
+
 
 `-r` uses the status file of a previous run to determine what tasks to run during this disBatch invocation. Only those tasks that haven't yet run (or with `-R`, those that haven't run or did but returned a non-0 exit code) are run this time. By default, the numeric task identifier and the text of the command are used to determine if a current task is the same as one found in the status file. `--force-resume` restricts the comparison to just the numeric identifier.
 
