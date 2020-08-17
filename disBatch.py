@@ -125,7 +125,7 @@ class BatchContext(object):
             contextLabel = 'context%05'%rank
         self.sysid, self.dbInfo, self.rank, self.nodes, self.cylinders, self.args, self.label = sysid, dbInfo, rank, nodes, cylinders, args, contextLabel
         self.error = False # engine errors (non-zero return values)
-        self.kvsKey = '.context %d'%rank
+        self.kvsKey = '.context_%d'%rank
         self.retireCmd = None
 
     def __str__(self):
@@ -280,7 +280,9 @@ class SSHContext(BatchContext):
     def launchNode(self, n):
         prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
         lfp = '%s_%s_%s_engine_wrap.log'%(self.dbInfo.uniqueId, self.label, n)
-        return SUB.Popen(prefix + [DisBatchPath, '--engine', '-n', n, kvsserver, self.kvsKey], stdin=open(os.devnull, 'r'), stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
+        cmd = prefix + [DisBatchPath, '--engine', '-n', n, kvsserver, self.kvsKey]
+        logger.info('ssh launch comand: %r', cmd)
+        return SUB.Popen(cmd, stdin=open(os.devnull, 'r'), stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
 
 
 def probeContext(dbInfo, rank, args):
