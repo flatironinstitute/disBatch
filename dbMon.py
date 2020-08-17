@@ -72,16 +72,22 @@ def popYNC(msg, parent, q, title='Confirm'):
 FirstEngineRow = 3
 
 def statusWindow(stdscr):
-    stdscr.clear()
-    stdscr.refresh()
-
     curses.start_color()
     curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
     curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
     curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_RED)
     curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLACK)
     curses.init_pair(5, curses.COLOR_RED, curses.COLOR_BLACK)
+    curses.init_pair(6, curses.COLOR_BLACK, curses.COLOR_BLACK)
+    curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_WHITE)
+
+    CPCB, CPGB, CPBR, CPYB, CPRB, CPBB, CPWW = [curses.color_pair(x) for x in range(1, 8)]
+
     curses.curs_set(False)
+
+    stdscr.bkgdset(CPBB)
+    stdscr.clear()
+    stdscr.refresh()
 
     q = Queue()
     gc = Thread(target=waitGetch, args=(stdscr, q))
@@ -96,27 +102,30 @@ def statusWindow(stdscr):
     col, row, done, r2k, statusLine = 0, 0, False, {}, HelpMe
     cursorLimits = None
     localEngineStatus = {}
+    statusd, statusj = {}, 'No status data received.'
     while True:
         lRow, lCol = row, col
         tag, o = q.get()
 
         height, width = stdscr.getmaxyx()
 
-        if tag == 'status':
+        if tag in ['resize', 'status']:
             now = time.time()
             stdscr.clear()
             try:
-                d = json.loads(o)
+                if tag == 'status':
+                    statusj = o
+                statusd = json.loads(statusj)
                 # convert keys back to ints after json transform.
-                engines = {int(k): v for k, v in d['engines'].items()}
-                contexts = {int(k): v for k, v in d['contexts'].items()}
+                engines = {int(k): v for k, v in statusd['engines'].items()}
+                contexts = {int(k): v for k, v in statusd['contexts'].items()}
                 ee = engines.values()
-                d['slots'] = sum([len(e['cylinders']) for e in ee if e['status'] == 'running'])
-                d['finished'] = sum([e['finished'] for e in ee])
-                d['failed'] = sum([e['failed'] for e in ee])
-                stdscr.addstr(0, 0, uniqueId + (': {more:15s}  Run{finished:7d}  Failed{failed:7d}  Barriers{barriers:4d}  Total slots{slots:4d}'.format(**d)), curses.color_pair(1))
-                #                   '01234 012345678901 01234567890123456789 0123456789 01234 012345678 0123456 0123456789 0123456789 0123456789'
-                stdscr.addstr(2, 0, ' Rank    Context           Host            PID      Age     Last    Avail   Assigned   Finished    Failed  ', curses.color_pair(1) | curses.A_UNDERLINE)
+                statusd['slots'] = sum([len(e['cylinders']) for e in ee if e['status'] == 'running'])
+                statusd['finished'] = sum([e['finished'] for e in ee])
+                statusd['failed'] = sum([e['failed'] for e in ee])
+                stdscr.addstr(0, 0, uniqueId + (': {more:15s}   Total slots{slots:4d}   Run{finished:7d}   Failed{failed:5d}   Barriers{barriers:3d}'.format(**statusd)), CPCB)
+                #                   '01234 012345678901 01234567890123456789 0123456 0123456 0123456789 0123456789 01234567'
+                stdscr.addstr(2, 0, ' Rank    Context           Host          Last    Avail   Assigned   Finished   Failed ', CPCB | curses.A_UNDERLINE)
                 r, r2k = FirstEngineRow, {}
                 ee = sorted(engines.items())
                 for rank, engine in ee:
@@ -125,19 +134,23 @@ def statusWindow(stdscr):
                     engine['slots'] = len(engine['cylinders'])
                     engine['delay'] = now - engine['last']
                     engine['cLabel'] = contexts[engine['cRank']]['label']
-                    cp = curses.color_pair(2)
+                    cp = CPGB
                     if engine['status'] == 'stopping':
-                        cp = curses.color_pair(5)
+                        cp = CPRB
                     elif localEngineStatus.get(rank, '') == 'requesting shutdown':
-                        cp = curses.color_pair(4)
-                    stdscr.addstr(r, 0, '{rank:5d} {cLabel:12.12s} {hostname:20.20s} {pid:10d} {age:5d} {delay:8.1f}s {slots:7d} {assigned:10d} {finished:10d} {failed:10d}'.format(**engine), cp)
+                        cp = CPYB
+                    stdscr.addstr(r, 0, '{rank:5d} {cLabel:12.12s} {hostname:20.20s} {delay:7.0f}s {slots:7d} {assigned:10d} {finished:10d} {failed:8d}'.format(**engine), cp)
                     r += 1
                 cursorLimits = (FirstEngineRow, r if r == FirstEngineRow else r-1)
-            except ValueError:
-                stdscr.addstr(0, 0, o, curses.color_pair(1))
+            except ValueError as e:
+                stdscr.addstr(0, 0, o[:width-3], CPCB)
+                print('Exception while processing status:', str(e), file=sys.stderr)
         elif tag == 'key':
-            statusLine = HelpMe
             k = o
+            if k == curses.KEY_RESIZE:
+                q.put(('resize', None))
+                continue
+            statusLine = HelpMe
             if   k == ord('q'):
                 break
             if   k == curses.KEY_DOWN:
@@ -189,10 +202,10 @@ def statusWindow(stdscr):
 
         stdscr.move(height-1, 0)
         stdscr.clrtoeol()
-        stdscr.addstr(statusLine, curses.color_pair(3))
+        stdscr.addstr(statusLine, CPBR)
 
-        stdscr.chgat(lRow, lCol, 1, curses.A_NORMAL)
-        stdscr.chgat(row, col, 1, curses.A_REVERSE)
+        stdscr.chgat(lRow, lCol, 1, CPBB)
+        stdscr.chgat(row, col, 1, CPWW)
 
         # Refresh the screen
         stdscr.refresh()
