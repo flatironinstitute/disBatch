@@ -89,8 +89,10 @@ def waitTimeout(sub, timeout, interval=1):
 def killPatiently(sub, name, timeout=15):
     if not sub: return
     r = sub.poll()
+    waited = False
     if r is None:
         logger.info('Waiting for %s to finish...', name)
+        waited = True
         r = waitTimeout(sub, timeout)
     if r is None:
         logger.warn('Terminating %s...', name)
@@ -106,7 +108,7 @@ def killPatiently(sub, name, timeout=15):
         except OSError:
             pass
         r = sub.wait()
-    if r:
+    if r or waited:
         logger.info("%s returned %d", name, r)
     return r
 
@@ -1381,8 +1383,11 @@ if '__main__' == __name__:
                     time.sleep(3)
             except Exception as e:
                 logger.exception('During shutdown')
-            kvs.close()
-            if kvsst: kvsst.shutdown()
+            if kvsst:
+                logger.info('Shutting down KVS server.')
+                kvs.shutdown()
+            else:
+                kvs.close()
             if args.kvsserver is True:
                 try:
                     os.unlink(kvsinfotxt)
@@ -1391,8 +1396,7 @@ if '__main__' == __name__:
                     pass
             if args.web: os.unlink(urlfile)
             if subContext:
-                # TODO: add some kind of timeout here?
-                subContext.wait()
+                killPatiently(subContext, 'Execution context')
         if subContext and subContext.returncode:
             print('Some engine processes failed -- please check the logs', file=sys.stderr)
             sys.exit(1)
