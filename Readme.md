@@ -185,12 +185,22 @@ but remember to include `<Prefix>_` in actual use. You can add execution resourc
     `./dbUtil.sh -s localhost:4,friendlyNeighbor:5`
 
 Each of these creates an execution *context*, which contains one of more execution *engines* (five engines in the first, two in the second).
+An engine can run one or more tasks currently. In the first example, each of the 5 engines will run up to 7 tasks concurrently, while in the
+second example, the engine on `localhost` will run up to 4 tasks concurrently and the engine on `friendlyNeighbor` will run up to 5.
 `./dbUtil.sh --mon` will start a simple ASCII-based monitor that tracks the overall state of the disBatch run, and the activity of the individual
 contexts and engines. By cursoring over an engine, you can send a shutdown signal to the engine or its context. This signal is *soft*, triggering
-a graceful shutdown only after all currently assigned tasks are complete.
+a graceful shutdown that will occur only after currently assigned tasks are complete. Other execution resources are uneffected.
 
 When a context is started, you can also supply the argument `--context-task-limit N`. This will shutdown the context and all associated engines
-after it has run `N` tasks.
+after it has run `N` tasks.  
+
+Taken together, these mechanisms enable disBatch to run on a dynamic pool of execution resources, so you can "borrow" a colleague's workstation overnight, or
+claim a large chunk of a currently idle partition, but return some if demands picks up, or chain together a series of time limited allocations to
+accomplish a long run. When using this mode, keep in mind two caveats: (i) The time quantum is determined by your task duration. If any given task might
+run for hours or days, then the utility of this is limited. You can still use standard means (kill, scancel) to terminate contexts and engines, but
+you will likely have incomplete tasks to
+reckon with; (ii) The task manangement system must itself be run in a setting where a long lived process is OK. Say in a `screen` or `tmux` session on
+the login node of a cluster, or on your personal workstation (assuming it has the appropriate connectivity to reach the other resources you plan to use).
 
 
 `-r` uses the status file of a previous run to determine what tasks to run during this disBatch invocation. Only those tasks that haven't yet run (or with `-R`, those that haven't run or did but returned a non-0 exit code) are run this time. By default, the numeric task identifier and the text of the command are used to determine if a current task is the same as one found in the status file. `--force-resume` restricts the comparison to just the numeric identifier.
