@@ -1,0 +1,2 @@
+#DISBATCH PREFIX ( hostname ; echo $DISBATCH_REPEAT_INDEX ; date +%s.%3N ; echo I have "$DISBATCH_CORES_PER_TASK cores." ; sleep 30 ; date +%s.%3N ) > DCPTTest/DeleteMe_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log 2>&1
+#DISBATCH REPEAT 20 start 1000000
