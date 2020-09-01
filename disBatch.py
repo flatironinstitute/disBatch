@@ -569,14 +569,12 @@ class Feeder(Thread):
 
 # Main control loop that processes completed tasks.
 class Driver(Thread):
-    def __init__(self, kvs, db_info, tasks, trackResults=None, mailTo=None, mailFreq=1):
+    def __init__(self, kvs, db_info, tasks, trackResults=None):
         super(Driver, self).__init__(name='Driver')
         self.kvs = kvs.clone()
         self.db_info = db_info
         self.kvs.put('.common env', {'DISBATCH_JOBID': str(self.db_info.uniqueId), 'DISBATCH_NAMETASKS': self.db_info.name})
         self.trackResults = trackResults
-        self.mailTo = mailTo
-        self.mailFreq = mailFreq
 
         self.age = 0
         self.ageQ = Queue()
@@ -806,7 +804,7 @@ class Driver(Thread):
                 # one per key
                 if self.trackResults:
                     self.kvs.put(self.trackResults%tinfo.taskId, report, False)
-                if self.mailTo and self.finished%self.mailFreq == 0:
+                if self.db_info.args.mailTo and self.finished%self.db_info.args.mailFreq == 0:
                     self.sendNotification()
             else:
                 raise Exception('Weird message: ' + msg)
@@ -1059,9 +1057,10 @@ class EngineBlock(Thread):
         self.daemon = True
         self.context = context
         self.rank = rank
-        cylinders = context.cylinders[context.nodeId]
+        cylinders = context.wCylinders[context.nodeId]
 
         env = os.environ
+        env['DISBATCH_CORES_PER_TASK'] = str(int(context.cylinders[context.nodeId]/cylinders))
         envres = {}
         for v in context.envres:
             e = env.get(v)
@@ -1108,6 +1107,15 @@ class EngineBlock(Thread):
 
 
 ##################################################################### MAIN
+
+# Common arguments for normal with context and context only invocations.
+def contextArgs(argp):
+    argp.add_argument('-c', '--cpusPerTask', metavar='N', default=-1.0, type=float, help='Number of cores used per task; may be fractional (default: 1).')
+    argp.add_argument('-t', '--tasksPerNode', metavar='N', default=-1, type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
+    argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', default=[], help=argparse.SUPPRESS) #'Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)'
+    argp.add_argument('-g', '--gpu', action='append_const', const='CUDA_VISIBLE_DEVICES,GPU_DEVICE_ORDINAL', help='Use assigned GPU resources')
+    argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:COUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
+    return ['cpusPerTask', 'tasksPerNode', 'env_resource', 'gpu', 'ssh_node']
 
 if '__main__' == __name__:
     import argparse, copy
@@ -1169,17 +1177,29 @@ if '__main__' == __name__:
     elif len(sys.argv) > 1 and sys.argv[1] == '--context':
         argp = argparse.ArgumentParser(description='Set up disBatch execution context')
         argp.add_argument('--context', action='store_true', help='Run in execution engine mode.')
-        argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', help=argparse.SUPPRESS) #'Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)'
         argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help="Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system).")
         argp.add_argument('-l', '--label', type=str, metavar='COMMAND', help="Label for this context. Should be unique.")
         argp.add_argument('--context-task-limit', type=int, metavar='COUNT', default=0, help="Shutdown after running COUNT tasks (0 => no limit).")
-        argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:COUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
         argp.add_argument('kvsserver', help='Address of kvs sever used to relay data.')
+        commonContextArgs = contextArgs(argp)
         args = argp.parse_args()
         global kvsserver
         kvsserver = args.kvsserver
         kvs = kvsstcp.KVSClient(kvsserver)
         dbInfo = kvs.view('.db info')
+
+        # Args that if not set might have been set when disBatch was first run.
+        if args.cpusPerTask == -1.0:
+            args.cpusPerTask = dbInfo.args.cpusPerTask
+        if args.cpusPerTask == -1.0:
+            args.cpusPerTask = 1
+        if args.tasksPerNode == -1:
+            args.tasksPerNode = dbInfo.args.tasksPerNode
+        if args.tasksPerNode == -1:
+            args.tasksPerNode = float('inf')
+        if args.env_resource == []:
+            args.env_resource = dbInfo.args.env_resource
+        
         rank = register(kvs, 'context')
         try:
             os.chdir(dbInfo.wd)
@@ -1202,9 +1222,14 @@ if '__main__' == __name__:
         logging.info('%s context started on %s (%d).', context.sysid, myHostname, myPid)
 
         # Apply lesser of -c and -t limits
-        context.cylinders = [min(int(c / dbInfo.args.cpusPerTask), dbInfo.args.tasksPerNode) for c in context.cylinders]
+        context.wCylinders = [min(int(c / args.cpusPerTask), args.tasksPerNode) for c in context.cylinders]
+        if [c for c in context.wCylinders if c == 0]:
+            print('At least one engine lacks enough cylinders to run tasks (%r).'%context.wCylinders, file=sys.stderr)
+            sys.exit(1)
         # TODO: communicate to jobs how many CPUs they have available?
 
+        if args.gpu:
+            args.env_resource.extend(args.gpu)
         context.envres = ','.join(args.env_resource).split(',') if args.env_resource else []
 
         if args.retire_cmd is not None:
@@ -1224,13 +1249,8 @@ if '__main__' == __name__:
         argp.add_argument('-l', '--logfile', metavar='FILE', default=None, type=argparse.FileType('w'), help='Log file.')
         argp.add_argument('--mailFreq', default=None, type=int, metavar='N', help='Send email every N task completions (default: 1). "--mailTo" must be given.')
         argp.add_argument('--mailTo', metavar='ADDR', default=None, help='Mail address for task completion notification(s).')
-        argp.add_argument('-c', '--cpusPerTask', metavar='N', default=1, type=float, help='Number of cores used per task; may be fractional (default: 1).')
-        argp.add_argument('-t', '--tasksPerNode', metavar='N', default=float('inf'), type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
-        argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', help=argparse.SUPPRESS) #'Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)'
-        argp.add_argument('-g', '--gpu', action='append_const', dest='env_resource', const='CUDA_VISIBLE_DEVICES,GPU_DEVICE_ORDINAL', help='Use assigned GPU resources')
         argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help='Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".')
         argp.add_argument('-K', '--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
-        argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:COUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
         argp.add_argument('-S', '--startup-only', action='store_true', help='Startup only the disBatch server (and KVS server if appropriate). Use "dbUtil..." script to add execution contexts. Incompatible with "--ssh-node".') #TODO: Add addDBExecContext file name override?
         argp.add_argument('-r', '--resume-from', metavar='STATUSFILE', action='append', help='Read the status file from a previous run and skip any completed tasks (may be specified multiple times).')
         argp.add_argument('-R', '--retry', action='store_true', help='With -r, also retry any tasks which failed in previous runs (non-zero return).')
@@ -1242,6 +1262,7 @@ if '__main__' == __name__:
         source.add_argument('--taskcommand', default=None, metavar='COMMAND', help='Tasks will come from the command specified via the KVS server (passed in the environment).')
         source.add_argument('--taskserver', nargs='?', default=False, metavar='HOST:PORT', help='Tasks will come from the KVS server.')
         source.add_argument('taskfile', nargs='?', default=None, type=argparse.FileType('r', 1), help='File with tasks, one task per line ("-" for stdin)')
+        commonContextArgs = contextArgs(argp)
         args = argp.parse_args()
 
         # A lone '--fix-paths' option is handled at the beginning of
@@ -1351,7 +1372,7 @@ if '__main__' == __name__:
             print('Run this script to add compute contexts:\n   ' + ecfn)
             subContext = None
 
-        driver = Driver(kvs, dbInfo, tasks, getattr(taskSource, 'resultkey', None), args.mailTo, args.mailFreq)
+        driver = Driver(kvs, dbInfo, tasks, getattr(taskSource, 'resultkey', None))
         try:
             while driver.isAlive():
                 if taskProcess and taskProcess.r:
