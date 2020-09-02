@@ -12,34 +12,12 @@ except ImportError:
     from Queue import Queue, Empty
 from threading import Thread
 
-DisBatchPath, ImportDir, PathsFixed = None, None, False # <= May need to set these, setting PathsFixed to True as well.
-
-# Handle self-modification invocation early, before messing with paths and other imports
-if '__main__' == __name__ and sys.argv[1:] == ["--fix-paths"]:
-    import tempfile
-    DisBatchPath = os.path.realpath(__file__)
-    if not os.path.exists(DisBatchPath):
-        print('Unable to find myself; set DisBatchPath and ImportDir manually at the top of disBatch.py.', file=sys.stderr)
-        sys.exit(1)
-    DisBatchDir = os.path.dirname(DisBatchPath)
-    with open(DisBatchPath, 'r') as fi:
-        with tempfile.NamedTemporaryFile('w', prefix='disBatch.py.', dir=DisBatchDir, delete=False) as fo:
-            found = False
-            for l in fi:
-                if l.startswith('DisBatchPath, ImportDir, PathsFixed ='):
-                    assert not found
-                    found = True
-                    l = 'DisBatchPath, ImportDir, PathsFixed = %r, %r, True\n'%(DisBatchPath, DisBatchDir)
-                    print("Changing path info to %r"%l, file=sys.stderr)
-                fo.write(l)
-            assert found
-            os.fchmod(fo.fileno(), os.fstat(fi.fileno()).st_mode)
-    os.rename(DisBatchPath, DisBatchPath+'.prev')
-    os.rename(fo.name, DisBatchPath)
-    sys.exit(0)
-
-if not PathsFixed:
-    # Try to guess
+DisBatchRoot = os.environ.get('DISBATCH_ROOT', None)
+if DisBatchRoot:
+    DisBatchPath = DisBatchRoot + os.path.sep + 'disBatch.py'
+    ImportDir = DisBatchRoot
+else:
+    # Try to guess.
     DisBatchPath = os.path.realpath(__file__)
     ImportDir = os.path.dirname(DisBatchPath)
 
@@ -54,14 +32,15 @@ if ImportDir:
 try:
     import kvsstcp
 except ImportError:
-    if PathsFixed:
-        print('This script is looking in the wrong place for "kvssctp". Try running "%s --fix-paths" or editing it by hand.'%DisBatchPath, file=sys.stderr)
-    else:
-        print('''
-Could not find kvsstcp. If there is a "kvsstcp" directory in "%s",
-try running "%s --fix-paths". Otherwise review the installation
-instructions.
-'''%(ImportDir, DisBatchPath), file=sys.stderr)
+    print('''
+Could not find disBatch components in:
+
+  %s
+
+Try setting the enviornment variable "DISBATCH_ROOT" to the directory
+containing the script "disBatch.py", which should have a subdirectory
+named "kvsstcp".
+'''%ImportDir, file=sys.stderr)
     sys.exit(1)
 
 myHostname = socket.gethostname()
@@ -1110,12 +1089,17 @@ class EngineBlock(Thread):
 
 # Common arguments for normal with context and context only invocations.
 def contextArgs(argp):
+    argp.add_argument('-C', '--context-task-limit', type=int, metavar='COUNT', default=0, help="Shutdown after running COUNT tasks (0 => no limit).")
     argp.add_argument('-c', '--cpusPerTask', metavar='N', default=-1.0, type=float, help='Number of cores used per task; may be fractional (default: 1).')
-    argp.add_argument('-t', '--tasksPerNode', metavar='N', default=-1, type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
     argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', default=[], help=argparse.SUPPRESS) #'Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)'
     argp.add_argument('-g', '--gpu', action='append_const', const='CUDA_VISIBLE_DEVICES,GPU_DEVICE_ORDINAL', help='Use assigned GPU resources')
+    argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help='Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".')
+    argp.add_argument('-K', '--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
+    argp.add_argument('-l', '--label', type=str, metavar='COMMAND', help="Label for this context. Should be unique.")
     argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:COUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
-    return ['cpusPerTask', 'tasksPerNode', 'env_resource', 'gpu', 'ssh_node']
+    argp.add_argument('-t', '--tasksPerNode', metavar='N', default=-1, type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
+
+    return ['context_task_limit', 'cpusPerTask', 'env_resource', 'gpu', 'retire_cmd', 'label', 'ssh_node', 'tasksPerNode']
 
 if '__main__' == __name__:
     import argparse, copy
@@ -1176,11 +1160,8 @@ if '__main__' == __name__:
         sys.exit(0)
     elif len(sys.argv) > 1 and sys.argv[1] == '--context':
         argp = argparse.ArgumentParser(description='Set up disBatch execution context')
-        argp.add_argument('--context', action='store_true', help='Run in execution engine mode.')
-        argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help="Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system).")
-        argp.add_argument('-l', '--label', type=str, metavar='COMMAND', help="Label for this context. Should be unique.")
-        argp.add_argument('--context-task-limit', type=int, metavar='COUNT', default=0, help="Shutdown after running COUNT tasks (0 => no limit).")
-        argp.add_argument('kvsserver', help='Address of kvs sever used to relay data.')
+        argp.add_argument('--context', action='store_true', help=argparse.SUPPRESS)
+        argp.add_argument('kvsserver', help=argparse.SUPPRESS)
         commonContextArgs = contextArgs(argp)
         args = argp.parse_args()
         global kvsserver
@@ -1244,13 +1225,10 @@ if '__main__' == __name__:
         context.finish()
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
-        argp.add_argument('--fix-paths', action='store_true', help='Configure fixed path to script and modules.')
         argp.add_argument('-p', '--prefix', metavar='PATH', default=None, help='Prefix path and name for log, dbUtil, and status files (default: ./TASKFILE_JOBID).')
-        argp.add_argument('-l', '--logfile', metavar='FILE', default=None, type=argparse.FileType('w'), help='Log file.')
+        argp.add_argument('--logfile', metavar='FILE', default=None, type=argparse.FileType('w'), help='Log file.')
         argp.add_argument('--mailFreq', default=None, type=int, metavar='N', help='Send email every N task completions (default: 1). "--mailTo" must be given.')
         argp.add_argument('--mailTo', metavar='ADDR', default=None, help='Mail address for task completion notification(s).')
-        argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help='Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".')
-        argp.add_argument('-K', '--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
         argp.add_argument('-S', '--startup-only', action='store_true', help='Startup only the disBatch server (and KVS server if appropriate). Use "dbUtil..." script to add execution contexts. Incompatible with "--ssh-node".') #TODO: Add addDBExecContext file name override?
         argp.add_argument('-r', '--resume-from', metavar='STATUSFILE', action='append', help='Read the status file from a previous run and skip any completed tasks (may be specified multiple times).')
         argp.add_argument('-R', '--retry', action='store_true', help='With -r, also retry any tasks which failed in previous runs (non-zero return).')
@@ -1264,13 +1242,6 @@ if '__main__' == __name__:
         source.add_argument('taskfile', nargs='?', default=None, type=argparse.FileType('r', 1), help='File with tasks, one task per line ("-" for stdin)')
         commonContextArgs = contextArgs(argp)
         args = argp.parse_args()
-
-        # A lone '--fix-paths' option is handled at the beginning of
-        # this script.  Any other invocation with '--fix-paths'
-        # is an error.
-        if args.fix_paths:
-            print('You must use --fix-paths without any other arguments.', file=sys.stderr)
-            sys.exit(1)
 
         if args.mailFreq and not args.mailTo:
             argp.print_help()
@@ -1361,11 +1332,16 @@ if '__main__' == __name__:
         if not args.startup_only:
             # Is there a cleaner way to do this?
             extraArgs = []
-            if args.env_resource:
-                for x in args.env_resource: extraArgs.extend(['--env-resource', x])
-            if args.retire_cmd: extraArgs += ['--retire-cmd', args.retire_cmd]
-            if args.ssh_node:
-                for x in args.ssh_node: extraArgs.extend(['--ssh-node', x])
+            argsD = args.__dict__
+            for name in commonContextArgs:
+                v = argsD[name]
+                if v is None: continue
+                aName = '--'+name.replace('_', '-')
+                if type(v) == list:
+                    for e in v:
+                        extraArgs.extend([aName, str(e)])
+                else:
+                    extraArgs.extend([aName, str(v)])
 
             subContext = SUB.Popen([DisBatchPath, '--context'] + extraArgs + [kvsserver], stdin=open(os.devnull, 'r'), stdout=open(uniqueId + '_context_wrap.out', 'w'), stderr=open(uniqueId + '_context_wrap.err', 'w'), close_fds=True)
         else:
