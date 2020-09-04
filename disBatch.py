@@ -54,6 +54,10 @@ dbrepeat    = re.compile(r'^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(
 dbsuffix    = re.compile(r'^#DISBATCH SUFFIX (.*)$', re.I)
 dbperengine = re.compile(r'^#DISBATCH (?:PERENGINE|PERNODE) (.*)$', re.I) # PERNODE is deprecated. TODO: warn about this?
 
+#Heart beat info.
+PulseTime = 30
+NoPulse = 3*PulseTime + 1 # A task is considered dead if we don't hear from it after 3 heart beat cycles.
+
 def compHostnames(h0, h1):
     return h0.split('.', 1)[0] == h1.split('.', 1)[0]
 
@@ -274,7 +278,7 @@ def probeContext(dbInfo, rank, args):
     if 'DISBATCH_SSH_NODELIST' in os.environ: return SSHContext(dbInfo, rank, args)
 
 class TaskInfo(object):
-    kinds = {'B': 'barrier', 'C': 'check barrier', 'D': 'done', 'N': 'normal', 'P': 'per node', 'S': 'skip'}
+    kinds = {'B': 'barrier', 'C': 'check barrier', 'D': 'done', 'N': 'normal', 'P': 'per node', 'S': 'skip', 'Z': 'zombie'}
 
     def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskAge, taskCmd, taskKey, kind='N', bKey=None, skipInfo=None):
         self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskAge, self.taskCmd, self.taskKey, self.bKey = taskId, taskStreamIndex, taskRepIndex, taskAge, taskCmd, taskKey, bKey
@@ -310,11 +314,11 @@ class TaskReport(object):
         self.engineReport = None # This will be filled in by EngineBlock.
 
     def flags(self):
-        if self.taskInfo.kind in 'NPS':
+        if self.taskInfo.kind in 'NPSZ':
             return (  ('R' if self.returncode  else ' ')
                     + ('O' if self.outbytes    else ' ')
                     + ('E' if self.errbytes    else ' ')
-                    + (self.taskInfo.kind if self.taskInfo.kind in 'PS' else ''))
+                    + (self.taskInfo.kind if self.taskInfo.kind in 'PSZ' else ' '))
         else:
             return self.taskInfo.kind + '    '
 
@@ -657,7 +661,7 @@ class Driver(Thread):
 
         self.kvs.put('DisBatch status', '<Starting...>', False)
 
-        availSlots, cRank2taskCount, cylKey2eRank, finishedTasks, noMore, pending, retired = [], DD(int), {}, {}, False, [], -1
+        availSlots, cRank2taskCount, cylKey2eRank, finishedTasks, hbFails, noMore, outstanding, pending, retired = [], DD(int), {}, {}, set(), False, {}, [], -1
 
         while 1:
             logger.debug('Driver loop: Age %d, Finished %d, Retired %d, Available %d, Pending %d', self.age, self.finished, retired, len(availSlots), len(pending))
@@ -686,6 +690,14 @@ class Driver(Thread):
                     self.slots.get(False)
                 except Empty:
                     pass
+            elif msg == 'driver heart beat':
+                now = time.time()
+                for tinfo, ckey, start, ts in outstanding.values():
+                    if now - ts > NoPulse:
+                        logger.info('Heart beat failure for engine %s, cylinder %s, task %s.', self.engines[cylKey2eRank[ckey]], ckey, tinfo)
+                        if tinfo.taskId not in hbFails: # Guard against a pile up of heart beat msgs.
+                            hbFails.add(tinfo.taskId)
+                            kvs.put('.controller', ('task hb fail', (tinfo, ckey, start, ts)))
             elif msg == 'engine started':
                 #TODO: reject if no more tasks or in shutdown?
                 rank, cRank, hn, pid, start = o
@@ -739,52 +751,76 @@ class Driver(Thread):
                     self.kvs.put('.controller', ('task skipped', tinfo))
                 else:
                     pending.append(tinfo)
-            elif msg == 'task done' or msg == 'task skipped':
+            elif msg == 'task done' or msg == 'task hb fail' or msg == 'task skipped':
+                hbFail, skipped, zombie = False, False, False
                 if msg == 'task skipped':
                     tinfo = o
                     assert tinfo.kind == 'S'
                     tReport = tinfo.skipInfo
                     tinfo.skipInfo = None # break circular reference.
                     skipped = True
+                elif msg == 'task hb fail':
+                    tinfo, ckey, start, last = o
+                    assert tinfo.kind == 'N'
+                    engineRank = cylKey2eRank[ckey]
+                    tReport = TaskReport(tinfo, self.engines[engineRank].hostname, -1, -100, start, last)
+                    hbFail = True
                 else:
                     tReport, engineRank, cid, cAge, ckey = o
                     assert isinstance(tReport, TaskReport)
                     tinfo = tReport.taskInfo
-                    skipped = False
-                rc, report = tReport.returncode, str(tReport)
-                finishedTasks[tinfo.taskId] = True
+                    if tinfo.taskId in hbFails:
+                        tinfo.kind = 'Z'
+                        report = str(tReport)
+                        logger.info('Zombie task done: %s', report)
+                        self.recordResult(report)
+                        zombie = True
 
-                assert tinfo.kind in 'NPS'
-                self.recordResult(report)
-                # TODO: Count per engine?
-                self.finished += 1
+                if not zombie:
+                    rc, report = tReport.returncode, str(tReport)
 
-                if not skipped:
-                    e = self.engines[engineRank]
-                    e.last = time.time()
-                    assert e.age <= cAge
-                    e.age = cAge
-                    e.finished += 1
-                    if tinfo.kind == 'N':
-                        e.assigned -= 1
-                        if e.status == 'running':
-                            availSlots.append(ckey)
-                            self.slots.put(True)
+                    finishedTasks[tinfo.taskId] = True
 
-                if rc:
-                    self.failed += 1
-                    if not skipped: self.engines[engineRank].failed += 1
-                    assert self.barriers == [] or tinfo.taskId < self.barriers[0].taskInfo.taskId
-                    if self.currentReturnCode == 0:
-                        # Remember the first failure. Somewhat arbitrary.
-                        self.currentReturnCode = rc
+                    if not zombie and tinfo.kind == 'N':
+                        outstanding.pop(tinfo.taskId)
 
-                # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than
-                # one per key
-                if self.trackResults:
-                    self.kvs.put(self.trackResults%tinfo.taskId, report, False)
-                if self.db_info.args.mailTo and self.finished%self.db_info.args.mailFreq == 0:
-                    self.sendNotification()
+                    assert tinfo.kind in 'NPS'
+                    self.recordResult(report)
+                    # TODO: Count per engine?
+                    self.finished += 1
+
+                    if not skipped and not hbFail:
+                        e = self.engines[engineRank]
+                        e.last = time.time()
+                        assert e.age <= cAge
+                        e.age = cAge
+                        e.finished += 1
+                        if tinfo.kind == 'N':
+                            e.assigned -= 1
+                            if e.status == 'running':
+                                availSlots.append(ckey)
+                                self.slots.put(True)
+
+                    if rc:
+                        self.failed += 1
+                        if not skipped: self.engines[engineRank].failed += 1
+                        assert self.barriers == [] or tinfo.taskId < self.barriers[0].taskInfo.taskId
+                        if self.currentReturnCode == 0:
+                            # Remember the first failure. Somewhat arbitrary.
+                            self.currentReturnCode = rc
+
+                    # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than
+                    # one per key
+                    if self.trackResults:
+                        self.kvs.put(self.trackResults%tinfo.taskId, report, False)
+                    if self.db_info.args.mailTo and self.finished%self.db_info.args.mailFreq == 0:
+                        self.sendNotification()
+            elif msg == 'task heart beat':
+                taskId = o
+                if taskId not in outstanding:
+                    logger.info('Unexpected heart beat for task %d.', taskId)
+                else:
+                    outstanding[taskId][3] = time.time()
             else:
                 raise Exception('Weird message: ' + msg)
 
@@ -837,7 +873,8 @@ class Driver(Thread):
                 tinfo = pending.pop(0)
                 logger.info('Giving %s %s', ckey, tinfo)
                 self.kvs.put(ckey, ('task', tinfo))
-
+                now = time.time()
+                outstanding[tinfo.taskId] = [tinfo, ckey, now, now]
                 e = self.engines[cylKey2eRank[ckey]]
                 e.assigned += 1
                 cRank2taskCount[e.cRank] += 1
@@ -1010,7 +1047,19 @@ class EngineBlock(Thread):
                         pid = self.taskProc.pid
                         obp = OutputCollector(self.taskProc.stdout, 40, 40)
                         ebp = OutputCollector(self.taskProc.stderr, 40, 40)
-                        r = self.taskProc.wait()
+                        ct = 0.0
+                        while True:
+                            # Popen.wait with timeout is resource intensive, so let's roll our own.
+                            r = self.taskProc.poll()
+                            if r is not None: break
+                            time.sleep(.1)
+                            ct += .1
+                            if ct >= PulseTime:
+                                if not pec:
+                                    # For the time being, we don't "heart beat" per engine tasks, as
+                                    # losing one won't block the driver.
+                                    self.kvs.put('.controller', ('task heart beat', ti.taskId))
+                                ct = 0.0
                         self.taskProc = None
                         t1 = time.time()
 
@@ -1354,7 +1403,8 @@ if '__main__' == __name__:
                 if taskProcess and taskProcess.r:
                     logger.warn('Task generator failed; forcing shutdown')
                     sys.exit(taskProcess.r)
-                driver.join(15)
+                driver.join(PulseTime)
+                kvs.put('.controller', ('driver heart beat', None))
         except Exception as e:
             logger.exception('Watchdog')
         finally:
