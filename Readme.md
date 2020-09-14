@@ -84,7 +84,7 @@ Various log files will be created as the run unfolds:
   The disBatch log file contains details mostly of interest in case of a
   problem with disBatch itself. It can generally be ignored by end
   users (but keep it around in the event that something did go
-  wrong---it will aid debugging). The ``*_engine.txt'' files contain similar information for each node acting as an execution resource.
+  wrong---it will aid debugging). The ``*_engine.txt'' files contain similar information for each node acting as an execution resource
 * `disBatch_134504_kvsinfo.txt`: TCP address of invoked KVS server if any (for additional advanced status monitoring)
 
 ### Status file
@@ -122,10 +122,10 @@ These fields are:
 `disBatch.py` requires the `kvsstcp` package, which should be installed in python's path, or placed in this directory.
 You can simply clone this git repository with `--recursive` (or run `git submodule update --init` if you've already cloned it).
 
-disBatch is designed to support a variety of execution environments, from a local collection of workstations to large clusters managed by job schedulers.
+disBatch is designed to support a variety of execution environments, from your own desktop, to a local collection of workstations, to large clusters managed by job schedulers.
 It currently supports SLURM and can be executed from `sbatch`, but it is architected to make it simple to add support for other resource managers.
 
-You can also run directly on one or more machines over ssh by setting an environment variable:
+You can also run directly on one or more machines by setting an environment variable:
 
     DISBATCH_SSH_NODELIST=localhost:7,otherhost:3
 
@@ -133,8 +133,8 @@ or specifying an invocation argument:
 
     -s localhost:7,otherhost:3
     
-This allows execution via ssh (or directly on `localhost`) without the need for a resource management system.
-In this example, disBatch is told it can use seven CPUs on localhost and three on otherhost. Assuming the default mapping of one task to one CPU applies in this example, seven tasks could be in progress at any given time on localhost, and three on otherhost.
+This allows execution directly on your `localhost` and via ssh for remote hosts without the need for a resource management system.
+In this example, disBatch is told it can use seven CPUs on your local host and three on `otherhost`. Assuming the default mapping of one task to one CPU applies in this example, seven tasks could be in progress at any given time on `localhost`, and three on `otherhost`. Note that `localhost` is an actual name you can use to refer to the machine on which you are currently working. `otherhost` is fictious. 
 Hosts used via ssh must be set up to allow ssh to work without a password.
 
 Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. If you get errors about not finding disBatch or kvsstcp, you may need to hard-code the paths for your setup into the disBatch.py script.
