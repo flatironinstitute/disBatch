@@ -40,7 +40,7 @@ after the other until all specified execution resources are in use. Then as one
 executing task exits, the next task in the file is launched. This repeats until all
 the lines in the file have been processed.
 
-Each task is run in a new shell. If you want to manipulate the execution environment of a task, add the appropriate operations to the command sequence&emdash;`source SetupEnv` in the above is one example. For another, if you just need to set an environment variable, each task line would look something like:
+Each task is run in a new shell. If you want to manipulate the execution environment of a task, add the appropriate operations to the command sequence&mdash;`source SetupEnv` in the above is one example. For another, if you just need to set an environment variable, each task line would look something like:
 
     export PYTHONPATH=/d0/d1/d2:$PYTHONPATH ; rest ; of ; command ; sequence
     
@@ -84,7 +84,7 @@ Various log files will be created as the run unfolds:
   The disBatch log file contains details mostly of interest in case of a
   problem with disBatch itself. It can generally be ignored by end
   users (but keep it around in the event that something did go
-  wrong&emdash;it will aid debugging). The ``*_engine.txt'' files contain similar information for each node acting as an execution resource
+  wrong&mdash;it will aid debugging). The ``*_engine.txt'' files contain similar information for each node acting as an execution resource
 * `disBatch_134504_kvsinfo.txt`: TCP address of invoked KVS server if any (for additional advanced status monitoring)
 
 ### Status file
