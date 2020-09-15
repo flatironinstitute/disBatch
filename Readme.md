@@ -6,11 +6,13 @@ Distributed processing of a batch of tasks.
 One common usage pattern for distributed computing involves processing a
 long list of commands (aka *tasks*):
 
-    cd /path/to/workdir ; myprog argsFor000 > task000.log 2>&1
-    cd /path/to/workdir ; myprog argsFor001 > task001.log 2>&1
-    ... 
-    cd /path/to/workdir ; myprog argsFor998 > task998.log 2>&1
-    cd /path/to/workdir ; myprog argsFor999 > task999.log 2>&1
+    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 0 -b 0 -c 0 ) &> task_0_0_0.log
+    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 0 -b 0 -c 1 ) &> task_0_0_1.log
+    ...
+    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 9 -b 9 -c 8 ) &> task_9_9_8.log
+    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 9 -b 9 -c 9 ) &> task_9_9_9.log
+
+
 
 One could do this by submitting 1,000 separate jobs to a cluster computer, but that may
 present problems for the queuing system and can behave badly if the
@@ -22,7 +24,7 @@ support for job arrays, but this often requires massaging the commands
 to reflect syntax specific to a particular system's implementation of
 job arrays.
 
-And what if you don't have a cluster available, but do have a collection of networked computers?
+And what if you don't have a cluster available, but do have a collection of networked computers? Or you just want to make use of multiple cores on your own computer?
 
 In any event, when processing such a list of tasks, it is helpful to
 acquire metadata about the execution of each task: where it ran, how
@@ -33,30 +35,47 @@ portable way, as well as to provide the sort of metadata that can be
 helpful for debugging and reissuing failed tasks.
 
 It can take as input a file, each of whose lines is a task in the form of a
-command sequence (as in the above example). It launches the tasks one
+command sequence. For example, the file could consists of the 1000 commands listed above. It launches the tasks one
 after the other until all specified execution resources are in use. Then as one
-executing task exits, the next task in the file is launched until all
+executing task exits, the next task in the file is launched. This repeats until all
 the lines in the file have been processed.
 
-Each task is run in a new shell. If you want to manipulate the execution environment of a task, add the appropriate operations to the command sequence. For example, if you need to set an environment variable, each task line would look something like:
+Each task is run in a new shell. If you want to manipulate the execution environment of a task, add the appropriate operations to the command sequence&mdash;`source SetupEnv` in the above is one example. For another, if you just need to set an environment variable, each task line would look something like:
 
     export PYTHONPATH=/d0/d1/d2:$PYTHONPATH ; rest ; of ; command ; sequence
     
-Or, for more complex set ups that are common to every task, you can place the relavant commands in a file like "setup.sh" and use task lines like:
+Or, for more complex set ups, command sequences and input/output redirection requirements, you could place everything in a small shell script with appropriate arguments for the parts that vary from task to task, say RunMyprog.sh:
 
-    source setup.sh ; rest ; of ; command ; sequence
-         
-See \#DISBATCH directives below for another alternative.
+    #!/bin/bash
+    
+    id=$1
+    shift
+    cd /path/to/workdir
+    module purge
+    module load gcc python3
+    
+    export PYTHONPATH=/d0/d1/d2:$PYTHONPATH
+    myProg "$@" > results/${id}.out 2> logs/${id}.log
 
-In the simplest case, working with a cluster managed by SLURM, all that needs to be done is to write the command
-sequences to a file and then submit a job like the following:
+The task file would then contain:
 
-    sbatch -n 20 --ntasks-per-node 5 --exclusive disBatch TaskFileName
+    ./RunMyprog.sh 0_0_0 -a 0 -b 0 -c 0
+    ./RunMyprog.sh 0_0_1 -a 0 -b 0 -c 1
+    ...
+    ./RunMyprog.sh 9_9_8 -a 9 -b 9 -c 8
+    ./RunMyprog.sh 9_9_9 -a 9 -b 9 -c 9
+
+See \#DISBATCH directives below for ways to simplify task lines.
+
+Once you have created the task file, running disBatch is straightforward. For example, working with a cluster managed by SLURM,
+all that needs to be done is to submit a job like the following:
+
+    sbatch -n 20 --ntasks-per-node 5 disBatch TaskFileName
 
 This particular invocation will allocate sufficient resources to process
 20 tasks at a time, with no more than five running concurrently on any
-given node. Every node allocated will be running only tasks associated
-with this submission. disBatch will use environment variables initialized by SLURM to determine the execution resources to use for the run.
+given node. disBatch will use environment variables initialized by SLURM to determine the execution resources to use for the run.
+This invocation assumes an appropriately installed disBatch is in your PATH, see below for installation notes.
 
 Various log files will be created as the run unfolds:
 
@@ -65,8 +84,36 @@ Various log files will be created as the run unfolds:
   The disBatch log file contains details mostly of interest in case of a
   problem with disBatch itself. It can generally be ignored by end
   users (but keep it around in the event that something did go
-  wrong---it will aid debugging). The ``*_engine.txt'' files contain similar information for each node acting as an execution resource.
+  wrong&mdash;it will aid debugging). The ``*_engine.txt'' files contain similar information for each node acting as an execution resource
 * `disBatch_134504_kvsinfo.txt`: TCP address of invoked KVS server if any (for additional advanced status monitoring)
+
+### Status file
+
+The `_status.txt` file contains tab-delimited lines of the form:
+
+    314	315	-1	worker032	8016	0	10.0486528873	1458660919.78	1458660929.83	0	""	0	""	'cd /path/to/workdir ; myprog -a 3 -b 1 -c 4 > task_3_1_4.log 2>&1'
+
+These fields are:
+
+  1. Flags: The first field, blank in this case, may contain `E`, `O`, `R`, `B`, or `S` flags.
+     Each program/task should be invoked in such a way that standard error
+     and standard output end up in appropriate files. If that's not the case
+     `E` or `O` flags will be raised. `R` indicates that the task
+     returned a non-zero exit code. `B` indicates a barrier (see below). `S` indicates the job was skipped (this may happen during "resume" runs).
+  1. Task ID: The `314` is the 0-based index of the task (starting from the beginning of the task file, incremented for each task, including repeats).
+  1. Line number: The `315` is the 1-based line from the task file. Blank lines, comments, directives and repeats may cause this to drift considerably from the value of Task ID.
+  1. Repeat index: The `-1` is the repeat index (as in this example, `-1` indicates this task was not part of a repeat directive).
+  1. Node: `worker032` identifies the node on which the task ran.
+  1. PID: `8016` is the PID of the bash shell used to run the task.
+  1. Exit code: `0` is the exit code returned.
+  1. Elapsed time: `10.0486528873` (seconds),
+  1. Start time:`1458660919.78` (epoch based),
+  1. Finish time: `1458660929.83` (epoch based).
+  1. Bytes of *leaked* output (not redirected to a file),
+  1. Output snippet (up to 80 bytes consisting of the prefix and suffix of the output),
+  1. Bytes of leaked error output,
+  1. Error snippet,
+  1. Command: `cd ...` is the text of the task (repeated from the task file, but see below).
 
 ## Installation
 
@@ -75,18 +122,22 @@ Various log files will be created as the run unfolds:
 `disBatch.py` requires the `kvsstcp` package, which should be installed in python's path, or placed in this directory.
 You can simply clone this git repository with `--recursive` (or run `git submodule update --init` if you've already cloned it).
 
-disBatch is designed to support a variety of execution environments, from a local collection of workstations to large clusters managed by job schedulers.
+disBatch is designed to support a variety of execution environments, from your own desktop, to a local collection of workstations, to large clusters managed by job schedulers.
 It currently supports SLURM and can be executed from `sbatch`, but it is architected to make it simple to add support for other resource managers.
 
-You can also run directly on one or more machines over ssh by setting an environment variable:
+You can also run directly on one or more machines by setting an environment variable:
 
-    DISBATCH_SSH_NODELIST=host1:7,host2:3
+    DISBATCH_SSH_NODELIST=localhost:7,otherhost:3
 
-This allows execution via ssh (or directly on `localhost`) without the need for a resource management system.
-In this example, disBatch is told it can use seven CPUs on host1 and three on host2. Assuming the default mapping of one task to one CPU applies in this example, seven tasks could be in progress at any given time on host1, and three on host2.
+or specifying an invocation argument:
+
+    -s localhost:7,otherhost:3
+    
+This allows execution directly on your `localhost` and via ssh for remote hosts without the need for a resource management system.
+In this example, disBatch is told it can use seven CPUs on your local host and three on `otherhost`. Assuming the default mapping of one task to one CPU applies in this example, seven tasks could be in progress at any given time on `localhost`, and three on `otherhost`. Note that `localhost` is an actual name you can use to refer to the machine on which you are currently working. `otherhost` is fictious. 
 Hosts used via ssh must be set up to allow ssh to work without a password.
 
-Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. If you get errors about not finding disBatch or kvsstcp, you may need to hard-code the paths for your setup into the script.
+Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. If you get errors about not finding disBatch or kvsstcp, you may need to hard-code the paths for your setup into the disBatch.py script.
 You can do this automatically by running `./disBatch --fix-paths`. This should only need to be done once.
 
 
@@ -153,7 +204,6 @@ optional arguments:
                         server (passed in the environment).
   --taskserver [HOST:PORT]
                         Tasks will come from the KVS server.
-
 ~~~~
 
 The options for mail will only work if your computing environment permits processes to access mail via SMTP.
@@ -208,34 +258,6 @@ the login node of a cluster, or on your personal workstation (assuming it has th
 `--kvsserver`, `--taskcommand`, and `--taskserver` implement advanced functionality (placing disBatch in an existing shared key store context and allowing for a programmatic rather than textual task interface). Contact the authors for more details.
 
 
-### Status file
-
-The `_status.txt` file contains tab-delimited lines of the form:
-
-    314	315	-1	worker032	8016	0	10.0486528873	1458660919.78	1458660929.83	0	""	0	""	'cd /path/to/workdir ; myprog argsFor314 > task314.log 2>&1'
-
-These fields are:
-
-  1. Flags: The first field, blank in this case, may contain `E`, `O`, `R`, `B`, or `S` flags.
-     Each program/task should be invoked in such a way that standard error
-     and standard output end up in appropriate files. If that's not the case
-     `E` or `O` flags will be raised. `R` indicates that the task
-     returned a non-zero exit code. `B` indicates a barrier (see below). `S` indicates the job was skipped (this may happen during "resume" runs).
-  1. Task ID: The `314` is the 0-based index of the task (starting from the beginning of the task file, incremented for each task, including repeats).
-  1. Line number: The `315` is the 1-based line from the task file. Blank lines, comments, directives and repeats may cause this to drift considerably from the value of Task ID.
-  1. Repeat index: The `-1` is the repeat index (as in this example, `-1` indicates this task was not part of a repeat directive).
-  1. Node: `worker032` identifies the node on which the task ran.
-  1. PID: `8016` is the PID of the bash shell used to run the task.
-  1. Exit code: `0` is the exit code returned.
-  1. Elapsed time: `10.0486528873` (seconds),
-  1. Start time:`1458660919.78` (epoch based),
-  1. Finish time: `1458660929.83` (epoch based).
-  1. Bytes of *leaked* output (not redirected to a file),
-  1. Output snippet (up to 80 bytes consisting of the prefix and suffix of the output),
-  1. Bytes of leaked error output,
-  1. Error snippet,
-  1. Command: `cd ...` is the text of the task (repeated from the task file, but see below).
-
 ### Considerations for large runs
 
 If you do submit jobs with order 10000 or more tasks, you should
@@ -257,12 +279,12 @@ also provides environment variables to identify various aspects of the
 submission. Here's an example
 
     # Note there is a space at the end of the next line.
-    #DISBATCH PREFIX cd /path/to/workdir ; 
-    #DISBATCH SUFFIX > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log 2>&1
+    #DISBATCH PREFIX ( cd /path/to/workdir ; source SetupEnv ; 
+    #DISBATCH SUFFIX  ) &> ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log
 
 These are textually prepended and appended, respectively, to the text of
-each task line. If the suffix includes redirection and a task is a proper command sequence (a series of
-program invocations joined by `;`), then the task should be wrapped in `( ... )` (which may also be added to suffix and prefix respectively) so that the standard error and standard output of the whole sequence
+each subsequent task line. If the suffix includes redirection and a task is a proper command sequence (a series of
+commands joined by `;`), then the task should be wrapped in `( ... )`, as in this example, so that the standard error and standard output of the whole sequence
 will be redirected to the log file. If this is not done, only standard
 error and standard output for the last component of the command sequence
 will be captured. This is probably not what you want unless you have
@@ -271,14 +293,13 @@ command sequence.
 
 Using these, the above commands could be replaced with:
 
-    myprog argsFor000
-    myprog argsFor001
+    myprog -a 0 -b 0 -c 0
+    myprog -a 0 -b 0 -c 1
      ... 
-    myprog argsFor998
-    myprog argsFor999
+    myprog -a 9 -b 9 -c 8
+    myprog -a 9 -b 9 -c 9
 
-Note: the log files will have somewhat different, but still task
-specific, names.
+Note: the log files will have a different naming scheme, but there will still be one per task.
 
 Later occurrences of `#DISBATCH PREFIX` or `#DISBATCH SUFFIX` in a task
 file simply replace previous ones. When these are used, the tasks
@@ -313,8 +334,10 @@ only the value that the repeat index will have in
 the environment for each of the repeat task instances. So, returning to our earlier example, the task file
 could be:
 
-    #DISBATCH PREFIX cd /path/to/workdir ; myprog argsFor$(printf "%03d" ${DISBATCH_REPEAT_INDEX}) > ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log 2>&1
+    #DISBATCH PREFIX  ( cd /path/to/workdir ; a=$((DISBATCH_REPEAT_INDEX/100)) b=$(((DISBATCH_REPEAT_INDEX%100)/10 )) c=$((DISBATCH_REPEAT_INDEX%10)) ; myprog -a $a -b $b -c $c ) &> task_${a}_${b}_${c}.log
     #DISBATCH REPEAT 1000
+
+This is not a model of clarify, but does illustrate that the repeat constuct can be relatively powerful. Many users may find it more convenient to use the tool of their choice to generate a text file with 1000 invocations explictly written out.
 
 ## License
 
