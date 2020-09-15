@@ -1138,10 +1138,10 @@ class EngineBlock(Thread):
 
 # Common arguments for normal with context and context only invocations.
 def contextArgs(argp):
-    argp.add_argument('-C', '--context-task-limit', type=int, metavar='COUNT', default=0, help="Shutdown after running COUNT tasks (0 => no limit).")
+    argp.add_argument('-C', '--context-task-limit', type=int, metavar='TASK_LIMIT', default=0, help="Shutdown after running COUNT tasks (0 => no limit).")
     argp.add_argument('-c', '--cpusPerTask', metavar='N', default=-1.0, type=float, help='Number of cores used per task; may be fractional (default: 1).')
     argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', default=[], help=argparse.SUPPRESS) #'Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)'
-    argp.add_argument('-g', '--gpu', action='append_const', const='CUDA_VISIBLE_DEVICES,GPU_DEVICE_ORDINAL', help='Use assigned GPU resources')
+    argp.add_argument('-g', '--gpu', action='store_true', help='Use assigned GPU resources')
     argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help='Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".')
     argp.add_argument('-K', '--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
     argp.add_argument('-l', '--label', type=str, metavar='COMMAND', help="Label for this context. Should be unique.")
@@ -1210,8 +1210,8 @@ if '__main__' == __name__:
     elif len(sys.argv) > 1 and sys.argv[1] == '--context':
         argp = argparse.ArgumentParser(description='Set up disBatch execution context')
         argp.add_argument('--context', action='store_true', help=argparse.SUPPRESS)
-        argp.add_argument('kvsserver', help=argparse.SUPPRESS)
         commonContextArgs = contextArgs(argp)
+        argp.add_argument('kvsserver', help=argparse.SUPPRESS)
         args = argp.parse_args()
         global kvsserver
         kvsserver = args.kvsserver
@@ -1259,7 +1259,7 @@ if '__main__' == __name__:
         # TODO: communicate to jobs how many CPUs they have available?
 
         if args.gpu:
-            args.env_resource.extend(args.gpu)
+            args.env_resource.append('CUDA_VISIBLE_DEVICES,GPU_DEVICE_ORDINAL')
         context.envres = ','.join(args.env_resource).split(',') if args.env_resource else []
 
         if args.retire_cmd is not None:
@@ -1386,7 +1386,10 @@ if '__main__' == __name__:
                 v = argsD[name]
                 if v is None: continue
                 aName = '--'+name.replace('_', '-')
-                if type(v) == list:
+                if type(v) == bool:
+                    if v:
+                        extraArgs.append(aName)
+                elif type(v) == list:
                     for e in v:
                         extraArgs.extend([aName, str(e)])
                 else:
