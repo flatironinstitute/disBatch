@@ -1375,8 +1375,9 @@ if '__main__' == __name__:
 
         ecfn = '%s_dbUtil.sh'%uniqueId
         dbRoot = os.path.split(DisBatchPath)[0]
-        open(ecfn, 'w').write(open(dbRoot+'/dbUtil.sh', 'r').read().format(dbRoot=dbRoot, kvsserver=kvsserver, uniqueId=uniqueId))
-        os.chmod(ecfn, 0o755)
+        fd = os.open(ecfn, os.O_CREAT|os.O_WRONLY, 0o700)
+        os.write(fd, open(dbRoot+'/dbUtil.sh', 'r').read().format(dbRoot=dbRoot, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
+        os.close(fd)
 
         if not args.startup_only:
             # Is there a cleaner way to do this?
