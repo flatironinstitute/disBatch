@@ -69,8 +69,6 @@ def popYNC(msg, parent, q, title='Confirm'):
     parent.refresh()
     return resp[k]
 
-FirstEngineRow = 3
-
 def statusWindow(stdscr):
     curses.start_color()
     curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
@@ -123,9 +121,17 @@ def statusWindow(stdscr):
                 statusd['slots'] = sum([len(e['cylinders']) for e in ee if e['status'] == 'running'])
                 statusd['finished'] = sum([e['finished'] for e in ee])
                 statusd['failed'] = sum([e['failed'] for e in ee])
-                stdscr.addstr(0, 0, uniqueId + (': {more:15s}   Total slots{slots:4d}   Run{finished:7d}   Failed{failed:5d}   Barriers{barriers:3d}'.format(**statusd)), CPCB)
-                #                   '01234 012345678901 01234567890123456789 0123456 0123456 0123456789 0123456789 01234567'
-                stdscr.addstr(2, 0, ' Rank    Context           Host          Last    Avail   Assigned   Finished   Failed ', CPCB | curses.A_UNDERLINE)
+                stdscr.addstr(0, 1,  uniqueId + (': {more:15s}'.format(**statusd)), CPCB)
+                stdscr.addstr(1, 1, 'Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}'.format(**statusd), CPCB)
+                stdscr.addstr(2, 0, '├' + '─'*85 + '┤', CPGB)
+                #                   '01234 012345678901 01234567890123456789 0123456 0123456 0123456789 0123456789 0123456'
+                stdscr.addstr(3, 1, 'Rank    Context           Host          Last    Avail   Assigned   Finished   Failed ', CPCB | curses.A_UNDERLINE)
+                for r in [0, 1, 3]:
+                    stdscr.addstr(r, 0, '│', CPGB)
+                    stdscr.addstr(r, 86, '│', CPGB)
+
+                FirstEngineRow = 4
+
                 r, r2k = FirstEngineRow, {}
                 ee = sorted(engines.items())
                 for rank, engine in ee:
@@ -139,7 +145,7 @@ def statusWindow(stdscr):
                         cp = CPRB
                     elif localEngineStatus.get(rank, '') == 'requesting shutdown':
                         cp = CPYB
-                    stdscr.addstr(r, 0, '{rank:5d} {cLabel:12.12s} {hostname:20.20s} {delay:7.0f}s {slots:7d} {assigned:10d} {finished:10d} {failed:8d}'.format(**engine), cp)
+                    stdscr.addstr(r, 0, '{rank:5d} {cLabel:12.12s} {hostname:20.20s} {delay:7.0f}s {slots:7d} {assigned:10d} {finished:10d} {failed:7d}'.format(**engine), cp)
                     r += 1
                 cursorLimits = (FirstEngineRow, r if r == FirstEngineRow else r-1)
             except ValueError as e:
