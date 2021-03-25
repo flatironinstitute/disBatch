@@ -556,7 +556,8 @@ class Driver(Thread):
         super(Driver, self).__init__(name='Driver')
         self.kvs = kvs.clone()
         self.db_info = db_info
-        self.kvs.put('.common env', {'DISBATCH_JOBID': str(self.db_info.uniqueId), 'DISBATCH_NAMETASKS': self.db_info.name})
+        # uniqueId can have a path component. Remove that here.
+        self.kvs.put('.common env', {'DISBATCH_JOBID': os.path.split(str(self.db_info.uniqueId))[-1], 'DISBATCH_NAMETASKS': self.db_info.name})
         self.trackResults = trackResults
 
         self.age = 0
@@ -1274,7 +1275,7 @@ if '__main__' == __name__:
         context.finish()
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
-        argp.add_argument('-p', '--prefix', metavar='PATH', default=None, help='Prefix path and name for log, dbUtil, and status files (default: ./TASKFILE_JOBID).')
+        argp.add_argument('-p', '--prefix', metavar='PATH', default='.', help='Path for log, dbUtil, and status files (default: "."). If ends with non-directory component, use as prefix for these files names (default: TASKFILE_JOBID).')
         argp.add_argument('--logfile', metavar='FILE', default=None, type=argparse.FileType('w'), help='Log file.')
         argp.add_argument('--mailFreq', default=None, type=int, metavar='N', help='Send email every N task completions (default: 1). "--mailTo" must be given.')
         argp.add_argument('--mailTo', metavar='ADDR', default=None, help='Mail address for task completion notification(s).')
@@ -1288,7 +1289,7 @@ if '__main__' == __name__:
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, metavar='COMMAND', help='Tasks will come from the command specified via the KVS server (passed in the environment).')
         source.add_argument('--taskserver', nargs='?', default=False, metavar='HOST:PORT', help='Tasks will come from the KVS server.')
-        source.add_argument('taskfile', nargs='?', default=None, type=argparse.FileType('r', 1), help='File with tasks, one task per line ("-" for stdin)')
+        source.add_argument('taskfile', nargs='?', default=None, type=argparse.FileType('r', 1), help='File with tasks, one task per line ("-" for stdin)') #TODO: Change "-" remark?
         commonContextArgs = contextArgs(argp)
         args = argp.parse_args()
 
@@ -1314,11 +1315,21 @@ if '__main__' == __name__:
             tfn = os.path.basename(args.taskfile.name).strip('<>')
         except AttributeError:
             tfn = 'STREAM'
-        if args.prefix:
-            uniqueId = args.prefix
-        else:
-            uniqueId = '%s_disBatch_%s_%03d'%(tfn, time.strftime('%y%m%d%H%M%S'), int(random.random()*1000))
 
+        forceDir = args.prefix[-1] == '/'
+        rp = os.path.realpath(args.prefix)
+        if os.path.isdir(rp):
+            uniqueId = rp + '/%s_disBatch_%s_%03d'%(tfn, time.strftime('%y%m%d%H%M%S'), int(random.random()*1000))
+        else:
+            if not forceDir:
+                rpp, name = os.path.split(rp)
+            else:
+                rpp, name = rp, '' # Be design, this will trigger the error exit.
+            if not os.path.isdir(rpp):
+                print(f'Directory {rpp} does not exist.', file=sys.stderr)
+                sys.exit(1)
+            uniqueId = rp
+            
         logger = logging.getLogger('DisBatch')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
         if args.logfile:
