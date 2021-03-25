@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-import curses, json, socket, sys, time
+import curses, json, os, socket, sys, time
 
 try:
     from queue import Queue
@@ -11,6 +11,7 @@ from kvsstcp import KVSClient
 
 kvsc = KVSClient(sys.argv[1])
 uniqueId = sys.argv[2]
+uniqueIdName = os.path.split(uniqueId)[-1]
 
 # TODO: For the moment, we assume the screen is "big enough".
 
@@ -121,8 +122,8 @@ def statusWindow(stdscr):
                 statusd['slots'] = sum([len(e['cylinders']) for e in ee if e['status'] == 'running'])
                 statusd['finished'] = sum([e['finished'] for e in ee])
                 statusd['failed'] = sum([e['failed'] for e in ee])
-                stdscr.addstr(0, 1,  uniqueId + (': {more:15s}'.format(**statusd)), CPCB)
-                stdscr.addstr(1, 1, 'Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}'.format(**statusd), CPCB)
+                stdscr.addstr(0, 1,  uniqueIdName + (': {more:15s}'.format(**statusd)), CPCB)
+                stdscr.addstr(1, 1, 'Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}; Slots{slots:4d}'.format(**statusd), CPCB)
                 stdscr.addstr(2, 0, '├' + '─'*85 + '┤', CPGB)
                 #                   '01234 012345678901 01234567890123456789 0123456 0123456 0123456789 0123456789 0123456'
                 stdscr.addstr(3, 1, 'Rank    Context           Host          Last    Avail   Assigned   Finished   Failed ', CPCB | curses.A_UNDERLINE)
