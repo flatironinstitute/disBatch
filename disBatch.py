@@ -1075,7 +1075,10 @@ class EngineBlock(Thread):
 
                     self.kvs.put('.controller', ('task done', (tr, self.engineRank, self.cylinderId, age, self.key)))
 
-                logger.info('Cylinder %s completed: %s', self.cylinderId, tr)
+                    logger.info('Cylinder %s completed: %s', self.cylinderId, tr)
+                else:
+                    logger.info('Cylinder %d finished %s.', self.cylinderId, ti)
+
                 if pec:
                     age += 1
                     for q in self.ageQs:
