@@ -210,7 +210,12 @@ class SlurmContext(BatchContext):
 
     def launchNode(self, n):
         lfp = '%s_%s_%s_engine_wrap.log'%(self.dbInfo.uniqueId, self.label, n)
-        return SUB.Popen(['srun', '-N', '1', '-n', '1', '-w', n, DisBatchPath, '--engine', '-n', n, kvsserver, self.kvsKey], stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
+        # To convince SLURM to give us the right gres, request the right number of tasks.
+        tasks = self.cylinders[self.nodes.index(n)]
+        # To allow the engine to do its thing correctly, only run it for the 0th local task.
+        cmd = ['srun', '-N', '1', '-n', str(tasks), '-w', n, 'bash', '-c', f'if [[ $SLURM_LOCALID == 0 ]] ; then {DisBatchPath} --engine -n {n} {kvsserver} {self.kvsKey} ; else {{ sleep 3 ; echo "pruned $SLURM_LOCALID" ; }} ; fi']
+        logging.info('launch cmd: %s', repr(cmd))
+        return SUB.Popen(cmd, stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
 
     def retireEnv(self, node, ret):
         env = super(SlurmContext, self).retireEnv(node, ret)
