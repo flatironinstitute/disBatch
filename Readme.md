@@ -143,11 +143,8 @@ You can do this automatically by running `./disBatch --fix-paths`. This should o
 
 ## Invocation
 ~~~~
-usage: disBatch [-h] [--fix-paths] [-p PATH] [-l FILE] [--mailFreq N]
-                [--mailTo ADDR] [-c N] [-t N] [-g] [-k COMMAND] [-K]
-                [-s HOST:COUNT] [-S] [-r STATUSFILE] [-R] [--force-resume]
-                [-e] [-w] [--kvsserver [HOST:PORT]] [--taskcommand COMMAND]
-                [--taskserver [HOST:PORT]]
+usage: disBatch [-h] [-p PATH] [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-S] [-r STATUSFILE] [-R] [--force-resume] [-e] [-w] [--kvsserver [HOST:PORT]] [--taskcommand COMMAND] [--taskserver [HOST:PORT]] [-C TASK_LIMIT] [-c N] [-g] [-k COMMAND] [-K]
+                [-l COMMAND] [-s HOST:COUNT] [-t N]
                 [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
@@ -157,53 +154,38 @@ positional arguments:
 
 optional arguments:
   -h, --help            show this help message and exit
-  --fix-paths           Configure fixed path to script and modules.
   -p PATH, --prefix PATH
-                        Prefix path and name for log, dbUtil.sh, and status
-                        files(default: ./TASKFILE_JOBID).
-  -l FILE, --logfile FILE
-                        Log file.
-  --mailFreq N          Send email every N task completions (default: 1).
-                        "--mailTo" must be given.
+                        Path for log, dbUtil, and status files (default: "."). If ends with non-directory component, use as prefix for these files names (default: TASKFILE_JOBID).
+  --logfile FILE        Log file.
+  --mailFreq N          Send email every N task completions (default: 1). "--mailTo" must be given.
   --mailTo ADDR         Mail address for task completion notification(s).
-  -c N, --cpusPerTask N
-                        Number of cores used per task; may be fractional
-                        (default: 1).
-  -t N, --tasksPerNode N
-                        Maximum concurrently executing tasks per node (up to
-                        cores/cpusPerTask).
-  -g, --gpu             Use assigned GPU resources
-  -k COMMAND, --retire-cmd COMMAND
-                        Shell command to run to retire a node (environment
-                        includes $NODE being retired, remaining $ACTIVE node
-                        list, $RETIRED node list; default based on batch
-                        system). Incompatible with "--ssh-node".
-  -K, --no-retire       Don't retire nodes from the batch system (e.g., if
-                        running as part of a larger job); equivalent to -k ''.
-  -s HOST:COUNT, --ssh-node HOST:COUNT
-                        Run tasks over SSH on the given nodes (can be
-                        specified multiple times for additional hosts;
-                        equivalent to setting DISBATCH_SSH_NODELIST)
-  -S, --startup-only    Startup only the disBatch server (and KVS server
-                        if appropriate). Use "...dbUtil.sh" script to add
-                        execution contexts. Incompatible with "--ssh-node".
+  -S, --startup-only    Startup only the disBatch server (and KVS server if appropriate). Use "dbUtil..." script to add execution contexts. Incompatible with "--ssh-node".
   -r STATUSFILE, --resume-from STATUSFILE
-                        Read the status file from a previous run and skip any
-                        completed tasks (may be specified multiple times).
-  -R, --retry           With -r, also retry any tasks which failed in previous
-                        runs (non-zero return).
-  --force-resume        With -r, proceed even if task commands/lines are
-                        different.
-  -e, --exit-code       When any task fails, exit with non-zero status
-                        (default: only if disBatch itself fails)
+                        Read the status file from a previous run and skip any completed tasks (may be specified multiple times).
+  -R, --retry           With -r, also retry any tasks which failed in previous runs (non-zero return).
+  --force-resume        With -r, proceed even if task commands/lines are different.
+  -e, --exit-code       When any task fails, exit with non-zero status (default: only if disBatch itself fails)
   -w, --web             Enable web interface.
   --kvsserver [HOST:PORT]
                         Use a running KVS server.
   --taskcommand COMMAND
-                        Tasks will come from the command specified via the KVS
-                        server (passed in the environment).
+                        Tasks will come from the command specified via the KVS server (passed in the environment).
   --taskserver [HOST:PORT]
                         Tasks will come from the KVS server.
+  -C TASK_LIMIT, --context-task-limit TASK_LIMIT
+                        Shutdown after running COUNT tasks (0 => no limit).
+  -c N, --cpusPerTask N
+                        Number of cores used per task; may be fractional (default: 1).
+  -g, --gpu             Use assigned GPU resources
+  -k COMMAND, --retire-cmd COMMAND
+                        Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".
+  -K, --no-retire       Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.
+  -l COMMAND, --label COMMAND
+                        Label for this context. Should be unique.
+  -s HOST:COUNT, --ssh-node HOST:COUNT
+                        Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)
+  -t N, --tasksPerNode N
+                        Maximum concurrently executing tasks per node (up to cores/cpusPerTask).
 ~~~~
 
 The options for mail will only work if your computing environment permits processes to access mail via SMTP.
