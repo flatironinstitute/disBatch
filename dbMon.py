@@ -24,12 +24,17 @@ curses.curs_set(False)
 
 CPCB, CPGB, CPBR, CPYB, CPRB, CPBB, CPWW = [curses.color_pair(x) for x in range(1, 8)]
 
-# These are unicode. The hope is that they will be supported on almost all platforms.
+# While we could use the curses.ACS_... symbols, that's a bit messy,
+# in part because they don't seem to work in a natural way with
+# addstr() (just addch()). These are unicode symbols. The hope is that
+# they will be supported on almost all platforms.
 Diamond = '◇'
 Horizontal, Vertical = '─', '│'
 CornerUL, CornerUR, CornerLL, CornerLR = '┌', '┐', '└', '┘'
 TeeD, TeeU, TeeR, TeeL = '┬', '┴', '├', '┤'
 
+#TODO: Come up with a better way to set these based on the actual
+#layout encoded in dbStatus.
 HeaderLength = 6
 FooterLength = 1
 Width = 85
@@ -251,7 +256,7 @@ def display(S, inq):
 # Creates a shared queue, sets up status and display threads, and then waits for
 # keyboard events and writes them to the shared queue. Intercepts "q" to quit.
 #
-# It appears that getch() be called from the main processes.
+# It appears that getch() needs to be called from the main processes.
 def main(S):
     S.bkgdset(CPBB)
     S.clear()
