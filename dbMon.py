@@ -1,40 +1,94 @@
 #!/usr/bin/python3
-import curses, json, os, socket, sys, time
 
-try:
-    from queue import Queue
-except ImportError:
-    from Queue import Queue
-from threading import Thread
+import curses, json, os, sys, time
 
 from kvsstcp import KVSClient
+from queue import Queue
+from threading import Thread
 
+# Connect to the disBatch communication service for this run.
 kvsc = KVSClient(sys.argv[1])
 uniqueId = sys.argv[2]
 uniqueIdName = os.path.split(uniqueId)[-1]
 
-# TODO: For the moment, we assume the screen is "big enough".
+curses.initscr()
+curses.start_color()
+curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
+curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
+curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_RED)
+curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLACK)
+curses.init_pair(5, curses.COLOR_RED, curses.COLOR_BLACK)
+curses.init_pair(6, curses.COLOR_BLACK, curses.COLOR_BLACK)
+curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_WHITE)
+curses.curs_set(False)
 
-def waitGetch(stdscr, q):
-    while True:
-        k = stdscr.getch()
-        q.put(('key', k))
+CPCB, CPGB, CPBR, CPYB, CPRB, CPBB, CPWW = [curses.color_pair(x) for x in range(1, 8)]
 
-def dbStatus(q):
+# These are unicode. The hope is that they will be supported on almost all platforms.
+Diamond = '◇'
+Horizontal, Vertical = '─', '│'
+CornerUL, CornerUR, CornerLL, CornerLR = '┌', '┐', '└', '┘'
+TeeD, TeeU, TeeR, TeeL = '┬', '┴', '├', '┤'
+
+HeaderLength = 6
+FooterLength = 1
+Width = 85
+
+MinLines, MinCols = HeaderLength + FooterLength + 10, Width + 2
+
+# Thread that periodically checks for status updates from the disBatch
+# controller. Puts formatted results and auxillary data on the shared
+# queue.
+def dbStatus(outq):
     while True:
         try:
             j = kvsc.view('DisBatch status')
-            q.put(('status', j))
-            time.sleep(1)
         except:
-            q.put(('stop', None))
+            outq.put(('stop', None))
             break
 
-def popYNC(msg, parent, q, title='Confirm'):
+        statusd = json.loads(j)
+
+        now = time.time()
+        
+        # convert keys back to ints after json transform.
+        engines = {int(k): v for k, v in statusd['engines'].items()}
+        contexts = {int(k): v for k, v in statusd['contexts'].items()}
+        ee = engines.values()
+        statusd['slots'] = sum([len(e['cylinders']) for e in ee if e['status'] == 'running'])
+        statusd['finished'] = sum([e['finished'] for e in ee])
+        statusd['failed'] = sum([e['failed'] for e in ee])
+        header = []
+        label = 'Run label: ' + uniqueIdName + (';  Status: {more:15s}'.format(**statusd))
+        header.append((CornerUL + Horizontal*Width + CornerUR, CPCB))
+        header.append((Vertical + label + ' '*(Width - len(label)) + Vertical, CPCB))
+        header.append((Vertical+'Slots{slots:4d}                    Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}'.format(**statusd)+Vertical, CPCB))
+        header.append((TeeR + Horizontal*Width + TeeL, CPCB))
+        #                       '01234 012345678901 01234567890123456789 0123456  0123456 0123456789 0123456789 0123456'
+        header.append((Vertical+'Rank    Context           Host          Last     Avail   Assigned   Finished   Failed'+Vertical, CPCB))
+        header.append((CornerLL + Horizontal*Width + CornerLR, CPCB))
+        assert len(header) == HeaderLength
+        
+        ee = sorted(engines.items())
+        content = []
+        for rank, engine in ee:
+            if engine['status'] == 'stopped': continue
+            engine['slots'] = len(engine['cylinders'])
+            engine['delay'] = now - engine['last']
+            engine['cLabel'] = contexts[engine['cRank']]['label']
+            content.append((rank, '{rank:5d} {cLabel:12.12s} {hostname:20.20s} {delay:6.0f}s {slots:7d} {assigned:10d} {finished:10d} {failed:7d}'.format(**engine)))
+        outq.put(('status', (engines, contexts, header, content)))
+        time.sleep(3)
+
+# Utility to pop up a Yes/No/Cancel dialog. Read reply from shared
+# queue, return first acceptable response.
+def popYNC(msg, parent, inq, title='Confirm'):
     ph, pw = parent.getmaxyx()
     h = int(ph * .75)
     w = int(pw * .85)
     ro, co = int((ph - h)*.5), int((pw - w)*.5)
+
+    # Wrap msg to fit in pop up.
     l, msgw = '', []
     for word in msg.split():
         if len(word) > w:
@@ -55,130 +109,119 @@ def popYNC(msg, parent, q, title='Confirm'):
     nw.addstr(0, int((w - len(title))*.5), title)
     for r, l in enumerate(msgw):
         nw.addstr(r+1, 1, l)
-    nw.addstr(r+2, int((w - len(title))*.5), '[Y]es/[N]o/[C]ancel', curses.A_REVERSE)
+    nw.addstr(r+2, int((w - 19)*.5), '[Y]es/[N]o/[C]ancel', curses.A_REVERSE)
     nw.refresh()
 
-    resp = {'y': 'Y', 'Y':  'Y', 'n': 'N', 'N': 'N', 'c': 'C', 'C': 'C'}
+    # Acceptable responses. Treat a resize event as "cancel".
+    resp = {ord('y'): 'Y', ord('Y'):  'Y', ord('n'): 'N', ord('N'): 'N', ord('c'): 'C', ord('C'): 'C', curses.KEY_RESIZE: 'C'}
     while True:
-        tag, o = q.get()
-        if tag != 'key': continue
-        k = chr(o)
-        if k in resp:
+        tag, k = inq.get()
+        if tag == 'key' and k in resp:
             break
-
+        #TODO: If tag isn't key raise exception?
+        
     parent.redrawwin()
     parent.refresh()
     return resp[k]
 
-def statusWindow(stdscr):
-    curses.start_color()
-    curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
-    curses.init_pair(2, curses.COLOR_GREEN, curses.COLOR_BLACK)
-    curses.init_pair(3, curses.COLOR_BLACK, curses.COLOR_RED)
-    curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLACK)
-    curses.init_pair(5, curses.COLOR_RED, curses.COLOR_BLACK)
-    curses.init_pair(6, curses.COLOR_BLACK, curses.COLOR_BLACK)
-    curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_WHITE)
+# Thread that paints the display and responds to user input. Reads status
+# updates and keyboard input (including resize events) from the shared queue.
+def display(S, inq):
+    content = []
+    lenContent = len(content)
 
-    CPCB, CPGB, CPBR, CPYB, CPRB, CPBB, CPWW = [curses.color_pair(x) for x in range(1, 8)]
-
-    curses.curs_set(False)
-
-    stdscr.bkgdset(CPBB)
-    stdscr.clear()
-    stdscr.refresh()
-
-    q = Queue()
-    gc = Thread(target=waitGetch, args=(stdscr, q))
-    gc.daemon = True
-    gc.start()
-    db = Thread(target=dbStatus, args=(q,))
-    db.daemon = True
-    db.start()
-
-    HelpMe = 'For help, press\'?\''
+    header = [(' ', CPBB)]*4
     
-    col, row, done, r2k, statusLine = 0, 0, False, {}, HelpMe
-    cursorLimits = None
+    tooSmall = curses.LINES < MinLines or curses.COLS < MinCols
+    displayLines = curses.LINES - (HeaderLength+FooterLength)
+
     localEngineStatus = {}
-    statusd, statusj = {}, 'No status data received.'
+
+    contentCursor, contentFirst, done = 0, 0, False
+    msg = ''
     while True:
-        lRow, lCol = row, col
-        tag, o = q.get()
+        S.clear()
 
-        height, width = stdscr.getmaxyx()
+        if tooSmall:
+            S.addstr(0, 0, 'Screen must be at least %dX%d'%(MinLines, MinCols), CPRB)
+        else:
+            # Header
+            for r, (l, cp) in enumerate(header):
+                S.addstr(r, 0, l, cp)
 
-        if tag in ['resize', 'status']:
-            now = time.time()
-            stdscr.clear()
-            try:
-                if tag == 'status':
-                    statusj = o
-                statusd = json.loads(statusj)
-                # convert keys back to ints after json transform.
-                engines = {int(k): v for k, v in statusd['engines'].items()}
-                contexts = {int(k): v for k, v in statusd['contexts'].items()}
-                ee = engines.values()
-                statusd['slots'] = sum([len(e['cylinders']) for e in ee if e['status'] == 'running'])
-                statusd['finished'] = sum([e['finished'] for e in ee])
-                statusd['failed'] = sum([e['failed'] for e in ee])
-                stdscr.addstr(0, 1,  uniqueIdName + (': {more:15s}'.format(**statusd)), CPCB)
-                stdscr.addstr(1, 1, 'Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}; Slots{slots:4d}'.format(**statusd), CPCB)
-                stdscr.addstr(2, 0, '├' + '─'*85 + '┤', CPGB)
-                #                   '01234 012345678901 01234567890123456789 0123456 0123456 0123456789 0123456789 0123456'
-                stdscr.addstr(3, 1, 'Rank    Context           Host          Last    Avail   Assigned   Finished   Failed ', CPCB | curses.A_UNDERLINE)
-                for r in [0, 1, 3]:
-                    stdscr.addstr(r, 0, '│', CPGB)
-                    stdscr.addstr(r, 86, '│', CPGB)
+            # Footer
+            if msg:
+                S.addstr(curses.LINES-1, 0, msg, CPBR)
 
-                FirstEngineRow = 4
-
-                r, r2k = FirstEngineRow, {}
-                ee = sorted(engines.items())
-                for rank, engine in ee:
-                    if engine['status'] == 'stopped': continue
-                    r2k[r] = rank
-                    engine['slots'] = len(engine['cylinders'])
-                    engine['delay'] = now - engine['last']
-                    engine['cLabel'] = contexts[engine['cRank']]['label']
+            # Main content
+            if content:
+                contentLast = min(contentFirst+displayLines, lenContent)
+                for r, (rank, l) in enumerate(content[contentFirst:contentLast]):
+                    if len(l) > curses.COLS-1:
+                        l = l[:curses.COLS-4] + '...'
                     cp = CPGB
-                    if engine['status'] == 'stopping':
+                    if engines[rank]['status'] == 'stopping':
                         cp = CPRB
                     elif localEngineStatus.get(rank, '') == 'requesting shutdown':
                         cp = CPYB
-                    stdscr.addstr(r, 0, '{rank:5d} {cLabel:12.12s} {hostname:20.20s} {delay:7.0f}s {slots:7d} {assigned:10d} {finished:10d} {failed:7d}'.format(**engine), cp)
-                    r += 1
-                cursorLimits = (FirstEngineRow, r if r == FirstEngineRow else r-1)
-            except ValueError as e:
-                stdscr.addstr(0, 0, o[:width-3], CPCB)
-                print('Exception while processing status:', str(e), file=sys.stderr)
-        elif tag == 'key':
+                    S.addstr(HeaderLength+r, 1, l, cp)
+
+                # Scroll indicator and cursor
+                regionStart = (displayLines * contentFirst)//lenContent
+                regionEnd = (displayLines * contentLast + lenContent - 1)//lenContent
+                S.addstr(HeaderLength+regionStart, 0, TeeD, CPYB)
+                for r in range(regionStart+1, regionEnd-1):
+                    S.addstr(HeaderLength+r, 0, Vertical, CPYB)
+                S.addstr(HeaderLength+regionEnd-1, 0, TeeU, CPYB)
+                S.addstr(HeaderLength+(contentCursor-contentFirst), 0, Diamond, CPCB)
+            else:
+                S.addstr(HeaderLength, 0, '<No Content>', CPRB)
+                
+        S.refresh()
+
+        tag, o = inq.get()
+        if tag == 'key':
+            msg = ''
             k = o
             if k == curses.KEY_RESIZE:
-                q.put(('resize', None))
+                curses.update_lines_cols()
+                if curses.LINES < MinLines or curses.COLS < MinCols:
+                    tooSmall = True
+                    continue
+                tooSmall = False
+
+                displayLines = curses.LINES - (HeaderLength+FooterLength)
+                if displayLines > (lenContent - contentCursor):
+                    contentFirst = max(0, lenContent - displayLines)
+                else:
+                    contentFirst = max(0, contentCursor - displayLines//2)
+
+                S.clear()
+                S.refresh()
                 continue
-            statusLine = HelpMe
-            if   k == ord('q'):
+
+            if k == ord('u') or k == curses.KEY_UP:
+                contentCursor = max(0, contentCursor-1)
+                if contentCursor+1 == contentFirst:
+                    contentFirst -= 1
+            elif k == ord('d') or k == curses.KEY_DOWN:
+                contentCursor = min(max(0, lenContent-1), contentCursor+1)
+                if contentCursor == contentFirst+displayLines:
+                    contentFirst += 1
+            elif k == ord('q'):
                 break
-            if   k == curses.KEY_DOWN:
-                row = row + 1
-            elif k == curses.KEY_UP:
-                row = row - 1
-            elif k == curses.KEY_RIGHT:
-                pass
-            elif k == curses.KEY_LEFT:
-                pass
             elif k in [ord('h'), ord('?')]:
-                statusLine = 'C: Shutdown context; E: Shutdown engine; q: quit'
+                msg = 'C: Shutdown context; E: Shutdown engine; q: quit'
             elif k in [ord('C'), ord('E')]:
                 if not done:
-                    target = r2k.get(row)
+                    target = content[contentCursor][0]
                     if target is not None:
                         if k == ord('C'):
                             cRank = engines[target]['cRank']
-                            r = popYNC('Stopping context {cLabel:s} ({cRank:d})'.format(**engines[target]) + ' %d'%row, stdscr, q)
+                            r = popYNC('Stopping context {cLabel:s} ({cRank:d})'.format(**engines[target]), S, inq)
                             if r == 'Y':
                                 try:
+                                    msg = 'Asking controller to stop context %r'%cRank
                                     kvsc.put('.controller', ('stop context', cRank))
                                     for rank, e in engines.items():
                                         if e['cRank'] == cRank:
@@ -186,39 +229,46 @@ def statusWindow(stdscr):
                                 except socket.error:
                                     pass
                         elif k == ord('E'):
-                            r = popYNC('Stopping engine {rank:d} ({hostname:s}, {pid:d})'.format(**engines[target]), stdscr, q)
+                            r = popYNC('Stopping engine {rank:d} ({hostname:s}, {pid:d})'.format(**engines[target]), S, inq)
                             if r == 'Y':
                                 try:
+                                    msg = 'Asking controller to stop engine  %r'%target
                                     kvsc.put('.controller', ('stop engine', target))
                                     localEngineStatus[target] = 'requesting shutdown'
                                 except socket.error:
                                     pass
             else:
-                statusLine = 'Last unrecognized key code %d. %s'%(k, HelpMe)
+                msg = 'Got unrecognized key: %d'%k
+        elif tag == 'status':
+            engines, contexts, header, content = o
+            lenContent = len(content)
         elif tag == 'stop':
             done = True
-            statusLine = 'Run ended.'
         else:
-            raise Exception('Unknown tag: '+tag)
+            msg = 'Unrecognized tag: "%s",'%tag
+            
+# (Wrapped) main.
+# Creates a shared queue, sets up status and display threads, and then waits for
+# keyboard events and writes them to the shared queue. Intercepts "q" to quit.
+#
+# It appears that getch() be called from the main processes.
+def main(S):
+    S.bkgdset(CPBB)
+    S.clear()
+    S.refresh()
 
-        if cursorLimits is not None:
-            row = max(cursorLimits[0], row)
-            row = min(cursorLimits[1], row)
-        else:
-            row = FirstEngineRow
+    inq = Queue()
+    gc = Thread(target=display, args=(S, inq))
+    gc.daemon = True
+    gc.start()
+    db = Thread(target=dbStatus, args=(inq,))
+    db.daemon = True
+    db.start()
 
-        stdscr.move(height-1, 0)
-        stdscr.clrtoeol()
-        stdscr.addstr(statusLine, CPBR)
+    while True:
+        k = S.getch()
+        if k == ord('q'):
+            break
+        inq.put(('key', k))
 
-        stdscr.chgat(lRow, lCol, 1, CPBB)
-        stdscr.chgat(row, col, 1, CPWW)
-
-        # Refresh the screen
-        stdscr.refresh()
-
-def main():
-    curses.wrapper(statusWindow)
-
-if __name__ == "__main__":
-    main()
+curses.wrapper(main)
