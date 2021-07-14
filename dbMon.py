@@ -7,8 +7,14 @@ from queue import Queue
 from threading import Thread
 
 # Connect to the disBatch communication service for this run.
-kvsc = KVSClient(sys.argv[1])
-uniqueId = sys.argv[2]
+try:
+    kvscStatus = KVSClient(os.environ['DISBATCH_KVSSTCP_HOST'])
+    kvscDisplay = kvscStatus.clone()
+except:
+    print('Cannot contact the disBatch server. This usally means the run has ended.', file=sys.stderr)
+    sys.exit(1)
+
+uniqueId = sys.argv[1]
 uniqueIdName = os.path.split(uniqueId)[-1]
 
 curses.initscr()
@@ -44,7 +50,7 @@ MinLines, MinCols = HeaderLength + FooterLength + 10, Width + 2
 # Thread that periodically checks for status updates from the disBatch
 # controller. Puts formatted results and auxillary data on the shared
 # queue.
-def dbStatus(outq):
+def dbStatus(kvsc, outq):
     while True:
         try:
             j = kvsc.view('DisBatch status')
@@ -52,37 +58,38 @@ def dbStatus(outq):
             outq.put(('stop', None))
             break
 
-        statusd = json.loads(j)
+        if j != b'<Starting...>':
+            statusd = json.loads(j)
 
-        now = time.time()
-        
-        # convert keys back to ints after json transform.
-        engines = {int(k): v for k, v in statusd['engines'].items()}
-        contexts = {int(k): v for k, v in statusd['contexts'].items()}
-        ee = engines.values()
-        statusd['slots'] = sum([len(e['cylinders']) for e in ee if e['status'] == 'running'])
-        statusd['finished'] = sum([e['finished'] for e in ee])
-        statusd['failed'] = sum([e['failed'] for e in ee])
-        header = []
-        label = 'Run label: ' + uniqueIdName + (';  Status: {more:15s}'.format(**statusd))
-        header.append((CornerUL + Horizontal*Width + CornerUR, CPCB))
-        header.append((Vertical + label + ' '*(Width - len(label)) + Vertical, CPCB))
-        header.append((Vertical+'Slots{slots:4d}                    Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}'.format(**statusd)+Vertical, CPCB))
-        header.append((TeeR + Horizontal*Width + TeeL, CPCB))
-        #                       '01234 012345678901 01234567890123456789 0123456  0123456 0123456789 0123456789 0123456'
-        header.append((Vertical+'Rank    Context           Host          Last     Avail   Assigned   Finished   Failed'+Vertical, CPCB))
-        header.append((CornerLL + Horizontal*Width + CornerLR, CPCB))
-        assert len(header) == HeaderLength
-        
-        ee = sorted(engines.items())
-        content = []
-        for rank, engine in ee:
-            if engine['status'] == 'stopped': continue
-            engine['slots'] = len(engine['cylinders'])
-            engine['delay'] = now - engine['last']
-            engine['cLabel'] = contexts[engine['cRank']]['label']
-            content.append((rank, '{rank:5d} {cLabel:12.12s} {hostname:20.20s} {delay:6.0f}s {slots:7d} {assigned:10d} {finished:10d} {failed:7d}'.format(**engine)))
-        outq.put(('status', (engines, contexts, header, content)))
+            now = time.time()
+
+            # convert keys back to ints after json transform.
+            engines = {int(k): v for k, v in statusd['engines'].items()}
+            contexts = {int(k): v for k, v in statusd['contexts'].items()}
+            ee = engines.values()
+            statusd['slots'] = sum([len(e['cylinders']) for e in ee if e['status'] == 'running'])
+            statusd['finished'] = sum([e['finished'] for e in ee])
+            statusd['failed'] = sum([e['failed'] for e in ee])
+            header = []
+            label = 'Run label: ' + uniqueIdName + (';  Status: {more:15s}'.format(**statusd))
+            header.append((CornerUL + Horizontal*Width + CornerUR, CPCB))
+            header.append((Vertical + label + ' '*(Width - len(label)) + Vertical, CPCB))
+            header.append((Vertical+'Slots{slots:4d}                    Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}'.format(**statusd)+Vertical, CPCB))
+            header.append((TeeR + Horizontal*Width + TeeL, CPCB))
+            #                       '01234 012345678901 01234567890123456789 0123456  0123456 0123456789 0123456789 0123456'
+            header.append((Vertical+'Rank    Context           Host          Last     Avail   Assigned   Finished   Failed'+Vertical, CPCB))
+            header.append((CornerLL + Horizontal*Width + CornerLR, CPCB))
+            assert len(header) == HeaderLength
+
+            ee = sorted(engines.items())
+            content = []
+            for rank, engine in ee:
+                if engine['status'] == 'stopped': continue
+                engine['slots'] = len(engine['cylinders'])
+                engine['delay'] = now - engine['last']
+                engine['cLabel'] = contexts[engine['cRank']]['label']
+                content.append((rank, '{rank:5d} {cLabel:12.12s} {hostname:20.20s} {delay:6.0f}s {slots:7d} {assigned:10d} {finished:10d} {failed:7d}'.format(**engine)))
+            outq.put(('status', (engines, contexts, header, content)))
         time.sleep(3)
 
 # Utility to pop up a Yes/No/Cancel dialog. Read reply from shared
@@ -131,7 +138,7 @@ def popYNC(msg, parent, inq, title='Confirm'):
 
 # Thread that paints the display and responds to user input. Reads status
 # updates and keyboard input (including resize events) from the shared queue.
-def display(S, inq):
+def display(S, kvsc, inq):
     content = []
     lenContent = len(content)
 
@@ -155,12 +162,24 @@ def display(S, inq):
                 S.addstr(r, 0, l, cp)
 
             # Footer
-            if msg:
+            if msg or done:
+                if done:
+                    msg = '[disBatch controller has exited]' + (' ' if msg else '') + msg
                 S.addstr(curses.LINES-1, 0, msg, CPBR)
 
             # Main content
             if content:
+                # Adjust window to ensure cursor displays.
+                if contentCursor < contentFirst:
+                    # move window so last line corresponds to cursor, i.e.:
+                    #    contentCursor == contentFirst + (displayLines-1)
+                    contentFirst = max(0, contentCursor - (displayLines-1))
+                elif contentCursor >= (contentFirst + displayLines):
+                    # move window so first line corresponds to cursor.
+                    contentFirst = contentCursor
+                # ensure window is as full as possible.
                 contentLast = min(contentFirst+displayLines, lenContent)
+                contentFirst = max(0, contentLast-displayLines)
                 for r, (rank, l) in enumerate(content[contentFirst:contentLast]):
                     if len(l) > curses.COLS-1:
                         l = l[:curses.COLS-4] + '...'
@@ -205,14 +224,10 @@ def display(S, inq):
                 S.refresh()
                 continue
 
-            if k == ord('u') or k == curses.KEY_UP:
+            if   k == ord('u') or k == curses.KEY_UP:
                 contentCursor = max(0, contentCursor-1)
-                if contentCursor+1 == contentFirst:
-                    contentFirst -= 1
             elif k == ord('d') or k == curses.KEY_DOWN:
                 contentCursor = min(max(0, lenContent-1), contentCursor+1)
-                if contentCursor == contentFirst+displayLines:
-                    contentFirst += 1
             elif k == ord('q'):
                 break
             elif k in [ord('h'), ord('?')]:
@@ -246,7 +261,11 @@ def display(S, inq):
                 msg = 'Got unrecognized key: %d'%k
         elif tag == 'status':
             engines, contexts, header, content = o
-            lenContent = len(content)
+            # Adjust cursor location if needed.
+            oldLen, lenContent = lenContent, len(content)
+            if oldLen > lenContent:
+                f = contentCursor/oldLen
+                contentCursor = int(f*lenContent)
         elif tag == 'stop':
             done = True
         else:
@@ -263,10 +282,10 @@ def main(S):
     S.refresh()
 
     inq = Queue()
-    gc = Thread(target=display, args=(S, inq))
+    gc = Thread(target=display, args=(S, kvscDisplay, inq))
     gc.daemon = True
     gc.start()
-    db = Thread(target=dbStatus, args=(inq,))
+    db = Thread(target=dbStatus, args=(kvscStatus, inq))
     db.daemon = True
     db.start()
 
