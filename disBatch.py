@@ -13,6 +13,8 @@ except ImportError:
 from threading import Thread
 
 DisBatchRoot = os.environ.get('DISBATCH_ROOT', None)
+DbUtilPath = '?Not Set Yet?'
+
 if DisBatchRoot:
     DisBatchPath = DisBatchRoot + os.path.sep + 'disBatch.py'
     ImportDir = DisBatchRoot
@@ -20,14 +22,6 @@ else:
     # Try to guess.
     DisBatchPath = os.path.realpath(__file__)
     ImportDir = os.path.dirname(DisBatchPath)
-
-PythonPath = os.getenv('PYTHONPATH', '')
-if ImportDir:
-    # to find kvsstcp:
-    sys.path.append(ImportDir)
-    # for subprocesses:
-    PythonPath = PythonPath + ':' + ImportDir if PythonPath else ImportDir
-    os.environ['PYTHONPATH'] = PythonPath
 
 try:
     import kvsstcp
@@ -213,7 +207,7 @@ class SlurmContext(BatchContext):
         # To convince SLURM to give us the right gres, request the right number of tasks.
         tasks = self.cylinders[self.nodes.index(n)]
         # To allow the engine to do its thing correctly, only run it for the 0th local task.
-        cmd = ['srun', '-N', '1', '-n', str(tasks), '-w', n, 'bash', '-c', f'if [[ $SLURM_LOCALID == 0 ]] ; then {DisBatchPath} --engine -n {n} {kvsserver} {self.kvsKey} ; else {{ sleep 3 ; echo "pruned $SLURM_LOCALID" ; }} ; fi']
+        cmd = ['srun', '-N', '1', '-n', str(tasks), '-w', n, 'bash', '-c', f'if [[ $SLURM_LOCALID == 0 ]] ; then {DbUtilPath} --engine -n {n} {self.kvsKey} ; else {{ sleep 3 ; echo "pruned $SLURM_LOCALID" ; }} ; fi']
         logging.info('launch cmd: %s', repr(cmd))
         return SUB.Popen(cmd, stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
 
@@ -268,12 +262,11 @@ class SSHContext(BatchContext):
         super(SSHContext, self).__init__('SSH', dbInfo, rank, nodes, cylinders, args, contextLabel)
 
     def launchNode(self, n):
-        prefix = [] if compHostnames(n, myHostname) else ['ssh', n, 'PYTHONPATH=' + PythonPath]
+        prefix = [] if compHostnames(n, myHostname) else ['ssh', n]
         lfp = '%s_%s_%s_engine_wrap.log'%(self.dbInfo.uniqueId, self.label, n)
-        cmd = prefix + [DisBatchPath, '--engine', '-n', n, kvsserver, self.kvsKey]
+        cmd = prefix + [DbUtilPath, '--engine', '-n', n, self.kvsKey]
         logger.info('ssh launch comand: %r', cmd)
         return SUB.Popen(cmd, stdin=open(os.devnull, 'r'), stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
-
 
 def probeContext(dbInfo, rank, args):
     if 'SLURM_JOBID' in os.environ: return SlurmContext(dbInfo, rank, args)
@@ -1168,12 +1161,12 @@ if '__main__' == __name__:
         argp = argparse.ArgumentParser(description='Task execution engine.')
         argp.add_argument('--engine', action='store_true', help='Run in execution engine mode.')
         argp.add_argument('-n', '--node', type=str, help='Name of this engine node.')
-        argp.add_argument('kvsserver', help='Address of kvs sever used to relay data to this execution engine.')
         argp.add_argument('kvsKey', help='Key for my context.')
         args = argp.parse_args()
         # Stagger start randomly to throttle kvs connections
         time.sleep(random.random()*5.0)
-        kvs = kvsstcp.KVSClient(args.kvsserver)
+        kvsserver = os.environ['DISBATCH_KVSSTCP_HOST']
+        kvs = kvsstcp.KVSClient(kvsserver)
         dbInfo = kvs.view('.db info')
         rank = register(kvs, 'engine')
         context = kvs.view(args.kvsKey)
@@ -1219,11 +1212,13 @@ if '__main__' == __name__:
     elif len(sys.argv) > 1 and sys.argv[1] == '--context':
         argp = argparse.ArgumentParser(description='Set up disBatch execution context')
         argp.add_argument('--context', action='store_true', help=argparse.SUPPRESS)
+        argp.add_argument('dbutilpath')
         commonContextArgs = contextArgs(argp)
-        argp.add_argument('kvsserver', help=argparse.SUPPRESS)
         args = argp.parse_args()
-        global kvsserver
-        kvsserver = args.kvsserver
+
+        DbUtilPath = args.dbutilpath
+
+        kvsserver = os.environ['DISBATCH_KVSSTCP_HOST']
         kvs = kvsstcp.KVSClient(kvsserver)
         dbInfo = kvs.view('.db info')
 
@@ -1392,10 +1387,10 @@ if '__main__' == __name__:
             urlfile = uniqueId + '_url'
             wskvsmu.main(kvsserver, urlfile=open(urlfile, 'w'), monitorspec=':gpvw')
 
-        ecfn = '%s_dbUtil.sh'%uniqueId
-        dbRoot = os.path.split(DisBatchPath)[0]
-        fd = os.open(ecfn, os.O_CREAT|os.O_WRONLY, 0o700)
-        os.write(fd, open(dbRoot+'/dbUtil.sh', 'r').read().format(dbRoot=dbRoot, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
+        DbUtilPath = '%s_dbUtil.sh'%uniqueId
+        DbRoot = os.path.split(DisBatchPath)[0]
+        fd = os.open(DbUtilPath, os.O_CREAT|os.O_TRUNC|os.O_WRONLY, 0o700)
+        os.write(fd, open(DbRoot+'/dbUtil.sh', 'r').read().format(DbUtilPath=DbUtilPath, DbRoot=DbRoot, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
         os.close(fd)
 
         if not args.startup_only:
@@ -1415,9 +1410,9 @@ if '__main__' == __name__:
                 else:
                     extraArgs.extend([aName, str(v)])
 
-            subContext = SUB.Popen([DisBatchPath, '--context'] + extraArgs + [kvsserver], stdin=open(os.devnull, 'r'), stdout=open(uniqueId + '_context_wrap.out', 'w'), stderr=open(uniqueId + '_context_wrap.err', 'w'), close_fds=True)
+            subContext = SUB.Popen([DisBatchPath, '--context', DbUtilPath] + extraArgs, stdin=open(os.devnull, 'r'), stdout=open(uniqueId + '_context_wrap.out', 'w'), stderr=open(uniqueId + '_context_wrap.err', 'w'), close_fds=True)
         else:
-            print('Run this script to add compute contexts:\n   ' + ecfn)
+            print('Run this script to add compute contexts:\n   ' + DbUtilPath)
             subContext = None
 
         driver = Driver(kvs, dbInfo, tasks, getattr(taskSource, 'resultkey', None))
