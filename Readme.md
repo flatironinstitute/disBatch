@@ -122,6 +122,8 @@ These fields are:
 `disBatch.py` requires the `kvsstcp` package, which should be installed in python's path, or placed in this directory.
 You can simply clone this git repository with `--recursive` (or run `git submodule update --init` if you've already cloned it).
 
+Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable `DISBATCH_ROOT` to the path of the directory containing `disBatch.py`. 
+
 disBatch is designed to support a variety of execution environments, from your own desktop, to a local collection of workstations, to large clusters managed by job schedulers.
 It currently supports SLURM and can be executed from `sbatch`, but it is architected to make it simple to add support for other resource managers.
 
@@ -135,11 +137,7 @@ or specifying an invocation argument:
     
 This allows execution directly on your `localhost` and via ssh for remote hosts without the need for a resource management system.
 In this example, disBatch is told it can use seven CPUs on your local host and three on `otherhost`. Assuming the default mapping of one task to one CPU applies in this example, seven tasks could be in progress at any given time on `localhost`, and three on `otherhost`. Note that `localhost` is an actual name you can use to refer to the machine on which you are currently working. `otherhost` is fictious. 
-Hosts used via ssh must be set up to allow ssh to work without a password.
-
-Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. If you get errors about not finding disBatch or kvsstcp, you may need to hard-code the paths for your setup into the disBatch.py script.
-You can do this automatically by running `./disBatch --fix-paths`. This should only need to be done once.
-
+Hosts used via ssh must be set up to allow ssh to work without a password and must share the working directory for the disBatch run.
 
 ## Invocation
 ~~~~
