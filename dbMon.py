@@ -71,7 +71,8 @@ def dbStatus(kvsc, outq):
             statusd['finished'] = sum([e['finished'] for e in ee])
             statusd['failed'] = sum([e['failed'] for e in ee])
             header = []
-            label = 'Run label: ' + uniqueIdName + (';  Status: {more:15s}'.format(**statusd))
+            tuin = uniqueIdName if len(uniqueIdName) <= 40 else (uniqueIdName[:17] + '...' + uniqueIdName[-20:])
+            label = f'Run label: {tuin:<40s}           Status: {statusd["more"]:15s}'
             header.append((CornerUL + Horizontal*Width + CornerUR, CPCB))
             header.append((Vertical + label + ' '*(Width - len(label)) + Vertical, CPCB))
             header.append((Vertical+'Slots{slots:4d}                    Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}'.format(**statusd)+Vertical, CPCB))
