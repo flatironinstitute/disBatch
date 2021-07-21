@@ -75,7 +75,7 @@ def dbStatus(kvsc, outq):
             label = f'Run label: {tuin:<40s}           Status: {statusd["more"]:15s}'
             header.append((CornerUL + Horizontal*Width + CornerUR, CPCB))
             header.append((Vertical + label + ' '*(Width - len(label)) + Vertical, CPCB))
-            header.append((Vertical+'Slots{slots:4d}                    Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}'.format(**statusd)+Vertical, CPCB))
+            header.append((Vertical+'Slots {slots:5d}                  Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}'.format(**statusd)+Vertical, CPCB))
             header.append((TeeR + Horizontal*Width + TeeL, CPCB))
             #                       '01234 012345678901 01234567890123456789 0123456  0123456 0123456789 0123456789 0123456'
             header.append((Vertical+'Rank    Context           Host          Last     Avail   Assigned   Finished   Failed'+Vertical, CPCB))
