@@ -1,6 +1,5 @@
 #!/usr/bin/python3
 
-from __future__ import print_function
 import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
 
 from ast import literal_eval
@@ -48,7 +47,7 @@ dbrepeat    = re.compile(r'^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(
 dbsuffix    = re.compile(r'^#DISBATCH SUFFIX (.*)$', re.I)
 dbperengine = re.compile(r'^#DISBATCH (?:PERENGINE|PERNODE) (.*)$', re.I) # PERNODE is deprecated. TODO: warn about this?
 
-#Heart beat info.
+# Heart beat info.
 PulseTime = 30
 NoPulse = 3*PulseTime + 1 # A task is considered dead if we don't hear from it after 3 heart beat cycles.
 
@@ -94,11 +93,11 @@ def register(kvs, which):
     kvs.put('.controller', ('register', (which, key)))
     return kvs.get(key)
 
-class DisBatchInfo(object):
+class DisBatchInfo:
     def __init__(self, args, name, uniqueId, wd):
         self.args, self.name, self.uniqueId, self.wd = args, name, uniqueId, wd
 
-class BatchContext(object):
+class BatchContext:
     def __init__(self, sysid, dbInfo, rank, nodes, cylinders, args, contextLabel=None):
         if contextLabel is None:
             contextLabel = 'context%05'%rank
@@ -275,7 +274,7 @@ def probeContext(dbInfo, rank, args):
     #if ...: PBSContext()
     if 'DISBATCH_SSH_NODELIST' in os.environ: return SSHContext(dbInfo, rank, args)
 
-class TaskInfo(object):
+class TaskInfo:
     kinds = {'B': 'barrier', 'C': 'check barrier', 'D': 'done', 'N': 'normal', 'P': 'per node', 'S': 'skip', 'Z': 'zombie'}
 
     def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskAge, taskCmd, taskKey, kind='N', bKey=None, skipInfo=None):
@@ -296,7 +295,7 @@ class TaskInfo(object):
     def __str__(self):
         return '\t'.join([str(x) for x in [self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskAge, self.kind, repr(self.taskCmd)]])
 
-class TaskReport(object):
+class TaskReport:
     def __init__(self, *args, **kwargs):
         if len(args) == 1 and len(kwargs) == 0 and type(args[0]) == str:
             # In effect this undoes __str__, so this must be kept in sync with __str__.
@@ -351,7 +350,7 @@ def parseStatusFiles(*files):
 
 # When the user specifies tasks will be passed through a KVS, this
 # class generates an interable that feeds task from the KVS.
-class KVSTaskSource(object):
+class KVSTaskSource:
     def __init__(self, kvs):
         self.kvs = kvs.clone()
         self.name = self.kvs.get('task source name', False)
@@ -375,7 +374,7 @@ class KVSTaskSource(object):
 # this class wraps the command's execution so we can trigger a
 # shutdown if the user's command fails to send an indication that task
 # generation is done.
-class TaskProcess():
+class TaskProcess:
     def __init__(self, taskSource, command, **kwargs):
         self.taskSource = taskSource
         self.command = command
@@ -616,7 +615,7 @@ class Driver(Thread):
         self.kvs.get('DisBatch status', False)
         self.kvs.put('DisBatch status', json.dumps(status, default=lambda o: dict([t for t in o.__dict__.items() if t[0] != 'kvs'])), b'JSON')
 
-    class EngineProxy(object):
+    class EngineProxy:
         def __init__(self, rank, cRank, hostname, pid, start, kvs):
             self.rank, self.cRank, self.hostname, self.pid, self.kvs = rank, cRank, hostname, pid, kvs
             # No need to clone kvs, this isn't a thread.
@@ -1121,8 +1120,8 @@ class EngineBlock(Thread):
 
     def run(self):
         #TODO: not currentlly checking for a per engine clean up
-        #task. Probably need to explicitly join pec, which means
-        #sendind that a shutdown message too.
+        # task. Probably need to explicitly join pec, which means
+        # sending that a shutdown message too.
         try:
             for c in self.cylinders:
                 c.join()
