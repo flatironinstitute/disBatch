@@ -22,6 +22,8 @@ else:
     DisBatchPath = os.path.realpath(__file__)
     ImportDir = os.path.dirname(DisBatchPath)
 
+sys.path.append(ImportDir)
+
 try:
     import kvsstcp
 except ImportError:
@@ -1409,7 +1411,7 @@ if '__main__' == __name__:
                 else:
                     extraArgs.extend([aName, str(v)])
 
-            subContext = SUB.Popen([DisBatchPath, '--context', DbUtilPath] + extraArgs, stdin=open(os.devnull, 'r'), stdout=open(uniqueId + '_context_wrap.out', 'w'), stderr=open(uniqueId + '_context_wrap.err', 'w'), close_fds=True)
+            subContext = SUB.Popen([DbUtilPath] + extraArgs, stdin=open(os.devnull, 'r'), stdout=open(uniqueId + '_context_wrap.out', 'w'), stderr=open(uniqueId + '_context_wrap.err', 'w'), close_fds=True)
         else:
             print('Run this script to add compute contexts:\n   ' + DbUtilPath)
             subContext = None
