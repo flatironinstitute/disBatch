@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 
 import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
+import disbatch
 
 from ast import literal_eval
 from collections import defaultdict as DD
@@ -1389,7 +1390,7 @@ if '__main__' == __name__:
             wskvsmu.main(kvsserver, urlfile=open(urlfile, 'w'), monitorspec=':gpvw')
 
         DbUtilPath = '%s_dbUtil.sh'%uniqueId
-        DbRoot = os.path.split(DisBatchPath)[0]
+        DbRoot = os.path.dirname(disbatch.__file__)
         fd = os.open(DbUtilPath, os.O_CREAT|os.O_TRUNC|os.O_WRONLY, 0o700)
         os.write(fd, open(DbRoot+'/dbUtil.sh', 'r').read().format(DbUtilPath=DbUtilPath, DbRoot=DbRoot, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
         os.close(fd)
