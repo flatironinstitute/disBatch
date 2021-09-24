@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 
 import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
-import disbatch
 
 from ast import literal_eval
 from collections import defaultdict as DD
@@ -33,11 +32,15 @@ Could not find disBatch components in:
 
   %s
 
-Try setting the enviornment variable "DISBATCH_ROOT" to the directory
+Try setting the environment variable "DISBATCH_ROOT" to the directory
 containing the script "disBatch.py", which should have a subdirectory
 named "kvsstcp".
 '''%ImportDir, file=sys.stderr)
     sys.exit(1)
+
+# disbatch should import if kvsstcp imports
+import disbatch
+
 
 myHostname = socket.gethostname()
 myPid = os.getpid()
