@@ -1,11 +1,12 @@
 #!/bin/bash
 
-export DISBATCH_KVSSTCP_HOST={kvsserver:s} DISBATCH_ROOT={DbRoot:s}
+export DISBATCH_KVSSTCP_HOST={kvsserver:s} DISBATCH_ROOT={DbRoot:s}/..
 
+echo $DISBATCH_ROOT
 # This should find the correct path to disBatch for pip installs
 if [ ! -f "$DISBATCH_ROOT/disBatch.py" ]
 then
-    export DISBATCH_ROOT="$DISBATCH_ROOT/../../../../bin"
+    export DISBATCH_ROOT="$DISBATCH_ROOT/../../../bin"
 fi
 
 if [[ $1 == '--mon' ]]
