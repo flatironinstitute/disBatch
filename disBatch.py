@@ -145,14 +145,15 @@ class BatchContext:
         '''Called when a node has exited.  May be overridden to release resources.'''
         if ret: self.error = True
         if self.retireCmd:
-            logger.info('Retiring node "%s" with command %s', node, str(self.retireCmd))
-            env = self.retireEnv(node, ret)
+            env     = self.retireEnv(node, ret)
+            sub_env = dict([(k,env.get(k,'not_defined')) for k in ['SLURM_JOB_ID','DRIVER_NODE','ACTIVE']])
+            logger.info('Retiring {} node {} with command {} and env {}'.format(self.label, node, str(self.retireCmd), sub_env))
             try:
                 SUB.check_call(self.retireCmd, close_fds=True, shell=True, env=env)
             except Exception as e:
                 logger.warn('Retirement planning needs improvement: %s', repr(e))
         else:
-            logger.info('Retiring node "%s" (no-op)', node)
+            logger.info('{} Retiring node {} (no-op)'.format(self.label, node))
 
     def finish(self):
         '''Check that all engines completed successfully and return True on success.'''
@@ -188,7 +189,7 @@ def nl2flat(nl):
 
 class SlurmContext(BatchContext):
     def __init__(self, dbInfo, rank, args):
-        jobid = os.environ['SLURM_JOBID']
+        jobid = os.environ['SLURM_JOB_ID']
         nodes = nl2flat(os.environ['SLURM_NODELIST'])
 
         cylinders = []
@@ -201,7 +202,7 @@ class SlurmContext(BatchContext):
         contextLabel = args.label if args.label else 'J%s'%jobid
         super(SlurmContext, self).__init__('SLURM', dbInfo, rank, nodes, cylinders, args, contextLabel)
         self.driverNode = None
-        self.retireCmd = "scontrol update JobId=\"$SLURM_JOBID\" NodeList=\"${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE\""
+        self.retireCmd = "scontrol update JobId=\"$SLURM_JOB_ID\" NodeList=\"${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE\""
 
     def launchNode(self, n):
         lfp = '%s_%s_%s_engine_wrap.log'%(self.dbInfo.uniqueId, self.label, n)
@@ -220,6 +221,7 @@ class SlurmContext(BatchContext):
 
     def retireNode(self, node, ret):
         if compHostnames(node, myHostname):
+            logger.info("set driverNode to {}({})".format(node, myHostname))
             self.driverNode = node
         super(SlurmContext, self).retireNode(node, ret)
 
@@ -1413,7 +1415,7 @@ if '__main__' == __name__:
 
             subContext = SUB.Popen([DbUtilPath] + extraArgs, stdin=open(os.devnull, 'r'), stdout=open(uniqueId + '_context_wrap.out', 'w'), stderr=open(uniqueId + '_context_wrap.err', 'w'), close_fds=True)
         else:
-            print('Run this script to add compute contexts:\n   ' + DbUtilPath)
+            print('Run this script to add compute contexts:\n   ' + DbUtilPath + '')
             subContext = None
 
         driver = Driver(kvs, dbInfo, tasks, getattr(taskSource, 'resultkey', None))
