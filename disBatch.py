@@ -359,17 +359,21 @@ def parseStatusFiles(*files):
 class KVSTaskSource:
     def __init__(self, kvs):
         self.kvs = kvs.clone()
-        self.name = self.kvs.get('task source name', False)
-        self.taskkey = self.name + ' task'
-        self.resultkey = self.name + ' result %d'
-        self.donetask = self.name + ' done!'
+
+    def waitForSignIn(self):
+        # These are handled separately, because we need to accommodate
+        # clients written in languages other than python.
+        self.name      = self.kvs.get('task source name', False)
+        self.donetask  = self.kvs.get('task source done task', False)
+        self.resultkey = self.kvs.get('task source result key', False)
+        self.taskkey   = self.kvs.get('task source task key', False)
 
     def __next__(self):
         t = self.kvs.get(self.taskkey, False)
         if t == self.donetask:
             self.kvs.close()
             raise StopIteration
-        return t
+        return t.decode('utf8') #TODO: Think about this a bit more?
 
     def done(self):
         kvs = self.kvs.clone()
@@ -816,6 +820,7 @@ class Driver(Thread):
                     # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than
                     # one per key
                     if self.trackResults:
+                        logging.debug('Tracking result key: %r, value: %r', self.trackResults%tinfo.taskId, report)
                         self.kvs.put(self.trackResults%tinfo.taskId, report, False)
                     if self.db_info.args.mailTo and self.finished%self.db_info.args.mailFreq == 0:
                         self.sendNotification()
@@ -1375,13 +1380,18 @@ if '__main__' == __name__:
         kvs.put('.db info', dbInfo)
 
         taskProcess = None
+        resultKey = None
         if args.taskfile:
             taskSource = args.taskfile
         else:
             taskSource = KVSTaskSource(kvs)
             if args.taskcommand:
+                logger.info('Tasks will come from: '+repr(args.taskcommand))
                 taskProcess = TaskProcess(taskSource, args.taskcommand, shell=True, env=kvsenv, close_fds=True)
-
+                taskSource.waitForSignIn()
+                resultKey = taskSource.resultkey
+                logger.info('Task source name: '+taskSource.name.decode('utf8')) #TODO: Think about the decoding a bit more?
+                
         tasks = taskGenerator(taskSource)
 
         if args.resume_from:
@@ -1420,7 +1430,7 @@ if '__main__' == __name__:
             print('Run this script to add compute contexts:\n   ' + DbUtilPath)
             subContext = None
 
-        driver = Driver(kvs, dbInfo, tasks, getattr(taskSource, 'resultkey', None))
+        driver = Driver(kvs, dbInfo, tasks, getattr(taskSource, 'resultkey', resultKey))
         try:
             while driver.isAlive():
                 if taskProcess and taskProcess.r:

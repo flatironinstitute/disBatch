@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 import curses, json, os, sys, time
 
@@ -30,14 +30,10 @@ curses.curs_set(False)
 
 CPCB, CPGB, CPBR, CPYB, CPRB, CPBB, CPWW = [curses.color_pair(x) for x in range(1, 8)]
 
-# While we could use the curses.ACS_... symbols, that's a bit messy,
-# in part because they don't seem to work in a natural way with
-# addstr() (just addch()). These are unicode symbols. The hope is that
-# they will be supported on almost all platforms.
-Diamond = '◇'
-Horizontal, Vertical = '─', '│'
-CornerUL, CornerUR, CornerLL, CornerLR = '┌', '┐', '└', '┘'
-TeeD, TeeU, TeeR, TeeL = '┬', '┴', '├', '┤'
+Diamond = curses.ACS_DIAMOND
+Horizontal, Vertical = curses.ACS_HLINE, curses.ACS_VLINE
+CornerUL, CornerUR, CornerLL, CornerLR = curses.ACS_ULCORNER, curses.ACS_URCORNER, curses.ACS_LLCORNER, curses.ACS_LRCORNER
+TeeD, TeeU, TeeR, TeeL = curses.ACS_TTEE, curses.ACS_BTEE, curses.ACS_LTEE, curses.ACS_RTEE
 
 #TODO: Come up with a better way to set these based on the actual
 #layout encoded in dbStatus.
@@ -73,13 +69,13 @@ def dbStatus(kvsc, outq):
             header = []
             tuin = uniqueIdName if len(uniqueIdName) <= 40 else (uniqueIdName[:17] + '...' + uniqueIdName[-20:])
             label = f'Run label: {tuin:<40s}           Status: {statusd["more"]:15s}'
-            header.append((CornerUL + Horizontal*Width + CornerUR, CPCB))
-            header.append((Vertical + label + ' '*(Width - len(label)) + Vertical, CPCB))
-            header.append((Vertical+'Slots {slots:5d}                  Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}'.format(**statusd)+Vertical, CPCB))
-            header.append((TeeR + Horizontal*Width + TeeL, CPCB))
+            header.append(([CornerUL] + [Horizontal]*Width + [CornerUR], CPCB))
+            header.append(([Vertical] + [label + ' '*(Width - len(label))] + [Vertical], CPCB))
+            header.append(([Vertical] + ['Slots {slots:5d}                  Tasks: Finished {finished:7d}      Failed{failed:5d}      Barrier{barriers:3d}'.format(**statusd)] + [Vertical], CPCB))
+            header.append(([TeeR] + [Horizontal]*Width + [TeeL], CPCB))
             #                       '01234 012345678901 01234567890123456789 0123456  0123456 0123456789 0123456789 0123456'
-            header.append((Vertical+'Rank    Context           Host          Last     Avail   Assigned   Finished   Failed'+Vertical, CPCB))
-            header.append((CornerLL + Horizontal*Width + CornerLR, CPCB))
+            header.append(([Vertical] + ['Rank    Context           Host          Last     Avail   Assigned   Finished   Failed'] + [Vertical], CPCB))
+            header.append(([CornerLL] + [Horizontal]*Width + [CornerLR], CPCB))
             assert len(header) == HeaderLength
 
             ee = sorted(engines.items())
@@ -160,7 +156,12 @@ def display(S, kvsc, inq):
         else:
             # Header
             for r, (l, cp) in enumerate(header):
-                S.addstr(r, 0, l, cp)
+                S.move(r, 0)
+                for e in l:
+                    if type(e) is int:
+                        S.addch(e, cp)
+                    else:
+                        S.addstr(e, cp)
 
             # Footer
             if msg or done:
@@ -194,11 +195,11 @@ def display(S, kvsc, inq):
                 # Scroll indicator and cursor
                 regionStart = (displayLines * contentFirst)//lenContent
                 regionEnd = (displayLines * contentLast + lenContent - 1)//lenContent
-                S.addstr(HeaderLength+regionStart, 0, TeeD, CPYB)
+                S.addch(HeaderLength+regionStart, 0, TeeD, CPYB)
                 for r in range(regionStart+1, regionEnd-1):
-                    S.addstr(HeaderLength+r, 0, Vertical, CPYB)
-                S.addstr(HeaderLength+regionEnd-1, 0, TeeU, CPYB)
-                S.addstr(HeaderLength+(contentCursor-contentFirst), 0, Diamond, CPCB)
+                    S.addch(HeaderLength+r, 0, Vertical, CPYB)
+                S.addch(HeaderLength+regionEnd-1, 0, TeeU, CPYB)
+                S.addch(HeaderLength+(contentCursor-contentFirst), 0, Diamond, CPCB)
             else:
                 S.addstr(HeaderLength, 0, '<No Content>', CPRB)
                 
