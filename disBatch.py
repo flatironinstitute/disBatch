@@ -32,11 +32,15 @@ Could not find disBatch components in:
 
   %s
 
-Try setting the enviornment variable "DISBATCH_ROOT" to the directory
+Try setting the environment variable "DISBATCH_ROOT" to the directory
 containing the script "disBatch.py", which should have a subdirectory
 named "kvsstcp".
 '''%ImportDir, file=sys.stderr)
     sys.exit(1)
+
+# disbatch should import if kvsstcp imports
+import disbatch
+
 
 myHostname = socket.gethostname()
 myPid = os.getpid()
@@ -1399,7 +1403,7 @@ if '__main__' == __name__:
             wskvsmu.main(kvsserver, urlfile=open(urlfile, 'w'), monitorspec=':gpvw')
 
         DbUtilPath = '%s_dbUtil.sh'%uniqueId
-        DbRoot = os.path.split(DisBatchPath)[0]
+        DbRoot = os.path.dirname(disbatch.__file__)
         fd = os.open(DbUtilPath, os.O_CREAT|os.O_TRUNC|os.O_WRONLY, 0o700)
         os.write(fd, open(DbRoot+'/dbUtil.sh', 'r').read().format(DbUtilPath=DbUtilPath, DbRoot=DbRoot, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
         os.close(fd)
