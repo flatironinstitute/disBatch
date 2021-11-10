@@ -701,11 +701,11 @@ class Driver(Thread):
                         logger.info('Heart beat failure for engine %s, cylinder %s, task %s.', self.engines[cylKey2eRank[ckey]], ckey, tinfo)
                         if tinfo.taskId not in hbFails: # Guard against a pile up of heart beat msgs.
                             hbFails.add(tinfo.taskId)
-                            kvs.put('.controller', ('task hb fail', (tinfo, ckey, start, ts)))
+                            self.kvs.put('.controller', ('task hb fail', (tinfo, ckey, start, ts)))
             elif msg == 'engine started':
                 #TODO: reject if no more tasks or in shutdown?
                 rank, cRank, hn, pid, start = o
-                self.engines[rank] = self.EngineProxy(rank, cRank, hn, pid, start, kvs)
+                self.engines[rank] = self.EngineProxy(rank, cRank, hn, pid, start, self.kvs)
             elif msg == 'engine stopped':
                 status, rank = o
                 self.engines[rank].status = 'stopped'
