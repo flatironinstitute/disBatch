@@ -1,4 +1,4 @@
-#!/usr/bin/python3
+#!/usr/bin/env python3
 
 import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
 
@@ -573,6 +573,7 @@ class Driver(Thread):
         self.slots = Queue()
         self.feeder = Feeder(self.kvs, self.ageQ, tasks, self.slots)
 
+        self.availSlots = []
         self.barriers = []
         self.contextCount = 0
         self.contexts = {}
@@ -586,6 +587,10 @@ class Driver(Thread):
 
         self.daemon = True
         self.start()
+
+    def recordResult(self, tReport):
+        self.statusFile.write(str(tReport)+'\n')
+        self.statusFile.flush()
 
     def sendNotification(self):
         try:
@@ -609,9 +614,25 @@ class Driver(Thread):
             # Be sure to seek back to EOF to append
             self.statusFile.seek(0, 2)
 
-    def recordResult(self, tReport):
-        self.statusFile.write(str(tReport)+'\n')
-        self.statusFile.flush()
+    def shutDownEngine(self, e):
+        logger.info('Stopping engine %s', e)
+        for c in e.cylinders:
+            try:
+                self.availSlots.remove(c)
+                # Try to reclaim a slot.
+                # Not important if we fail---slots are just flow control.
+                try:
+                    self.slots.get(False)
+                except Empty:
+                    pass
+            except ValueError:
+                logger.info('%s is busy?', c)
+        e.stop()
+
+    def stopContext(self, cRank):
+        for e in self.engines.values():
+            if e.cRank == cRank:
+                self.shutDownEngine(e)
 
     def updateStatus(self):
         status = dict(more=self.feeder.shutdown or 'More tasks.',
@@ -652,27 +673,13 @@ class Driver(Thread):
             self.status = 'stopping'
 
     def run(self):
-        def shutDownEngine(e):
-            logger.info('Stopping engine %s', e)
-            for c in e.cylinders:
-                try:
-                    availSlots.remove(c)
-                    # Try to reclaim a slot.
-                    # Not important if we fail---slots are just flow control.
-                    try:
-                        self.slots.get(False)
-                    except Empty:
-                        pass
-                except ValueError:
-                    logger.info('%s is busy?', c)
-            e.stop()
 
         self.kvs.put('DisBatch status', '<Starting...>', False)
 
-        availSlots, cRank2taskCount, cylKey2eRank, finishedTasks, hbFails, noMore, outstanding, pending, retired = [], DD(int), {}, {}, set(), False, {}, [], -1
+        cRank2taskCount, cylKey2eRank, finishedTasks, hbFails, noMore, outstanding, pending, retired = DD(int), {}, {}, set(), False, {}, [], -1
 
         while 1:
-            logger.debug('Driver loop: Age %d, Finished %d, Retired %d, Available %d, Pending %d', self.age, self.finished, retired, len(availSlots), len(pending))
+            logger.debug('Driver loop: Age %d, Finished %d, Retired %d, Available %d, Pending %d', self.age, self.finished, retired, len(self.availSlots), len(pending))
 
             # Wait for a message.
             msg, o = self.kvs.get('.controller')
@@ -684,15 +691,24 @@ class Driver(Thread):
                 context = o
                 self.contexts[context.rank] = context
             elif msg == 'cylinder available':
-                #TODO: reject if no more tasks or in shutdown?
                 engineRank, cpid, cpgid, ckey = o
-                cylKey2eRank[ckey] = engineRank
-                self.engines[engineRank].addCylinder(cpid, cpgid, ckey)
-                availSlots.append(ckey)
-                self.slots.put(True)
+                e = self.engines[engineRank] 
+                # The engine proxy needs to know about the cylinder,
+                # even if we are just going to end up stopping it,
+                # since stopping it require a handshake with the real
+                # engine process.
+                e.addCylinder(cpid, cpgid, ckey)
+                if e.status != 'running':
+                    logger.info('Engine %s, "%s" ignored, %s', engineRank, ckey, e.status)
+                    self.kvs.put(ckey, ('stop', None))
+                else:
+                    cylKey2eRank[ckey] = engineRank
+                    logger.info('Engine %s, "%s" available', engineRank, ckey)
+                    self.availSlots.append(ckey)
+                    self.slots.put(True)
             elif msg == 'cylinder stopped':
                 engineRank, ckey = o
-                logger.info('%s stopped', ckey)
+                logger.info('Engine %s, "%s" stopped', engineRank, ckey)
                 self.engines[engineRank].removeCylinder(ckey)
                 try:
                     self.slots.get(False)
@@ -741,13 +757,10 @@ class Driver(Thread):
                     self.barriers.append(TaskReport(tinfo, start=time.time()))
             elif msg == 'stop context':
                 cRank = o
-                for e in self.engines.values():
-                    if e.cRank != cRank:
-                        continue
-                    shutDownEngine(e)
+                self.stopContext(cRank)
             elif msg == 'stop engine':
                 rank = o
-                shutDownEngine(self.engines[rank])
+                self.shutDownEngine(self.engines[rank])
             elif msg == 'task':
                 tinfo = o
                 assert tinfo.taskAge == self.age
@@ -806,7 +819,7 @@ class Driver(Thread):
                         if tinfo.kind == 'N':
                             e.assigned -= 1
                             if e.status == 'running':
-                                availSlots.append(ckey)
+                                self.availSlots.append(ckey)
                                 self.slots.put(True)
 
                     if rc:
@@ -873,12 +886,12 @@ class Driver(Thread):
                     if self.barriers:
                         # clearing this barrier may clear the next
                         self.kvs.put('.controller', ('clearing barriers', None))
-                    # Slight change: this tracks failures since start or last barrier
+                    # Slight change: this tracks failures since start of last barrier
                     self.currentReturnCode = 0
                     bTinfo = None
 
-            while pending and availSlots:
-                ckey = availSlots.pop(0)
+            while pending and self.availSlots:
+                ckey = self.availSlots.pop(0)
                 tinfo = pending.pop(0)
                 logger.info('Giving %s %s', ckey, tinfo)
                 self.kvs.put(ckey, ('task', tinfo))
@@ -889,14 +902,15 @@ class Driver(Thread):
                 cRank2taskCount[e.cRank] += 1
                 limit = self.contexts[e.cRank].args.context_task_limit
                 if limit and cRank2taskCount[e.cRank] == limit:
-                    shutDownEngine(e)
+                    logger.info('Context %d reached task limit %d', e.cRank, limit)
+                    self.stopContext(e.cRank)
 
             if noMore and not pending:
                 # Really nothing more to do.
-                for ckey in availSlots:
+                for ckey in self.availSlots:
                     logger.info('Notifying "%s" there is no more work.', ckey)
                     self.kvs.put(ckey, ('stop', None))
-                availSlots = []
+                self.availSlots = []
 
             # Make changes visible via KVS.
             self.updateStatus()
@@ -1130,7 +1144,7 @@ class EngineBlock(Thread):
         self.start()
 
     def run(self):
-        #TODO: not currentlly checking for a per engine clean up
+        #TODO: not currently checking for a per engine clean up
         # task. Probably need to explicitly join pec, which means
         # sending that a shutdown message too.
         try:
@@ -1432,7 +1446,7 @@ if '__main__' == __name__:
 
         driver = Driver(kvs, dbInfo, tasks, getattr(taskSource, 'resultkey', resultKey))
         try:
-            while driver.isAlive():
+            while driver.is_alive():
                 if taskProcess and taskProcess.r:
                     logger.warn('Task generator failed; forcing shutdown')
                     sys.exit(taskProcess.r)
