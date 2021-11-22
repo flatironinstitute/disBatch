@@ -23,22 +23,8 @@ else:
 
 sys.path.append(ImportDir)
 
-try:
-    import kvsstcp
-except ImportError:
-    print('''
-Could not find disBatch components in:
-
-  %s
-
-Try setting the environment variable "DISBATCH_ROOT" to the directory
-containing the script "disBatch.py", which should have a subdirectory
-named "kvsstcp".
-'''%ImportDir, file=sys.stderr)
-    sys.exit(1)
-
-# disbatch should import if kvsstcp imports
 import disbatch
+from disbatch import kvsstcp
 
 
 myHostname = socket.gethostname()
