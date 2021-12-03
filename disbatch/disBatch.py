@@ -1151,7 +1151,7 @@ def contextArgs(argp):
     return ['context_task_limit', 'cpusPerTask', 'env_resource', 'gpu', 'retire_cmd', 'label', 'ssh_node', 'tasksPerNode']
 
 
-def main():
+def main(DbBin):
     #sys.setcheckinterval(1000000)
     global DbUtilPath
     global logger
@@ -1394,7 +1394,7 @@ def main():
         DbUtilPath = '%s_dbUtil.sh'%uniqueId
         DbRoot = os.path.dirname(disbatch.__file__)
         fd = os.open(DbUtilPath, os.O_CREAT|os.O_TRUNC|os.O_WRONLY, 0o700)
-        os.write(fd, open(DbRoot+'/dbUtil.sh', 'r').read().format(DbUtilPath=DbUtilPath, DbRoot=DbRoot, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
+        os.write(fd, open(DbRoot+'/dbUtil.sh', 'r').read().format(DbUtilPath=DbUtilPath, DbBin=DbBin, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
         os.close(fd)
 
         if not args.startup_only:
