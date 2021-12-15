@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
 import argparse
 import copy
@@ -10,23 +12,43 @@ except ImportError:
     from Queue import Queue, Empty
 from threading import Thread
 
+# During the course of a disBatch run, we are going to kick off a
+# number of subprocesses running this script. We have to ensure that
+# those subprocesses have the right environment to find the disbatch
+# module. There are four common execution scenarios:
+#
+#   {Direct, SLURM} invocation of {git checkout, pip install}
+#
+# The direct cases should just work since the invocation script is
+# located in the right position relative to the module.
+#
+# For SLURM, we have to jump through some hoops to deal with SLURM's
+# policy of copying the submission script to a SLURM specific
+# location, breaking the relationship with the location of the
+# module. In the git checkout case, the user needs to set
+# DISBATCH_ROOT. In the pip install case, we can leverage the fact
+# that pip replaces the #! interpreter with the path to the python
+# used to do the install. The disbatch module will be in this python's
+# path, so the first process will find this, and we can learn the
+# location for use by subsequent processes.
+
+DisBatchPython = sys.executable
 DisBatchRoot = os.environ.get('DISBATCH_ROOT', None)
-DbUtilPath = '?Not Set Yet?'
+DbUtilPath = None # This is a global that will be set once the disBatch starts.
 
 if DisBatchRoot:
-    DisBatchPath = DisBatchRoot + os.path.sep + 'disBatch.py'
-    ImportDir = DisBatchRoot
-else:
-    # Try to guess.
-    DisBatchPath = os.path.realpath(__file__)
-    ImportDir = os.path.dirname(DisBatchPath)
+    if DisBatchRoot not in sys.path:
+        sys.path.append(DisBatchRoot)
+try:
+    from disbatch import kvsstcp
+except:
+    print(f'disBatch environment is incomplete. Check:\n\tDISBATCH_ROOT {DisBatchRoot!r}.', file=sys.stderr)
+    sys.exit(1)
 
-sys.path.append(ImportDir)
-
-import disbatch
-from disbatch import kvsstcp
-
-
+if DisBatchRoot == None:
+    # Trim off "disbatch/kvsstcp/__init__.py"
+    DisBatchRoot = os.path.sep.join(kvsstcp.__file__.split(os.path.sep)[:-3])
+    
 myHostname = socket.gethostname()
 myPid = os.getpid()
 
@@ -1392,9 +1414,8 @@ def main():
             wskvsmu.main(kvsserver, urlfile=open(urlfile, 'w'), monitorspec=':gpvw')
 
         DbUtilPath = '%s_dbUtil.sh'%uniqueId
-        DbRoot = os.path.dirname(disbatch.__file__)
         fd = os.open(DbUtilPath, os.O_CREAT|os.O_TRUNC|os.O_WRONLY, 0o700)
-        os.write(fd, open(DbRoot+'/dbUtil.sh', 'r').read().format(DbUtilPath=DbUtilPath, DbRoot=DbRoot, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
+        os.write(fd, open(DisBatchRoot+'/disbatch/dbUtil.sh', 'r').read().format(DisBatchPython=DisBatchPython, DisBatchRoot=DisBatchRoot, DbUtilPath=DbUtilPath, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
         os.close(fd)
 
         if not args.startup_only:
@@ -1473,3 +1494,6 @@ def main():
         if args.exit_code and driver.failed:
             print('Some tasks failed with non-zero exit codes -- please check the logs', file=sys.stderr)
             sys.exit(1)
+
+if '__main__' == __name__:
+    main()

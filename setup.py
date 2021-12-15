@@ -4,6 +4,6 @@ import setuptools
 setuptools.setup(name='disbatch', version='2.0-RC3',
     description="Distributed processing of a batch of tasks",
     long_description=open("Readme.md").read(),
-    packages=['disbatch'],
-    package_data={'disbatch': ['dbUtil.sh']},
-    scripts=['disBatch', 'disBatch.py', 'dbMon.py'])
+    packages=setuptools.find_packages(),
+    package_data={'disbatch': ['dbMon.py', 'dbUtil.sh']},
+    scripts=['disBatch', 'disBatch.py'])
