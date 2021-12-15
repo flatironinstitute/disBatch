@@ -143,8 +143,8 @@ Hosts used via ssh must be set up to allow ssh to work without a password and mu
 ~~~~
 usage: disBatch [-h] [-p PATH] [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-S] [-r STATUSFILE]
                 [-R] [--force-resume] [-e] [-w] [--kvsserver [HOST:PORT]] [--taskcommand COMMAND]
-		[--taskserver [HOST:PORT]] [-C TASK_LIMIT] [-c N] [-g] [-k COMMAND] [-K]
-                [-l COMMAND] [-s HOST:COUNT] [-t N]
+		[--taskserver [HOST:PORT]] [-C TASK_LIMIT] [-c N] [--fill] [-g] [-k COMMAND] [-K]
+		[-l COMMAND] [-s HOST:COUNT] [-t N]
                 [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
@@ -185,6 +185,7 @@ optional arguments:
                         Shutdown after running COUNT tasks (0 => no limit).
   -c N, --cpusPerTask N
                         Number of cores used per task; may be fractional (default: 1).
+  --fill                Try to use extra cores if allocated cores exceeds requested cores.
   -g, --gpu             Use assigned GPU resources
   -k COMMAND, --retire-cmd COMMAND
                         Shell command to run to retire a node (environment includes $NODE being
