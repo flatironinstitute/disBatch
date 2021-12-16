@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
-import json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
-import argparse
-import copy
+import argparse, copy, json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
 from ast import literal_eval
 from collections import defaultdict as DD
 
@@ -40,7 +38,7 @@ if DisBatchRoot:
     if DisBatchRoot not in sys.path:
         sys.path.append(DisBatchRoot)
 try:
-    from disbatch import kvsstcp
+    import kvsstcp
 except:
     print(f'disBatch environment is incomplete. Check:\n\tDISBATCH_ROOT {DisBatchRoot!r}.', file=sys.stderr)
     sys.exit(1)
@@ -116,6 +114,13 @@ class BatchContext:
         if contextLabel is None:
             contextLabel = 'context%05'%rank
         self.sysid, self.dbInfo, self.rank, self.nodes, self.cylinders, self.args, self.label = sysid, dbInfo, rank, nodes, cylinders, args, contextLabel
+
+        # Subclass may have already set this based on context-specific info.
+        if not hasattr(self, 'cpusPerTask'):
+            self.cpusPerTask = 1
+            if args.cpusPerTask != -1.0:
+                self.cpusPerTask = args.cpusPerTask
+
         self.error = False # engine errors (non-zero return values)
         self.kvsKey = '.context_%d'%rank
         self.retireCmd = None
@@ -202,14 +207,31 @@ class SlurmContext(BatchContext):
     def __init__(self, dbInfo, rank, args):
         jobid = os.environ['SLURM_JOBID']
         nodes = nl2flat(os.environ['SLURM_NODELIST'])
+        
+        def decodeSlurmVal(val):
+            vv = []
+            for e in val.split(','):
+                m = re.match(r'([^\(]+)(?:\(x([^\)]+)\))?', e)
+                c, m = m.groups()
+                if m == None: m = '1'
+                vv += [int(c)]*int(m)
+            return vv
 
-        cylinders = []
-        for tr in os.environ['SLURM_TASKS_PER_NODE'].split(','):
-            m = re.match(r'([^\(]+)(?:\(x([^\)]+)\))?', tr)
-            c, m = m.groups()
-            if m == None: m = '1'
-            cylinders += [int(c)]*int(m)
+        cylinders = decodeSlurmVal(os.environ['SLURM_TASKS_PER_NODE'])
+        if args.cpusPerTask != -1.0:
+            self.cpusPerTask = args.cpusPerTask
+        else:
+            self.cpusPerTask = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
 
+        doFill = args.fill and 'SLURM_JOB_CPUS_PER_NODE' in os.environ
+        self.fillInfo = f'{doFill} ; {args.fill}'
+        if doFill:
+            # If extra cores were allocated, override slurm
+            jcpnl = decodeSlurmVal(os.environ['SLURM_JOB_CPUS_PER_NODE'])
+            ncylinders = [max(tpn, int(jcpn/self.cpusPerTask)) for (tpn, jcpn) in zip(cylinders, jcpnl)]
+            self.fillInfo = f'Fill in: {cylinders} -> {ncylinders}'
+            if ncylinders != cylinders:
+                cylinders = ncylinders
         contextLabel = args.label if args.label else 'J%s'%jobid
         super(SlurmContext, self).__init__('SLURM', dbInfo, rank, nodes, cylinders, args, contextLabel)
         self.driverNode = None
@@ -581,6 +603,7 @@ class Driver(Thread):
         self.slots = Queue()
         self.feeder = Feeder(self.kvs, self.ageQ, tasks, self.slots)
 
+        self.availSlots = []
         self.barriers = []
         self.contextCount = 0
         self.contexts = {}
@@ -594,6 +617,10 @@ class Driver(Thread):
 
         self.daemon = True
         self.start()
+
+    def recordResult(self, tReport):
+        self.statusFile.write(str(tReport)+'\n')
+        self.statusFile.flush()
 
     def sendNotification(self):
         try:
@@ -617,9 +644,25 @@ class Driver(Thread):
             # Be sure to seek back to EOF to append
             self.statusFile.seek(0, 2)
 
-    def recordResult(self, tReport):
-        self.statusFile.write(str(tReport)+'\n')
-        self.statusFile.flush()
+    def shutDownEngine(self, e):
+        logger.info('Stopping engine %s', e)
+        for c in e.cylinders:
+            try:
+                self.availSlots.remove(c)
+                # Try to reclaim a slot.
+                # Not important if we fail---slots are just flow control.
+                try:
+                    self.slots.get(False)
+                except Empty:
+                    pass
+            except ValueError:
+                logger.info('%s is busy?', c)
+        e.stop()
+
+    def stopContext(self, cRank):
+        for e in self.engines.values():
+            if e.cRank == cRank:
+                self.shutDownEngine(e)
 
     def updateStatus(self):
         status = dict(more=self.feeder.shutdown or 'More tasks.',
@@ -643,7 +686,7 @@ class Driver(Thread):
             self.last = time.time()
 
         def __str__(self):
-            return 'Engine %d: Context %d, Host %s, PID %d, Started at %.2f, Last hear from %.2f, Age %d, Cylinders %d, Assigned %d, Finished %d, Failed %d'%(
+            return 'Engine %d: Context %d, Host %s, PID %d, Started at %.2f, Last heard from %.2f, Age %d, Cylinders %d, Assigned %d, Finished %d, Failed %d'%(
                 self.rank, self.cRank, self.hostname, self.pid, self.start, time.time()-self.last,
                 self.age, len(self.cylinders), self.assigned, self.finished, self.failed)
 
@@ -660,27 +703,13 @@ class Driver(Thread):
             self.status = 'stopping'
 
     def run(self):
-        def shutDownEngine(e):
-            logger.info('Stopping engine %s', e)
-            for c in e.cylinders:
-                try:
-                    availSlots.remove(c)
-                    # Try to reclaim a slot.
-                    # Not important if we fail---slots are just flow control.
-                    try:
-                        self.slots.get(False)
-                    except Empty:
-                        pass
-                except ValueError:
-                    logger.info('%s is busy?', c)
-            e.stop()
 
         self.kvs.put('DisBatch status', '<Starting...>', False)
 
-        availSlots, cRank2taskCount, cylKey2eRank, finishedTasks, hbFails, noMore, outstanding, pending, retired = [], DD(int), {}, {}, set(), False, {}, [], -1
+        cRank2taskCount, cylKey2eRank, finishedTasks, hbFails, noMore, outstanding, pending, retired = DD(int), {}, {}, set(), False, {}, [], -1
 
         while 1:
-            logger.debug('Driver loop: Age %d, Finished %d, Retired %d, Available %d, Pending %d', self.age, self.finished, retired, len(availSlots), len(pending))
+            logger.debug('Driver loop: Age %d, Finished %d, Retired %d, Available %d, Pending %d', self.age, self.finished, retired, len(self.availSlots), len(pending))
 
             # Wait for a message.
             msg, o = self.kvs.get('.controller')
@@ -692,15 +721,24 @@ class Driver(Thread):
                 context = o
                 self.contexts[context.rank] = context
             elif msg == 'cylinder available':
-                #TODO: reject if no more tasks or in shutdown?
                 engineRank, cpid, cpgid, ckey = o
-                cylKey2eRank[ckey] = engineRank
-                self.engines[engineRank].addCylinder(cpid, cpgid, ckey)
-                availSlots.append(ckey)
-                self.slots.put(True)
+                e = self.engines[engineRank] 
+                # The engine proxy needs to know about the cylinder,
+                # even if we are just going to end up stopping it,
+                # since stopping it require a handshake with the real
+                # engine process.
+                e.addCylinder(cpid, cpgid, ckey)
+                if e.status != 'running':
+                    logger.info('Engine %s (%s), "%s" ignored, %s', engineRank, e.hostname, ckey, e.status)
+                    self.kvs.put(ckey, ('stop', None))
+                else:
+                    cylKey2eRank[ckey] = engineRank
+                    logger.info('Engine %s (%s), "%s" available', engineRank, e.hostname, ckey)
+                    self.availSlots.append(ckey)
+                    self.slots.put(True)
             elif msg == 'cylinder stopped':
                 engineRank, ckey = o
-                logger.info('%s stopped', ckey)
+                logger.info('Engine %s, "%s" stopped', engineRank, ckey)
                 self.engines[engineRank].removeCylinder(ckey)
                 try:
                     self.slots.get(False)
@@ -749,13 +787,10 @@ class Driver(Thread):
                     self.barriers.append(TaskReport(tinfo, start=time.time()))
             elif msg == 'stop context':
                 cRank = o
-                for e in self.engines.values():
-                    if e.cRank != cRank:
-                        continue
-                    shutDownEngine(e)
+                self.stopContext(cRank)
             elif msg == 'stop engine':
                 rank = o
-                shutDownEngine(self.engines[rank])
+                self.shutDownEngine(self.engines[rank])
             elif msg == 'task':
                 tinfo = o
                 assert tinfo.taskAge == self.age
@@ -814,7 +849,7 @@ class Driver(Thread):
                         if tinfo.kind == 'N':
                             e.assigned -= 1
                             if e.status == 'running':
-                                availSlots.append(ckey)
+                                self.availSlots.append(ckey)
                                 self.slots.put(True)
 
                     if rc:
@@ -881,12 +916,12 @@ class Driver(Thread):
                     if self.barriers:
                         # clearing this barrier may clear the next
                         self.kvs.put('.controller', ('clearing barriers', None))
-                    # Slight change: this tracks failures since start or last barrier
+                    # Slight change: this tracks failures since start of last barrier
                     self.currentReturnCode = 0
                     bTinfo = None
 
-            while pending and availSlots:
-                ckey = availSlots.pop(0)
+            while pending and self.availSlots:
+                ckey = self.availSlots.pop(0)
                 tinfo = pending.pop(0)
                 logger.info('Giving %s %s', ckey, tinfo)
                 self.kvs.put(ckey, ('task', tinfo))
@@ -897,14 +932,15 @@ class Driver(Thread):
                 cRank2taskCount[e.cRank] += 1
                 limit = self.contexts[e.cRank].args.context_task_limit
                 if limit and cRank2taskCount[e.cRank] == limit:
-                    shutDownEngine(e)
+                    logger.info('Context %d reached task limit %d', e.cRank, limit)
+                    self.stopContext(e.cRank)
 
             if noMore and not pending:
                 # Really nothing more to do.
-                for ckey in availSlots:
+                for ckey in self.availSlots:
                     logger.info('Notifying "%s" there is no more work.', ckey)
                     self.kvs.put(ckey, ('stop', None))
-                availSlots = []
+                self.availSlots = []
 
             # Make changes visible via KVS.
             self.updateStatus()
@@ -1107,8 +1143,6 @@ class EngineBlock(Thread):
         self.rank = rank
         cylinders = context.wCylinders[context.nodeId]
 
-
-
         env = os.environ
         env['DISBATCH_CORES_PER_TASK'] = str(int(context.cylinders[context.nodeId]/cylinders))
         envres = {}
@@ -1140,7 +1174,7 @@ class EngineBlock(Thread):
         self.start()
 
     def run(self):
-        #TODO: not currentlly checking for a per engine clean up
+        #TODO: not currently checking for a per engine clean up
         # task. Probably need to explicitly join pec, which means
         # sending that a shutdown message too.
         try:
@@ -1163,6 +1197,7 @@ def contextArgs(argp):
     argp.add_argument('-C', '--context-task-limit', type=int, metavar='TASK_LIMIT', default=0, help="Shutdown after running COUNT tasks (0 => no limit).")
     argp.add_argument('-c', '--cpusPerTask', metavar='N', default=-1.0, type=float, help='Number of cores used per task; may be fractional (default: 1).')
     argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', default=[], help=argparse.SUPPRESS) #'Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)'
+    argp.add_argument('--fill', action='store_true', help='Try to use extra cores if allocated cores exceeds requested cores.')
     argp.add_argument('-g', '--gpu', action='store_true', help='Use assigned GPU resources')
     argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help='Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".')
     argp.add_argument('-K', '--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
@@ -1170,7 +1205,7 @@ def contextArgs(argp):
     argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:COUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
     argp.add_argument('-t', '--tasksPerNode', metavar='N', default=-1, type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
 
-    return ['context_task_limit', 'cpusPerTask', 'env_resource', 'gpu', 'retire_cmd', 'label', 'ssh_node', 'tasksPerNode']
+    return ['context_task_limit', 'cpusPerTask', 'env_resource', 'fill', 'gpu', 'retire_cmd', 'label', 'ssh_node', 'tasksPerNode']
 
 
 def main():
@@ -1246,8 +1281,6 @@ def main():
         # Args that if not set might have been set when disBatch was first run.
         if args.cpusPerTask == -1.0:
             args.cpusPerTask = dbInfo.args.cpusPerTask
-        if args.cpusPerTask == -1.0:
-            args.cpusPerTask = 1
         if args.tasksPerNode == -1:
             args.tasksPerNode = dbInfo.args.tasksPerNode
         if args.tasksPerNode == -1:
@@ -1274,10 +1307,11 @@ def main():
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
         lconf['filename'] = '%s_%s.context.log'%(dbInfo.uniqueId, context.label)
         logging.basicConfig(**lconf)
-        logging.info('%s context started on %s (%d).', context.sysid, myHostname, myPid)
+        logging.info('%s context started on %s (%d) with args "%s.', context.sysid, myHostname, myPid, repr(sys.argv))
+        if context.sysid == 'SLURM': logging.info('Fill info: %s', context.fillInfo)
 
         # Apply lesser of -c and -t limits
-        context.wCylinders = [min(int(c / args.cpusPerTask), args.tasksPerNode) for c in context.cylinders]
+        context.wCylinders = [min(c, args.tasksPerNode) for c in context.cylinders]
         if [c for c in context.wCylinders if c == 0]:
             print('At least one engine lacks enough cylinders to run tasks (%r).'%context.wCylinders, file=sys.stderr)
             sys.exit(1)
@@ -1442,7 +1476,7 @@ def main():
 
         driver = Driver(kvs, dbInfo, tasks, getattr(taskSource, 'resultkey', resultKey))
         try:
-            while driver.isAlive():
+            while driver.is_alive():
                 if taskProcess and taskProcess.r:
                     logger.warn('Task generator failed; forcing shutdown')
                     sys.exit(taskProcess.r)
