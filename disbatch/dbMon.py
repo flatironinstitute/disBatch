@@ -63,7 +63,7 @@ def dbStatus(kvsc, outq):
             engines = {int(k): v for k, v in statusd['engines'].items()}
             contexts = {int(k): v for k, v in statusd['contexts'].items()}
             ee = engines.values()
-            statusd['slots'] = sum([len(e['cylinders']) for e in ee if e['status'] == 'running'])
+            statusd['slots'] = sum([e['active'] for e in ee if e['status'] == 'running'])
             statusd['finished'] = sum([e['finished'] for e in ee])
             statusd['failed'] = sum([e['failed'] for e in ee])
             header = []
@@ -82,10 +82,9 @@ def dbStatus(kvsc, outq):
             content = []
             for rank, engine in ee:
                 if engine['status'] == 'stopped': continue
-                engine['slots'] = len(engine['cylinders'])
                 engine['delay'] = now - engine['last']
                 engine['cLabel'] = contexts[engine['cRank']]['label']
-                content.append((rank, '{rank:5d} {cLabel:12.12s} {hostname:20.20s} {delay:6.0f}s {slots:7d} {assigned:10d} {finished:10d} {failed:7d}'.format(**engine)))
+                content.append((rank, '{rank:5d} {cLabel:12.12s} {hostname:20.20s} {delay:6.0f}s {active:7d} {assigned:10d} {finished:10d} {failed:7d}'.format(**engine)))
             outq.put(('status', (engines, contexts, header, content)))
         time.sleep(3)
 
