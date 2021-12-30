@@ -122,7 +122,7 @@ These fields are:
 `disBatch.py` requires the `kvsstcp` package, which should be installed in python's path, or placed in this directory.
 You can simply clone this git repository with `--recursive` (or run `git submodule update --init` if you've already cloned it).
 
-Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable `DISBATCH_ROOT` to the path of the directory containing `disBatch.py`. 
+Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable `DISBATCH_ROOT` to the path of the directory containing the subdirectory `disbatch`. 
 
 disBatch is designed to support a variety of execution environments, from your own desktop, to a local collection of workstations, to large clusters managed by job schedulers.
 It currently supports SLURM and can be executed from `sbatch`, but it is architected to make it simple to add support for other resource managers.
@@ -139,13 +139,17 @@ This allows execution directly on your `localhost` and via ssh for remote hosts 
 In this example, disBatch is told it can use seven CPUs on your local host and three on `otherhost`. Assuming the default mapping of one task to one CPU applies in this example, seven tasks could be in progress at any given time on `localhost`, and three on `otherhost`. Note that `localhost` is an actual name you can use to refer to the machine on which you are currently working. `otherhost` is fictious. 
 Hosts used via ssh must be set up to allow ssh to work without a password and must share the working directory for the disBatch run.
 
+disBatch refers to a collection of execution resources as a *context* and the resources proper as *engines*. So the earlier SLURM example created one context with four engines (capable of running five concurrent tasks each), while the SSH example created one context with two engines (capable of running seven and three concurrent tasks, respectively).
+
 ## Invocation
 ~~~~
-usage: disBatch [-h] [-p PATH] [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-S] [-r STATUSFILE]
-                [-R] [--force-resume] [-e] [-w] [--kvsserver [HOST:PORT]] [--taskcommand COMMAND]
-		[--taskserver [HOST:PORT]] [-C TASK_LIMIT] [-c N] [--fill] [-g] [-k COMMAND] [-K]
-		[-l COMMAND] [-s HOST:COUNT] [-t N]
-                [taskfile]
+usage: disBatch.py [-h] [-e] [--force-resume] [--kvsserver [HOST:PORT]]
+                   [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-p PATH]
+                   [-r STATUSFILE] [-R] [-S] [--status-header] [-w]
+                   [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
+                   [-C TASK_LIMIT] [-c N] [--fill] [-g] [--no-retire]
+                   [-l COMMAND] [--retire-cmd COMMAND] [-s HOST:COUNT] [-t N]
+                   [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
 
@@ -154,59 +158,66 @@ positional arguments:
 
 optional arguments:
   -h, --help            show this help message and exit
-  -p PATH, --prefix PATH
-                        Path for log, dbUtil, and status files (default: "."). If ends with
-                        non-directory component, use as prefix for these files names (default:
-                        TASKFILE_JOBID).
-  --logfile FILE        Log file.
-  --mailFreq N          Send email every N task completions (default: 1). "--mailTo" must be
-  	     		given.
-  --mailTo ADDR         Mail address for task completion notification(s).
-  -S, --startup-only    Startup only the disBatch server (and KVS server if appropriate).
-      			Use "dbUtil..." script to add execution contexts.
-			Incompatible with "--ssh-node".
-  -r STATUSFILE, --resume-from STATUSFILE
-                        Read the status file from a previous run and skip any completed tasks (may
-                        be specified multiple times).
-  -R, --retry           With -r, also retry any tasks which failed in previous runs (non-zero
-      			return).
-  --force-resume        With -r, proceed even if task commands/lines are different.
-  -e, --exit-code       When any task fails, exit with non-zero status (default: only if disBatch
-      			itself fails)
-  -w, --web             Enable web interface.
+  -e, --exit-code       When any task fails, exit with non-zero status
+                        (default: only if disBatch itself fails)
+  --force-resume        With -r, proceed even if task commands/lines are
+                        different.
   --kvsserver [HOST:PORT]
                         Use a running KVS server.
+  --logfile FILE        Log file.
+  --mailFreq N          Send email every N task completions (default: 1). "--
+                        mailTo" must be given.
+  --mailTo ADDR         Mail address for task completion notification(s).
+  -p PATH, --prefix PATH
+                        Path for log, dbUtil, and status files (default: ".").
+                        If ends with non-directory component, use as prefix
+                        for these files names (default: TASKFILE_JOBID).
+  -r STATUSFILE, --resume-from STATUSFILE
+                        Read the status file from a previous run and skip any
+                        completed tasks (may be specified multiple times).
+  -R, --retry           With -r, also retry any tasks which failed in previous
+                        runs (non-zero return).
+  -S, --startup-only    Startup only the disBatch server (and KVS server if
+                        appropriate). Use "dbUtil..." script to add execution
+                        contexts. Incompatible with "--ssh-node".
+  --status-header       Add header line to status file.
+  -w, --web             Enable web interface.
   --taskcommand COMMAND
-                        Tasks will come from the command specified via the KVS server (passed in
-			the environment).
+                        Tasks will come from the command specified via the KVS
+                        server (passed in the environment).
   --taskserver [HOST:PORT]
                         Tasks will come from the KVS server.
+context specific arguments:
   -C TASK_LIMIT, --context-task-limit TASK_LIMIT
                         Shutdown after running COUNT tasks (0 => no limit).
   -c N, --cpusPerTask N
-                        Number of cores used per task; may be fractional (default: 1).
-  --fill                Try to use extra cores if allocated cores exceeds requested cores.
+                        Number of cores used per task; may be fractional
+                        (default: 1).
+  --fill                Try to use extra cores if allocated cores exceeds
+                        requested cores.
   -g, --gpu             Use assigned GPU resources
-  -k COMMAND, --retire-cmd COMMAND
-                        Shell command to run to retire a node (environment includes $NODE being
-                        retired, remaining $ACTIVE node list, $RETIRED node list; default based on
-                        batch system). Incompatible with "--ssh-node".
-  -K, --no-retire       Don't retire nodes from the batch system (e.g., if running as part of a
-      			larger job); equivalent to -k ''.
+  --no-retire           Don't retire nodes from the batch system (e.g., if
+                        running as part of a larger job); equivalent to -k ''.
   -l COMMAND, --label COMMAND
                         Label for this context. Should be unique.
+  --retire-cmd COMMAND  Shell command to run to retire a node (environment
+                        includes $NODE being retired, remaining $ACTIVE node
+                        list, $RETIRED node list; default based on batch
+                        system). Incompatible with "--ssh-node".
   -s HOST:COUNT, --ssh-node HOST:COUNT
-                        Run tasks over SSH on the given nodes (can be specified multiple times for
-                        additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)
+                        Run tasks over SSH on the given nodes (can be
+                        specified multiple times for additional hosts;
+                        equivalent to setting DISBATCH_SSH_NODELIST)
   -t N, --tasksPerNode N
-                        Maximum concurrently executing tasks per node (up to cores/cpusPerTask).
+                        Maximum concurrently executing tasks per node (up to
+                        cores/cpusPerTask).
 ~~~~
 
 The options for mail will only work if your computing environment permits processes to access mail via SMTP.
 
 A value for `-c` < 1 effectively allows you to run more tasks concurrently than CPUs specified for the run. This is somewhat unusual, and generally not recommended, but could be appropriate in some cases.
 
-The `-k` and `-K` flags allow you to control what disBatch does when a node is no longer needed to run jobs.
+The `--no-retire` and `--retire-cmd` flags allow you to control what disBatch does when a node is no longer needed to run jobs.
 When running under slurm, disBatch will by default run the command:
 
     scontrol update JobId="$SLURM_JOBID" NodeList="${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE"
@@ -230,9 +241,9 @@ but remember to include `<Prefix>_` in actual use. You can add execution resourc
 
     `./dbUtil.sh -s localhost:4,friendlyNeighbor:5`
 
-Each of these creates an execution *context*, which contains one of more execution *engines* (five engines in the first, two in the second).
-An engine can run one or more tasks currently. In the first example, each of the 5 engines will run up to 7 tasks concurrently, while in the
-second example, the engine on `localhost` will run up to 4 tasks concurrently and the engine on `friendlyNeighbor` will run up to 5.
+Each of these creates an execution context, which contains one of more execution engines (five engines in the first, two in the second).
+An engine can run one or more tasks currently. In the first example, each of the five engines will run up to seven tasks concurrently, while in the
+second example, the engine on `localhost` will run up to four tasks concurrently and the engine on `friendlyNeighbor` will run up to five.
 `./dbUtil.sh --mon` will start a simple ASCII-based monitor that tracks the overall state of the disBatch run, and the activity of the individual
 contexts and engines. By cursoring over an engine, you can send a shutdown signal to the engine or its context. This signal is *soft*, triggering
 a graceful shutdown that will occur only after currently assigned tasks are complete. Other execution resources are uneffected.
@@ -311,7 +322,13 @@ use this directive:
     #DISBATCH BARRIER
 
 When disBatch encounters this directive, it will not launch another task
-until all tasks in progress have completed. Advanced feature: if `BARRIER` is followed by a string, that string is interpreted as a key name. When the barrier completes, the Task ID of the barrier will be `put` to that key.
+until all tasks in progress have completed. The following form:
+
+    #DISBATCH BARRIER CHECK
+
+checks the exit status of the tasks done since the last barrier (or
+start of the run). If any task had a non-zero exit status, the run
+will exit once this barrier is met.
 
 ### REPEAT
 
@@ -334,6 +351,17 @@ could be:
     #DISBATCH REPEAT 1000
 
 This is not a model of clarify, but does illustrate that the repeat constuct can be relatively powerful. Many users may find it more convenient to use the tool of their choice to generate a text file with 1000 invocations explictly written out.
+
+### PERENGINE
+
+    #DISBATCH PERENGINE START { command ; sequence ; } &> engine_start_${DISBATCH_ENGINE_RANK}.log
+    #DISBATCH PERENGINE STOP { command ; sequence ; } &> engine_stop_${DISBATCH_ENGINE_RANK}.log
+
+Use these to specify commands that should run at the time an engine joins a disBatch run or at the time the engine leaves the disBatch run, respectively.
+You could, for example, use these to bulk copy some heavily referenced read-only data to the engine's local storage area before any tasks are run, and then delete that data when the engine shuts down.
+You can use the environment variable DISBATCH_ENGINE_RANK to distinguish one engine from another; for example, it is used here to keep log files separate.
+
+These directives must come before any other tasks.
 
 ## License
 
