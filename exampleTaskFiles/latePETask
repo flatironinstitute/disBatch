@@ -1,0 +1,4 @@
+echo 'hi there'
+#This should fail.
+#DISBATCH PERENGINE START echo 'Did already say "hi there"?'
+echo 'goodbye now'

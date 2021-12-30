@@ -1,0 +1,14 @@
+( echo "23 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "24 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "25 running on" $(hostname) ; date ; sleep 10 ; date ; )
+
+# generate non-zero return code
+( echo "26 running on" $(hostname) ; date ; sleep 10 ; date ; exit 13 )
+
+( echo "27 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "28 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "29 running on" $(hostname) ; date ; sleep 10 ; date ; )
+#DISBATCH BARRIER CHECK
+( echo "33 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "34 running on" $(hostname) ; date ; sleep 10 ; date ; )
+( echo "35 running on" $(hostname) ; date ; sleep 10 ; date ; )
