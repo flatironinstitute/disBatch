@@ -51,12 +51,12 @@ myHostname = socket.gethostname()
 myPid = os.getpid()
 
 # Note that even though these are case insensitive, only lines that start with upper-case '#DISBATCH' prefixes are tested
-dbbarrier   = re.compile(r'^#DISBATCH BARRIER(?: (.+)?)?$', re.I)
+dbbarrier   = re.compile(r'^#DISBATCH BARRIER(?:(?: )(CHECK))?(?:(?: )(.*)$)?')
 dbcomment   = re.compile(r'^\s*(#|$)')
 dbprefix    = re.compile(r'^#DISBATCH PREFIX (.*)$', re.I)
 dbrepeat    = re.compile(r'^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>.+))?\s*$', re.I)
 dbsuffix    = re.compile(r'^#DISBATCH SUFFIX (.*)$', re.I)
-dbperengine = re.compile(r'^#DISBATCH (?:PERENGINE|PERNODE) (.*)$', re.I) # PERNODE is deprecated. TODO: warn about this?
+dbperengine = re.compile(r'^#DISBATCH PERENGINE (START|STOP) (.*)$', re.I) 
 
 # Heart beat info.
 PulseTime = 30
@@ -313,8 +313,8 @@ def probeContext(dbInfo, rank, args):
 class TaskInfo:
     kinds = {'B': 'barrier', 'C': 'check barrier', 'D': 'done', 'N': 'normal', 'P': 'per node', 'S': 'skip', 'Z': 'zombie'}
 
-    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskAge, taskCmd, taskKey, kind='N', bKey=None, skipInfo=None):
-        self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskAge, self.taskCmd, self.taskKey, self.bKey = taskId, taskStreamIndex, taskRepIndex, taskAge, taskCmd, taskKey, bKey
+    def __init__(self, taskId, taskStreamIndex, taskRepIndex, taskCmd, taskKey, kind='N', bKey=None, skipInfo=None):
+        self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskCmd, self.taskKey, self.bKey = taskId, taskStreamIndex, taskRepIndex, taskCmd, taskKey, bKey
         assert kind in TaskInfo.kinds
         self.kind = kind
         assert skipInfo is None or self.kind == 'S'
@@ -323,21 +323,32 @@ class TaskInfo:
     def __eq__(self, other):
         if type(self) is not type(other): return False
         sti, oti = self, other
-        # TODO: Not tracking age in the status file, so ignoring for the time being.
         return sti.taskId == oti.taskId and sti.taskStreamIndex == oti.taskStreamIndex and sti.taskRepIndex == oti.taskRepIndex and sti.taskCmd == oti.taskCmd # and sti.taskKey == oti.taskKey
 
     def __ne__(self, other): return not self == other
 
     def __str__(self):
-        return '\t'.join([str(x) for x in [self.taskId, self.taskStreamIndex, self.taskRepIndex, self.taskAge, self.kind, repr(self.taskCmd)]])
+        return '\t'.join([str(x) for x in [self.taskId, self.taskStreamIndex, self.taskRepIndex, self.kind, repr(self.taskCmd)]])
 
 class TaskReport:
     def __init__(self, *args, **kwargs):
         if len(args) == 1 and len(kwargs) == 0 and type(args[0]) == str:
             # In effect this undoes __str__, so this must be kept in sync with __str__.
-            ff = args[0].split('\t', 14)
-            ti = TaskInfo(int(ff[1]), int(ff[2]), int(ff[3]), -1, literal_eval(ff[14]), '')
-            self.do_init(ti, ff[4], int(ff[5]), int(ff[6]), float(ff[8]), float(ff[9]), int(ff[10]), ff[11], int(ff[12]), ff[13])
+            try:
+                if args[0] == TaskReport.header:
+                    self.taskInfo = None
+                else:
+                    ff = args[0].split('\t', 14)
+                    kind = 'N'
+                    if ff[0][3] in 'PSZ':
+                        kind = ff[0][3]
+                    elif ff[0][0] not in ' R':
+                        kind = ff[0][0]
+                    ti = TaskInfo(int(ff[1]), int(ff[2]), int(ff[3]), literal_eval(ff[14]), '', kind=kind)
+                    self.do_init(ti, ff[4], int(ff[5]), int(ff[6]), float(ff[8]), float(ff[9]), int(ff[10]), ff[11], int(ff[12]), ff[13])
+            except Exception:
+                logger.exception('Task reporting')
+                self.taskInfo = None
         else:
             self.do_init(*args, **kwargs)
 
@@ -355,31 +366,32 @@ class TaskReport:
         else:
             return self.taskInfo.kind + '    '
 
+    header =  'ROE[ PSZ]\tTaskID\tLineNum\tRepeatIndex\tNode\tPID\tReturnCode\tElapsed\tStart\tFinish\tBytesOfLeakedOutput\tOutputSnippet\tBytesOfLeakedError\tErrorSnippet\tCommand'
     def __str__(self):
-        # If this changes, update parseStatusFile below and disBatcher.py too
+        # If this changes, update disBatcher.py too
         ti = self.taskInfo
         return '\t'.join([str(x) for x in [self.flags(), ti.taskId, ti.taskStreamIndex, ti.taskRepIndex, self.host, self.pid, self.returncode, '%.3f'%(self.end - self.start), '%.3f'%self.start, '%.3f'%self.end, self.outbytes, repr(self.outdata), self.errbytes, repr(self.errdata), repr(ti.taskCmd)]])
 
 def parseStatusFiles(*files):
     status = dict()
     for f in files:
-        with open(f, 'r') as s:
-            for l in s:
-                l = l[:-1]
-                d = l.split('\t')
-                if len(d) != 15:
-                    logger.warn('Invalid status line (ignoring): %r', l)
-                    continue
-                if d[0] in 'BC': continue
-                tr = TaskReport(l)
-                ti = tr.taskInfo
-                ti.kind, ti.skipInfo = 'S', tr # This creates a reference loop!
-                try:
-                    # successful tasks take precedence
-                    if status[ti.taskId].skipInfo.returncode <= tr.returncode: continue
-                except KeyError:
-                    pass
-                status[ti.taskId] = ti
+        try:
+            with open(f, 'r') as s:
+                for l in s:
+                    tr = TaskReport(l[:-1])
+                    ti = tr.taskInfo
+                    if ti is None: continue
+                    if ti.kind != 'N': continue
+                    ti.kind, ti.skipInfo = 'S', tr # This creates a reference loop!
+                    try:
+                        # successful tasks take precedence
+                        if status[ti.taskId].skipInfo.returncode <= tr.returncode: continue
+                    except KeyError:
+                        pass
+                    status[ti.taskId] = ti
+        except:
+            logger.exception('Parsing status file.')
+            return None
     return status
 
 ##################################################################### DRIVER
@@ -433,12 +445,18 @@ class TaskProcess:
 # Given a task source (generating task command lines), parse the lines and
 # produce a TaskInfo generator.
 def taskGenerator(tasks):
-    age = 0 # Number of per node commands that preceded the task.
     tsx = 0 # "line number" of current task
     taskCounter = 0 # next taskId
+    peCounters = {'START': 0, 'STOP': 0}
+    perEngineAllowed = True
     prefix = suffix = ''
+    
+    def peStopTasks():
+        for when in ['START', 'STOP']:
+            yield TaskInfo(peCounters[when], tsx, -1, '#ENDLIST', '.per engine %s %d'%(when, peCounters[when]), kind='P')
 
-    while 1:
+    OK = True
+    while OK:
         tsx += 1
         try:
             t = next(tasks)
@@ -456,62 +474,79 @@ def taskGenerator(tasks):
         # but this shouldn't be a problem.  (Alternatively could increment tsx
         # inside this loop instead.)
         for t in t.splitlines():
-
-            if t.startswith('#DISBATCH '):
-                m = dbprefix.match(t)
-                if m:
-                    prefix = m.group(1)
-                    continue
-                m = dbsuffix.match(t)
-                if m:
-                    suffix = m.group(1)
-                    continue
-                m = dbrepeat.match(t)
-                if m:
-                    repeats, rx, step = int(m.group('repeat')), 0, 1
-                    g = m.group('start')
-                    if g: rx = int(g)
-                    g = m.group('step')
-                    if g: step = int(g)
-                    logger.info('Processing repeat: %d %d %d', repeats, rx, step)
-                    cmd = prefix + (m.group('command') or '') + suffix
-                    while repeats > 0:
-                        yield TaskInfo(taskCounter, tsx, rx, age, cmd, '.task')
-                        taskCounter += 1
-                        rx += step
-                        repeats -= 1
-                    continue
-                mpe, mb = dbperengine.match(t), dbbarrier.match(t)
-                if mpe or mb:
-                    bKey = None
-                    if mpe:
-                        cmd = prefix + mpe.group(1) + suffix
-                        kind = 'P'
-                    else:
-                        cmd = t
-                        bKey = mb.group(1)
-                        if bKey == 'CHECK':
-                            kind = 'C'
-                            bKey = None
-                        else:
-                            kind = 'B'
-
-                    yield TaskInfo(taskCounter, tsx, -1, age, cmd, '.per engine %d'%age, kind=kind, bKey=bKey)
-                    age += 1
-                    taskCounter += 1
-                    continue
-                logger.error('Unknown #DISBATCH directive: %s', t)
-
-            if dbcomment.match(t):
+            if not t.startswith('#DISBATCH') and dbcomment.match(t):
                 # Comment or empty line, ignore
                 continue
 
-            yield TaskInfo(taskCounter, tsx, -1, age, prefix + t + suffix, '.task')
-            taskCounter += 1
+            m = dbperengine.match(t)
+            if m:
+                if not perEngineAllowed:
+                    # One could imagine doing some sort of per-engine
+                    # reset with each barrier, but that would get
+                    # messy pretty quickly.
+                    logger.error('Per-engine tasks not permitted after normal tasks.')
+                    OK = False
+                    break
+                when, cmd = m.groups()
+                cmd = prefix + cmd + suffix
+                yield TaskInfo(peCounters[when], tsx, -1, cmd, '.per engine %s %d'%(when, peCounters[when]), kind='P')
+                peCounters[when] += 1
+                continue
+
+            m = dbprefix.match(t)
+            if m:
+                prefix = m.group(1)
+                continue
+
+            m = dbsuffix.match(t)
+            if m:
+                suffix = m.group(1)
+                continue
+
+            if perEngineAllowed:
+                # Close out the per-engine task block.
+                perEngineAllowed = False
+                yield from peStopTasks()
+                
+            m = dbrepeat.match(t)
+            if m:
+                repeats, rx, step = int(m.group('repeat')), 0, 1
+                g = m.group('start')
+                if g: rx = int(g)
+                g = m.group('step')
+                if g: step = int(g)
+                logger.info('Processing repeat: %d %d %d', repeats, rx, step)
+                cmd = prefix + (m.group('command') or '') + suffix
+                while repeats > 0:
+                    yield TaskInfo(taskCounter, tsx, rx, cmd, '.task')
+                    taskCounter += 1
+                    rx += step
+                    repeats -= 1
+                continue
+
+            m = dbbarrier.match(t)
+            if m:
+                check, bKey = m.groups()
+                kind = 'C' if check else 'B'
+                yield TaskInfo(taskCounter, tsx, -1, t, '.barrier', kind=kind, bKey=bKey)
+                taskCounter += 1
+                continue
+
+            if t.startswith('#DISBATCH '):
+                logger.error('Unknown #DISBATCH directive: %s', t)
+            else:
+                yield TaskInfo(taskCounter, tsx, -1, prefix + t + suffix, '.task')
+                taskCounter += 1
+                
+    if perEngineAllowed:
+        # Handle edge case of no tasks.
+        yield from peStopTasks()
 
     logger.info('Processed %d tasks.', taskCounter)
 
 def statusTaskFilter(tasks, status, retry=False, force=False):
+    if status is None: # This means an error occurred while reading status files.
+        return
     while True:
         try:
             t = next(tasks)
@@ -527,7 +562,6 @@ def statusTaskFilter(tasks, status, retry=False, force=False):
                         logger.warn(msg, '-- proceeding anyway')
                     else:
                         raise Exception(msg % '(use --force-resume to proceed anyway)')
-                s.taskAge = t.taskAge # TODO Think longer and think harder about this.
                 yield s
                 continue
         yield t
@@ -538,11 +572,8 @@ class Feeder(Thread):
         super(Feeder, self).__init__(name='Feeder')
         self.kvs = kvs.clone()
         self.ageQ = ageQ
-        self.age = 0
         self.taskGenerator = tasks
         self.slots = slots
-        # just used for status reporting (not thread safe):
-        self.shutdown = None
 
         self.daemon = True
         self.start()
@@ -558,31 +589,31 @@ class Feeder(Thread):
     def main(self):
         lastId = -1
         while True:
-            if self.shutdown is not None:
-                break
             try:
                 tinfo = next(self.taskGenerator)
             except StopIteration:
                 self.kvs.put('.controller', ('no more tasks', lastId+1))
-                self.shutdown = 'No more tasks.'
                 break
 
-            lastId = tinfo.taskId
-            if tinfo.kind in 'BCD':
+            if tinfo.kind in 'BC':
                 self.kvs.put('.controller', ('special task', tinfo))
+                # Synchronization control.
+                logger.debug('Feeder waiting for %d.', tinfo.taskId)
+                t = self.ageQ.get()
+                if t == 'CheckFailExit':
+                    logger.info('Feeder told to exit.')
+                    break
+                assert t == tinfo.taskId
                 continue
+            
+            if tinfo.kind in 'NS':
+                lastId = tinfo.taskId
 
-            # At this point, we have a task that needs to go to the engines (or be skipped).
-            if tinfo.kind in 'NPS':
-                while tinfo.taskAge != self.age:
-                    # Don't get ahead of ourselves.
-                    self.age = self.ageQ.get()
-                    logger.debug('Feeder stepping age to %d, looking to reach %d.', self.age, tinfo.taskAge)
-                # Do a little flow control for normal tasks. Wait for a slot.
-                if tinfo.kind == 'N':
-                    self.slots.get()
+            if tinfo.kind == 'N':
+                # Flow control. Wait for an available cylinder.
+                self.slots.get()
 
-            logger.debug('Feeding task: %s', tinfo)
+            logger.debug('Feeding task: %s ', tinfo)
             self.kvs.put('.controller', ('task', tinfo))
 
         self.kvs.close()
@@ -597,14 +628,11 @@ class Driver(Thread):
         self.kvs.put('.common env', {'DISBATCH_JOBID': os.path.split(str(self.db_info.uniqueId))[-1], 'DISBATCH_NAMETASKS': self.db_info.name})
         self.trackResults = trackResults
 
-        self.age = 0
         self.ageQ = Queue()
-        self.ageQ.put(0)
         self.slots = Queue()
         self.feeder = Feeder(self.kvs, self.ageQ, tasks, self.slots)
 
-        self.availSlots = []
-        self.barriers = []
+        self.barriers, self.barrierCount = [], 0
         self.contextCount = 0
         self.contexts = {}
         self.currentReturnCode = 0
@@ -613,8 +641,11 @@ class Driver(Thread):
         self.failed = 0
         self.finished = 0
         self.statusFile = open(db_info.uniqueId + '_status.txt', 'w+')
+        if db_info.args.status_header:
+            print(TaskReport.header, file=self.statusFile)
         self.statusLastOffset = self.statusFile.tell()
-
+        self.tasksDone = False
+        
         self.daemon = True
         self.start()
 
@@ -644,33 +675,18 @@ class Driver(Thread):
             # Be sure to seek back to EOF to append
             self.statusFile.seek(0, 2)
 
-    def shutDownEngine(self, e):
-        logger.info('Stopping engine %s', e)
-        for c in e.cylinders:
-            try:
-                self.availSlots.remove(c)
-                # Try to reclaim a slot.
-                # Not important if we fail---slots are just flow control.
-                try:
-                    self.slots.get(False)
-                except Empty:
-                    pass
-            except ValueError:
-                logger.info('%s is busy?', c)
-        e.stop()
-
     def stopContext(self, cRank):
         for e in self.engines.values():
             if e.cRank == cRank:
-                self.shutDownEngine(e)
+                e.stop()
 
-    def updateStatus(self):
-        status = dict(more=self.feeder.shutdown or 'More tasks.',
-                      age=self.age,
-                      barriers=len(self.barriers),
+    def updateStatus(self, activeCylinders):
+        status = dict(more='No more tasks.' if self.tasksDone else 'More tasks.',
+                      barriers=self.barrierCount,
                       contexts=self.contexts,
                       currentReturnCode=self.currentReturnCode,
-                      engines=self.engines)
+                      engines=self.engines,
+                      activeCylinders=activeCylinders)
         # Make changes visible via KVS.
         logger.debug('Posting status: %r', status)
         self.kvs.get('DisBatch status', False)
@@ -680,36 +696,45 @@ class Driver(Thread):
         def __init__(self, rank, cRank, hostname, pid, start, kvs):
             self.rank, self.cRank, self.hostname, self.pid, self.kvs = rank, cRank, hostname, pid, kvs
             # No need to clone kvs, this isn't a thread.
-            self.cylinders, self.age, self.assigned, self.finished, self.failed = {}, 0, 0, 0, 0
+            self.active, self.assigned, self.cylinders, self.failed, self.finished = 0, 0, {}, 0, 0
             self.start = start
             self.status = 'running'
             self.last = time.time()
 
         def __str__(self):
-            return 'Engine %d: Context %d, Host %s, PID %d, Started at %.2f, Last heard from %.2f, Age %d, Cylinders %d, Assigned %d, Finished %d, Failed %d'%(
+            return 'Engine %d: Context %d, Host %s, PID %d, Started at %.2f, Last heard from %.2f, Cylinders %d, Assigned %d, Finished %d, Failed %d'%(
                 self.rank, self.cRank, self.hostname, self.pid, self.start, time.time()-self.last,
-                self.age, len(self.cylinders), self.assigned, self.finished, self.failed)
+                len(self.cylinders), self.assigned, self.finished, self.failed)
 
         def addCylinder(self, pid, pgid, ckey):
+            self.active += 1
             self.cylinders[ckey] = (pid, pgid, ckey)
 
-        def removeCylinder(self, ckey):
-            self.cylinders.pop(ckey)
+        def dropCylinder(self, ckey):
+            self.active -= 1
+            self.kvs.put(ckey, ('stop', None))
 
         def stop(self):
             if self.status == 'stopped': return
-            for c in self.cylinders.values():
-                self.kvs.put(c[2], ('stop', None))
+            logger.info('Stopping engine %s', self)
+            for ckey in self.cylinders:
+                self.dropCylinder(ckey)
             self.status = 'stopping'
 
-    def run(self):
+        def stopped(self, status):
+            self.status = 'stopped'
+            self.last = time.time()
+            logger.info('Engine %d stopped, %s', self.rank, status)
 
+    def run(self):
         self.kvs.put('DisBatch status', '<Starting...>', False)
 
-        cRank2taskCount, cylKey2eRank, finishedTasks, hbFails, noMore, outstanding, pending, retired = DD(int), {}, {}, set(), False, {}, [], -1
-
-        while 1:
-            logger.debug('Driver loop: Age %d, Finished %d, Retired %d, Available %d, Pending %d', self.age, self.finished, retired, len(self.availSlots), len(pending))
+        cRank2taskCount, cylKey2eRank, engineHeartBeat, enginesDone, finishedTasks, hbFails, noMore = DD(int), {}, {}, False, {}, set(), False
+        notifiedAllDone, outstanding, pending, retired = False, {}, [], -1
+        assignedCylinders, freeCylinders = set(), set()
+        while not (self.tasksDone and enginesDone):
+            logger.debug('Driver loop: Finished %d, Retired %d, Available %d, Assigned %d, Free %d, Pending %d',
+                         self.finished, retired, self.slots.qsize(), len(assignedCylinders), len(freeCylinders), len(pending))
 
             # Wait for a message.
             msg, o = self.kvs.get('.controller')
@@ -728,75 +753,101 @@ class Driver(Thread):
                 # since stopping it require a handshake with the real
                 # engine process.
                 e.addCylinder(cpid, cpgid, ckey)
-                if e.status != 'running':
+                if e.status != 'running' or notifiedAllDone:
                     logger.info('Engine %s (%s), "%s" ignored, %s', engineRank, e.hostname, ckey, e.status)
-                    self.kvs.put(ckey, ('stop', None))
+                    e.dropCylinder(ckey)
                 else:
                     cylKey2eRank[ckey] = engineRank
                     logger.info('Engine %s (%s), "%s" available', engineRank, e.hostname, ckey)
-                    self.availSlots.append(ckey)
+                    freeCylinders.add(ckey)
                     self.slots.put(True)
             elif msg == 'cylinder stopped':
                 engineRank, ckey = o
                 logger.info('Engine %s, "%s" stopped', engineRank, ckey)
-                self.engines[engineRank].removeCylinder(ckey)
                 try:
-                    self.slots.get(False)
-                except Empty:
+                    # Do we need to checked is this cylinder has a currently assigned task, i.e., can stopped overtake finished task?
+                    freeCylinders.remove(ckey)
+                except KeyError:
                     pass
             elif msg == 'driver heart beat':
                 now = time.time()
-                for tinfo, ckey, start, ts in outstanding.values():
-                    if now - ts > NoPulse:
-                        logger.info('Heart beat failure for engine %s, cylinder %s, task %s.', self.engines[cylKey2eRank[ckey]], ckey, tinfo)
-                        if tinfo.taskId not in hbFails: # Guard against a pile up of heart beat msgs.
-                            hbFails.add(tinfo.taskId)
-                            self.kvs.put('.controller', ('task hb fail', (tinfo, ckey, start, ts)))
+                if self.tasksDone:
+                    enginesDone = True
+                    for e in self.engines.values():
+                        if e.status != 'stopped':
+                            if e.rank not in engineHeartBeat:
+                                engineHeartBeat[e.rank] = now
+                            last = engineHeartBeat[e.rank]
+                            if (now - last) > NoPulse:
+                                logger.info('Heart beat failure for engine %s.', e)
+                                e.status = 'heart beat failure' # This doesn't mean much at the moment.
+                            else:
+                                logger.debug('Engine %d in ICU (%.1f)', e.rank, (now - last))
+                                enginesDone = False
+                else:
+                    for tinfo, ckey, start, ts in outstanding.values():
+                        if now - ts > NoPulse:
+                            logger.info('Heart beat failure for engine %s, cylinder %s, task %s.', self.engines[cylKey2eRank[ckey]], ckey, tinfo)
+                            if tinfo.taskId not in hbFails: # Guard against a pile up of heart beat msgs.
+                                hbFails.add(tinfo.taskId)
+                                self.kvs.put('.controller', ('task hb fail', (tinfo, ckey, start, ts)))
             elif msg == 'engine started':
                 #TODO: reject if no more tasks or in shutdown?
                 rank, cRank, hn, pid, start = o
                 self.engines[rank] = self.EngineProxy(rank, cRank, hn, pid, start, self.kvs)
+                # In server mode, we can have tasks waiting but no
+                # engines, in which case enginesDone may be
+                # "True". Adding this engine changes that.
+                enginesDone = False
             elif msg == 'engine stopped':
                 status, rank = o
-                self.engines[rank].status = 'stopped'
-                self.engines[rank].last = time.time()
-                logger.info('Engine %d stopped, %s', rank, status)
+                self.engines[rank].stopped(status)
+                enginesDone = not [e for e in self.engines.values() if e.status != 'stopped']
             elif msg == 'feeder exception':
                 logger.info('Emergency shutdown')
                 break
             elif msg == 'no more tasks':
                 noMore = True
                 logger.info('No more tasks: %d accepted', o)
-                self.barriers.append(TaskReport(TaskInfo(o, -1, -1, -1, None, None, kind='D'), start=time.time()))
+                self.barriers.append(TaskReport(TaskInfo(o, -1, -1, None, None, kind='D'), start=time.time()))
+                # If no tasks where actually processed, we won't
+                # notice we are now done until the next heart beat, so
+                # send one now to speed things along.
+                self.kvs.put('.controller', ('driver heart beat', None))
             elif msg == 'register':
                 which, key = o
-                if which == 'context':
-                    self.kvs.put(key, self.contextCount)
-                    self.contextCount += 1
-                elif which == 'engine':
-                    self.kvs.put(key, self.engineCount)
-                    self.engineCount += 1
+                if self.tasksDone:
+                    self.kvs.put(key, -1)
                 else:
-                    logger.error('Register? %s for %s', which, key)
+                    if which == 'context':
+                        self.kvs.put(key, self.contextCount)
+                        self.contextCount += 1
+                    elif which == 'engine':
+                        self.kvs.put(key, self.engineCount)
+                        self.engineCount += 1
+                    else:
+                        logger.error('Register? %s for %s', which, key)
             elif msg == 'special task':
                 tinfo = o
-                finishedTasks[tinfo.taskId] = True # TODO: For barriers, set finished when barrier is met?
-                if tinfo.kind in 'BCD':
-                    logger.info('Finishing barrier %d.', tinfo.taskId)
-                    # TODO: Add assertion to verify ordering property?
-                    self.barriers.append(TaskReport(tinfo, start=time.time()))
+                assert tinfo.kind in 'BC'
+                logger.info('Finishing barrier %d.', tinfo.taskId)
+                # TODO: Add assertion to verify ordering property?
+                self.barrierCount += 1
+                self.barriers.append(TaskReport(tinfo, start=time.time()))
             elif msg == 'stop context':
                 cRank = o
                 self.stopContext(cRank)
             elif msg == 'stop engine':
                 rank = o
-                self.shutDownEngine(self.engines[rank])
+                self.engines[rank].stop()
             elif msg == 'task':
                 tinfo = o
-                assert tinfo.taskAge == self.age
                 if tinfo.kind == 'P':
                     logger.info('Posting per engine task "%s" %s', tinfo.taskKey, tinfo)
-                    self.kvs.put(tinfo.taskKey, ('task', tinfo))
+                    if tinfo.taskCmd == '#ENDLIST':
+                        self.kvs.put(tinfo.taskKey, ('stop', None))
+                    else:
+                        self.kvs.put(tinfo.taskKey, ('task', tinfo))
                 elif tinfo.kind == 'S':
                     logger.info('Skipping %s', tinfo.skipInfo)
                     self.kvs.put('.controller', ('task skipped', tinfo))
@@ -817,7 +868,7 @@ class Driver(Thread):
                     tReport = TaskReport(tinfo, self.engines[engineRank].hostname, -1, -100, start, last)
                     hbFail = True
                 else:
-                    tReport, engineRank, cid, cAge, ckey = o
+                    tReport, engineRank, cid, ckey = o
                     assert isinstance(tReport, TaskReport)
                     tinfo = tReport.taskInfo
                     if tinfo.taskId in hbFails:
@@ -830,28 +881,30 @@ class Driver(Thread):
                 if not zombie:
                     rc, report = tReport.returncode, str(tReport)
 
-                    finishedTasks[tinfo.taskId] = True
+                    assert tinfo.kind in 'NPS'
+                    self.recordResult(report)
+
+                    if tinfo.kind != 'P':
+                        # Track non-per-engine task completion.
+                        # This is used to implement barriers.
+                        finishedTasks[tinfo.taskId] = True
 
                     if not zombie and tinfo.kind == 'N':
                         outstanding.pop(tinfo.taskId)
 
-                    assert tinfo.kind in 'NPS'
-                    self.recordResult(report)
                     # TODO: Count per engine?
                     self.finished += 1
 
                     if not skipped and not hbFail:
                         e = self.engines[engineRank]
                         e.last = time.time()
-                        assert e.age <= cAge
-                        e.age = cAge
                         e.finished += 1
                         if tinfo.kind == 'N':
                             e.assigned -= 1
                             if e.status == 'running':
-                                self.availSlots.append(ckey)
+                                assignedCylinders.remove(ckey)
+                                freeCylinders.add(ckey)
                                 self.slots.put(True)
-
                     if rc:
                         self.failed += 1
                         if not skipped: self.engines[engineRank].failed += 1
@@ -868,11 +921,14 @@ class Driver(Thread):
                     if self.db_info.args.mailTo and self.finished%self.db_info.args.mailFreq == 0:
                         self.sendNotification()
             elif msg == 'task heart beat':
-                taskId = o
-                if taskId not in outstanding:
-                    logger.info('Unexpected heart beat for task %d.', taskId)
-                else:
-                    outstanding[taskId][3] = time.time()
+                engineRank, taskId = o
+                now = time.time()
+                engineHeartBeat[engineRank] = now
+                if taskId != -1:
+                    if taskId not in outstanding:
+                        logger.info('Unexpected heart beat for task %d.', taskId)
+                    else:
+                        outstanding[taskId][3] = now
             else:
                 raise Exception('Weird message: ' + msg)
 
@@ -884,35 +940,32 @@ class Driver(Thread):
                         logger.debug('Barrier waiting for %d (%d)', x, self.barriers[0].taskInfo.taskId)
                         break
                 else:
-                    # we could prune finsihedTasks at this point.
+                    # We could prune finishedTasks at this point.
                     bReport = self.barriers.pop(0)
                     bTinfo = bReport.taskInfo
-                    # TODO: add assertion to verify age?
+                    finishedTasks[bTinfo.taskId] = True
+
                     retired = bTinfo.taskId
                     logger.info('Finished barrier %d: %s.', retired, bTinfo)
                     if bTinfo.kind == 'D':
-                        break
+                        self.tasksDone = True
+                        continue
                     bReport.end = time.time()
                     self.recordResult(bReport)
-                    # Let the feeder know when the age changes.
-                    newAge = bTinfo.taskAge + 1
-                    for x in range(self.age+1, newAge+1):
-                        self.ageQ.put(x)
                     assert 0 == len(pending)
-                    self.age = newAge
+
                     # If user specified a KVS key, use it to signal the barrier is done.
                     if bTinfo.bKey:
                         logger.info('put %s: %d.', bTinfo.bKey, bTinfo.taskId)
                         self.kvs.put(bTinfo.bKey, str(bTinfo.taskId), False)
                     if bTinfo.kind == 'C' and self.currentReturnCode:
-                        # a "check" barrier fails if any tasks before it do (since the start or the last barrier).
-                        tinfo.returncode = 1
-                        # stop the feeder (prompting DoneTask)
-                        self.feeder.shutdown = 'Barrier check failed.'
+                        # A "check" barrier fails if any tasks before it do (since the start or the last barrier).
+                        logger.info('Barrier check failed: %d.', self.currentReturnCode)
+                        self.ageQ.put('CheckFailExit')
                         break
-                    # tell the engines that the barrier has been cleared.
-                    logger.info('Barrier notification %s', bTinfo)
-                    self.kvs.put(bTinfo.taskKey, ('barrier notification', bTinfo))
+                    # Let the feeder know.
+                    self.ageQ.put(bTinfo.taskId)
+
                     if self.barriers:
                         # clearing this barrier may clear the next
                         self.kvs.put('.controller', ('clearing barriers', None))
@@ -920,8 +973,11 @@ class Driver(Thread):
                     self.currentReturnCode = 0
                     bTinfo = None
 
-            while pending and self.availSlots:
-                ckey = self.availSlots.pop(0)
+            while pending and freeCylinders:
+                ckey = freeCylinders.pop()
+                if self.engines[cylKey2eRank[ckey]].status != 'running':
+                    continue
+                assignedCylinders.add(ckey)
                 tinfo = pending.pop(0)
                 logger.info('Giving %s %s', ckey, tinfo)
                 self.kvs.put(ckey, ('task', tinfo))
@@ -935,20 +991,22 @@ class Driver(Thread):
                     logger.info('Context %d reached task limit %d', e.cRank, limit)
                     self.stopContext(e.cRank)
 
-            if noMore and not pending:
+            if noMore and not pending and not notifiedAllDone:
                 # Really nothing more to do.
-                for ckey in self.availSlots:
+                notifiedAllDone = True
+                for ckey in assignedCylinders.union(freeCylinders):
                     logger.info('Notifying "%s" there is no more work.', ckey)
-                    self.kvs.put(ckey, ('stop', None))
-                self.availSlots = []
+                    self.engines[cylKey2eRank[ckey]].dropCylinder(ckey)
 
             # Make changes visible via KVS.
-            self.updateStatus()
+            self.updateStatus(len(assignedCylinders)+len(freeCylinders))
 
         logger.info('Driver done')
         self.statusFile.close()
+        self.feeder.join(3)
+        if self.feeder.is_alive():
+            logger.info('Exiting even though feeder is still alive.')
         self.kvs.close()
-        self.feeder.join()
 
 ##################################################################### ENGINE
 
@@ -1020,121 +1078,98 @@ class OutputCollector(Thread):
 # from the controller. The engine waits for cylinder threads to exit,
 # and will itself exit when all cylinders have exited.
 class EngineBlock(Thread):
+    class FetchTask:
+        def __init__(self, keyTemp, keyGen, kvsOp):
+            self.keyTemp, self.keySeq, self.kvsOp = keyTemp, keyGen(keyTemp), kvsOp
+
+        def fetch(self, kvs):
+            return self.kvsOp(kvs, next(self.keySeq))
+
     class Cylinder(Thread):
-        def __init__(self, context, env, envres, ageQs, kvs, engineRank, cylinderId):
+        def __init__(self, context, env, envres, kvs, engineRank, cylinderRank, fetchTask):
             super(EngineBlock.Cylinder, self).__init__()
             self.daemon = True
-            self.context, self.ageQs, self.engineRank, self.cylinderId = context, ageQs, engineRank, cylinderId
-            logger.info('Cylinder %d initializing', self.cylinderId)
+            self.context, self.engineRank, self.cylinderRank, self.fetchTask = context, engineRank, cylinderRank, fetchTask
+            logger.info('Cylinder %d initializing', self.cylinderRank)
             self.localEnv = env.copy()
             for v, l in envres.items():
                 try:
-                    self.localEnv[v] = l[0 if -1 == cylinderId else cylinderId] # Allow the per engine cylinder to access cylinder
-                                                                                # 0's resources. TODO: Ensure some sort of lock?
+                    self.localEnv[v] = l[0 if -1 == cylinderRank else cylinderRank] # Allow the per engine cylinder to access cylinder
+                    	                                                            # 0's resources. TODO: Ensure some sort of lock?
                 except IndexError:
                     # safer to set it empty than delete it for most cases
                     self.localEnv[v] = ''
             self.shuttingDown = False
             self.taskProc = None
             self.kvs = kvs.clone()
-            if -1 == cylinderId:
-                self.keyIndex = 0
-                self.key = '.per engine %d'
-            else:
-                self.key = '.cylinder %d %d'%(self.engineRank, self.cylinderId)
             self.start()
 
         def run(self):
-            logger.info('Cylinder %d in run', self.cylinderId)
+            logger.info('Cylinder %d in run', self.cylinderRank)
             #signal.signal(signal.SIGTERM, lambda s, f: sys.exit(1))
             try:
                 self.main()
             except socket.error as e:
                 if not self.shuttingDown:
-                    logger.info('Cylinder %d got socket error %r', self.cylinderId, e)
+                    logger.info('Cylinder %d got socket error %r', self.cylinderRank, e)
             except Exception as e:
-                logger.exception('Cylinder %d exception: ', self.cylinderId)
+                logger.exception('Cylinder %d exception: ', self.cylinderRank)
             finally:
-                logger.info('Cylinder %d stopping.', self.cylinderId)
-                killPatiently(self.taskProc, 'cylinder %d subproc' % self.cylinderId, 2)
+                logger.info('Cylinder %d stopping.', self.cylinderRank)
+                killPatiently(self.taskProc, 'cylinder %d subproc' % self.cylinderRank, 2)
 
         def main(self):
             self.pid = os.getpid() # TODO: Remove
             self.pgid = os.getpgid(0)
-            logger.info('Cylinder %d firing, %d, %d.', self.cylinderId, self.pid, self.pgid)
-            if self.cylinderId != -1:
-                self.kvs.put('.controller', ('cylinder available', (self.engineRank, self.pid, self.pgid, self.key)))
+            logger.info('Cylinder %d firing, %d, %d.', self.cylinderRank, self.pid, self.pgid)
+            if self.cylinderRank != -1:
+                self.kvs.put('.controller', ('cylinder available', (self.engineRank, self.pid, self.pgid, self.fetchTask.keyTemp)))
 
-            age = 0
+            self.localEnv['DISBATCH_CYLINDER_RANK'], self.localEnv['DISBATCH_ENGINE_RANK'] = str(self.cylinderRank), str(self.engineRank)
             while 1:
-                #TODO: Ack Thppt
-                pec = self.cylinderId == -1
-                if pec:
-                    key = self.key%self.keyIndex
-                    self.keyIndex += 1
-                    kOp = self.kvs.view
-                else:
-                    key = self.key
-                    kOp = self.kvs.get
-                logger.info('Wating for %s', key)
-                msg, ti = kOp(key)
-                logger.info('%s got %s %s', key, msg, ti)
+                logger.info('Wating for %s', self.fetchTask.keyTemp)
+                msg, ti = self.fetchTask.fetch(self.kvs)
+                logger.info('%s got %s %s', self.fetchTask.keyTemp, msg, ti)
                 if msg == 'stop':
-                    logger.info('Cylinder %d received %s, exiting.', self.cylinderId, msg)
-                    self.kvs.put('.controller', ('cylinder stopped', (self.engineRank, self.key)))
+                    logger.info('Cylinder %d received %s, exiting.', self.cylinderRank, msg)
+                    if self.cylinderRank != -1:
+                        self.kvs.put('.controller', ('cylinder stopped', (self.engineRank, self.fetchTask.keyTemp)))
                     self.shuttingDown = True
                     break
 
-                if not pec:
-                    while age != ti.taskAge:
-                        newage = self.ageQs[self.cylinderId].get()
-                        assert newage == age+1
-                        age = newage
+                logger.info('Cylinder %d executing %s.', self.cylinderRank, ti)
+                self.localEnv['DISBATCH_STREAM_INDEX'], self.localEnv['DISBATCH_REPEAT_INDEX'], self.localEnv['DISBATCH_TASKID'] = str(ti.taskStreamIndex), str(ti.taskRepIndex), str(ti.taskId)
+                t0 = time.time()
+                try:
+                    self.taskProc = SUB.Popen(['/bin/bash', '-c', ti.taskCmd], env=self.localEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
+                    pid = self.taskProc.pid
+                    obp = OutputCollector(self.taskProc.stdout, 40, 40)
+                    ebp = OutputCollector(self.taskProc.stderr, 40, 40)
+                    ct = 0.0
+                    while True:
+                        # Popen.wait with timeout is resource intensive, so let's roll our own.
+                        r = self.taskProc.poll()
+                        if r is not None: break
+                        time.sleep(.1)
+                        ct += .1
+                        if ct >= PulseTime:
+                            self.kvs.put('.controller', ('task heart beat', (self.engineRank, -1 if self.cylinderRank == -1 else ti.taskId)))
+                            ct = 0.0
+                    self.taskProc = None
+                    t1 = time.time()
 
-                logger.info('Cylinder %d executing %s.', self.cylinderId, ti)
-                if not pec or msg != 'barrier notification':
-                    self.localEnv['DISBATCH_STREAM_INDEX'], self.localEnv['DISBATCH_REPEAT_INDEX'], self.localEnv['DISBATCH_TASKID'] = str(ti.taskStreamIndex), str(ti.taskRepIndex), str(ti.taskId)
-                    t0 = time.time()
-                    try:
-                        self.taskProc = SUB.Popen(['/bin/bash', '-c', ti.taskCmd], env=self.localEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
-                        pid = self.taskProc.pid
-                        obp = OutputCollector(self.taskProc.stdout, 40, 40)
-                        ebp = OutputCollector(self.taskProc.stderr, 40, 40)
-                        ct = 0.0
-                        while True:
-                            # Popen.wait with timeout is resource intensive, so let's roll our own.
-                            r = self.taskProc.poll()
-                            if r is not None: break
-                            time.sleep(.1)
-                            ct += .1
-                            if ct >= PulseTime:
-                                if not pec:
-                                    # For the time being, we don't "heart beat" per engine tasks, as
-                                    # losing one won't block the driver.
-                                    self.kvs.put('.controller', ('task heart beat', ti.taskId))
-                                ct = 0.0
-                        self.taskProc = None
-                        t1 = time.time()
+                    obp.stop()
+                    ebp.stop()
+                    tr = TaskReport(ti, self.context.node, pid, r, t0, t1, obp.bytes, str(obp), ebp.bytes, str(ebp))
+                except Exception as e:
+                    self.taskProc = None
+                    t1 = time.time()
+                    estr = 'Exception during task execution: ' + str(e)
+                    tr = TaskReport(ti, self.context.node, -1, getattr(e, 'errno', 200), t0, t1, 0, '', len(estr), estr)
 
-                        obp.stop()
-                        ebp.stop()
-                        tr = TaskReport(ti, self.context.node, pid, r, t0, t1, obp.bytes, str(obp), ebp.bytes, str(ebp))
-                    except Exception as e:
-                        self.taskProc = None
-                        t1 = time.time()
-                        estr = 'Exception during task execution: ' + str(e)
-                        tr = TaskReport(ti, self.context.node, -1, getattr(e, 'errno', 200), t0, t1, 0, '', len(estr), estr)
+                self.kvs.put('.controller', ('task done', (tr, self.engineRank, self.cylinderRank, self.fetchTask.keyTemp)))
 
-                    self.kvs.put('.controller', ('task done', (tr, self.engineRank, self.cylinderId, age, self.key)))
-
-                    logger.info('Cylinder %s completed: %s', self.cylinderId, tr)
-                else:
-                    logger.info('Cylinder %d finished %s.', self.cylinderId, ti)
-
-                if pec:
-                    age += 1
-                    for q in self.ageQs:
-                        q.put(age)
+                logger.info('Cylinder %s completed: %s', self.cylinderRank, tr)
 
     def __init__(self, kvs, context, rank):
         super(EngineBlock, self).__init__(name='EngineBlock')
@@ -1163,15 +1198,33 @@ class EngineBlock(Thread):
         self.kvs = kvs.clone()
         self.kvs.put('.controller', ('engine started', (self.rank, context.rank, myHostname, myPid, time.time())))
         env.update(self.kvs.view('.common env'))
-        # Note we are using the Queue construct from the
-        # mulitprocessing module---we need to coordinate between
-        # independent processes.
-        self.ageQs = [Queue() for x in range(cylinders)]
-        self.cylinders = [self.Cylinder(context, env, envres, self.ageQs, kvs, self.rank, x) for x in range(cylinders)]
-        self.pec = self.Cylinder(context, env, envres, self.ageQs, kvs, self.rank, -1)
-        self.age, self.finished, self.inFlight, self.liveCylinders, self.pending = 0, 0, 0, len(self.cylinders), DD(list)
-        self.kvs.put('engine %d'%self.rank, 'running')
+        
+        def indexKeyGen(temp):
+            c = 0
+            while 1:
+                yield temp%c
+                c += 1
+
+        def constantKeyGen(temp):
+            while 1: yield temp
+            
+        logger.info('Engine %d running start tasks', self.rank)
+        peStart = self.Cylinder(context, env, envres, kvs, self.rank, -1, self.FetchTask('.per engine START %d', indexKeyGen, kvsstcp.KVSClient.view))
+        peStart.join()
+        logger.info('Engine %d completed start tasks', self.rank)
+        
+        self.cylinders = [self.Cylinder(context, env, envres, kvs, self.rank, x, self.FetchTask('.cylinder %d %d'%(self.rank, x), constantKeyGen, kvsstcp.KVSClient.get)) for x in range(cylinders)]
+        self.finished, self.inFlight, self.liveCylinders = 0, 0, len(self.cylinders)
         self.start()
+        self.join()
+
+        logger.info('Engine %d running stop tasks', self.rank)
+        peStop = self.Cylinder(context, env, envres, kvs, self.rank, -1, self.FetchTask('.per engine STOP %d', indexKeyGen, kvsstcp.KVSClient.view))
+        peStop.join()
+        logger.info('Engine %d completed stop tasks', self.rank)
+
+        self.kvs.put('.controller', ('engine stopped', (self.finalStatus, self.rank)))
+        self.kvs.close()
 
     def run(self):
         #TODO: not currently checking for a per engine clean up
@@ -1180,15 +1233,11 @@ class EngineBlock(Thread):
         try:
             for c in self.cylinders:
                 c.join()
-            self.kvs.put('.controller', ('engine stopped', ('OK', self.rank)))
+            self.finalStatus = 'OK'
         except Exception as e:
             logger.exception('EngineBlock')
-            self.kvs.put('.controller', ('engine stopped', (str(e), self.rank)))
-        finally:
-            self.kvs.get('engine %d'%self.rank)
-            self.kvs.put('engine %d'%self.rank, 'engine stopped')
-            self.kvs.close()
-
+            self.finalStatus = str(e)
+        
 
 ##################################################################### MAIN
 
@@ -1199,9 +1248,9 @@ def contextArgs(argp):
     argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', default=[], help=argparse.SUPPRESS) #'Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)'
     argp.add_argument('--fill', action='store_true', help='Try to use extra cores if allocated cores exceeds requested cores.')
     argp.add_argument('-g', '--gpu', action='store_true', help='Use assigned GPU resources')
-    argp.add_argument('-k', '--retire-cmd', type=str, metavar='COMMAND', help='Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".')
-    argp.add_argument('-K', '--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
+    argp.add_argument('--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
     argp.add_argument('-l', '--label', type=str, metavar='COMMAND', help="Label for this context. Should be unique.")
+    argp.add_argument('--retire-cmd', type=str, metavar='COMMAND', help='Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".')
     argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:COUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
     argp.add_argument('-t', '--tasksPerNode', metavar='N', default=-1, type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
 
@@ -1225,6 +1274,9 @@ def main():
         kvs = kvsstcp.KVSClient(kvsserver)
         dbInfo = kvs.view('.db info')
         rank = register(kvs, 'engine')
+        if -1 == rank:
+            print('Run done, engine not registering.', file=sys.stderr)
+            sys.exit(0)
         context = kvs.view(args.kvsKey)
         try:
             os.chdir(dbInfo.wd)
@@ -1232,7 +1284,7 @@ def main():
             print('Failed to change working directory to "%s".'%dbInfo.wd, file=sys.stderr)
         context.setNode(args.node)
         logger = logging.getLogger('DisBatch Engine')
-        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
+        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.DEBUG}
         lconf['filename'] = '%s_%s_%s_engine_%d.log'%(dbInfo.uniqueId, context.label, args.node, rank)
         logging.basicConfig(**lconf)
         logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, rank, myHostname, myPid, os.getcwd())
@@ -1289,6 +1341,9 @@ def main():
             args.env_resource = dbInfo.args.env_resource
         
         rank = register(kvs, 'context')
+        if -1 == rank:
+            print('Run done, context not registering.', file=sys.stderr)
+            sys.exit(0)
         try:
             os.chdir(dbInfo.wd)
         except Exception as e:
@@ -1304,7 +1359,7 @@ def main():
             sys.exit(1)
 
         logger = logging.getLogger('DisBatch Context')
-        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
+        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.DEBUG}
         lconf['filename'] = '%s_%s.context.log'%(dbInfo.uniqueId, context.label)
         logging.basicConfig(**lconf)
         logging.info('%s context started on %s (%d) with args "%s.', context.sysid, myHostname, myPid, repr(sys.argv))
@@ -1333,17 +1388,18 @@ def main():
         context.finish()
     else:
         argp = argparse.ArgumentParser(description='Use batch resources to process a file of tasks, one task per line.')
-        argp.add_argument('-p', '--prefix', metavar='PATH', default='.', help='Path for log, dbUtil, and status files (default: "."). If ends with non-directory component, use as prefix for these files names (default: TASKFILE_JOBID).')
+        argp.add_argument('-e', '--exit-code', action='store_true', help='When any task fails, exit with non-zero status (default: only if disBatch itself fails)')
+        argp.add_argument('--force-resume', action='store_true', help="With -r, proceed even if task commands/lines are different.")
+        argp.add_argument('--kvsserver', nargs='?', default=True, metavar='HOST:PORT', help='Use a running KVS server.')
         argp.add_argument('--logfile', metavar='FILE', default=None, type=argparse.FileType('w'), help='Log file.')
         argp.add_argument('--mailFreq', default=None, type=int, metavar='N', help='Send email every N task completions (default: 1). "--mailTo" must be given.')
         argp.add_argument('--mailTo', metavar='ADDR', default=None, help='Mail address for task completion notification(s).')
-        argp.add_argument('-S', '--startup-only', action='store_true', help='Startup only the disBatch server (and KVS server if appropriate). Use "dbUtil..." script to add execution contexts. Incompatible with "--ssh-node".') #TODO: Add addDBExecContext file name override?
+        argp.add_argument('-p', '--prefix', metavar='PATH', default='.', help='Path for log, dbUtil, and status files (default: "."). If ends with non-directory component, use as prefix for these files names (default: TASKFILE_JOBID).')
         argp.add_argument('-r', '--resume-from', metavar='STATUSFILE', action='append', help='Read the status file from a previous run and skip any completed tasks (may be specified multiple times).')
         argp.add_argument('-R', '--retry', action='store_true', help='With -r, also retry any tasks which failed in previous runs (non-zero return).')
-        argp.add_argument('--force-resume', action='store_true', help="With -r, proceed even if task commands/lines are different.")
-        argp.add_argument('-e', '--exit-code', action='store_true', help='When any task fails, exit with non-zero status (default: only if disBatch itself fails)')
+        argp.add_argument('-S', '--startup-only', action='store_true', help='Startup only the disBatch server (and KVS server if appropriate). Use "dbUtil..." script to add execution contexts. Incompatible with "--ssh-node".') #TODO: Add addDBExecContext file name override?
+        argp.add_argument('--status-header', action='store_true', help="Add header line to status file.")
         argp.add_argument('-w', '--web', action='store_true', help='Enable web interface.')
-        argp.add_argument('--kvsserver', nargs='?', default=True, metavar='HOST:PORT', help='Use a running KVS server.')
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, metavar='COMMAND', help='Tasks will come from the command specified via the KVS server (passed in the environment).')
         source.add_argument('--taskserver', nargs='?', default=False, metavar='HOST:PORT', help='Tasks will come from the KVS server.')
@@ -1389,7 +1445,7 @@ def main():
             uniqueId = rp
             
         logger = logging.getLogger('DisBatch')
-        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.INFO}
+        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.DEBUG}
         if args.logfile:
             args.logfile.close()
             lconf['filename'] = args.logfile.name
@@ -1485,28 +1541,6 @@ def main():
         except Exception as e:
             logger.exception('Watchdog')
         finally:
-            try:
-                logger.info("Shutting down")
-                # TODO: Filter out engines with 0 slots (already shutdown)?
-                eks = []
-                for ex, e in driver.engines.items():
-                    eks.append(ex)
-                    e.stop()
-
-                logger.info("checking engines: %r", eks)
-                for attempt in [1, 2, 3]:
-                    neks = []
-                    for ek in eks:
-                        status = kvs.view('engine %d'%ek)
-                        logger.info('engine %s reports %s.', ek, status)
-                        if status != 'engine stopped':
-                            neks.append(ek)
-                    if not neks: break
-                    logger.info('Hold outs: %r', neks)
-                    eks = neks
-                    time.sleep(3)
-            except Exception as e:
-                logger.exception('During shutdown')
             if kvsst:
                 logger.info('Shutting down KVS server.')
                 kvs.shutdown()
