@@ -23,29 +23,21 @@ from threading import Thread
 # For SLURM, we have to jump through some hoops to deal with SLURM's
 # policy of copying the submission script to a SLURM specific
 # location, breaking the relationship with the location of the
-# module. In the git checkout case, the user needs to set
-# DISBATCH_ROOT. In the pip install case, we can leverage the fact
-# that pip replaces the #! interpreter with the path to the python
-# used to do the install. The disbatch module will be in this python's
-# path, so the first process will find this, and we can learn the
-# location for use by subsequent processes.
+# module. In the git checkout case, the user needs to set PYTHONPATH
+# to include the path to the "disbatch" subdir of the repo
+# checkout. In the pip install case, we can leverage the fact that pip
+# replaces the #! interpreter with the path to the python used to do
+# the install. The disbatch module will be in this python's path, so
+# the first process will find this, and we can learn the location for
+# use by subsequent processes.
 
 DisBatchPython = sys.executable
-DisBatchRoot = os.environ.get('DISBATCH_ROOT', None)
 DbUtilPath = None # This is a global that will be set once the disBatch starts.
 
-if DisBatchRoot:
-    if DisBatchRoot not in sys.path:
-        sys.path.append(DisBatchRoot)
-try:
-    import kvsstcp
-except:
-    print(f'disBatch environment is incomplete. Check:\n\tDISBATCH_ROOT {DisBatchRoot!r}.', file=sys.stderr)
-    sys.exit(1)
+import kvsstcp
 
-if DisBatchRoot == None:
-    # Trim off "disbatch/kvsstcp/__init__.py"
-    DisBatchRoot = os.path.sep.join(kvsstcp.__file__.split(os.path.sep)[:-3])
+# Trim off "disbatch/kvsstcp/__init__.py"
+DisBatchRoot = os.path.sep.join(kvsstcp.__file__.split(os.path.sep)[:-3])
     
 myHostname = socket.gethostname()
 myPid = os.getpid()
@@ -1257,8 +1249,7 @@ def contextArgs(argp):
     return ['context_task_limit', 'cpusPerTask', 'env_resource', 'fill', 'gpu', 'retire_cmd', 'label', 'ssh_node', 'tasksPerNode']
 
 
-def main():
-    #sys.setcheckinterval(1000000)
+def main(kvsq=None):
     global DbUtilPath
     global logger
 
@@ -1470,6 +1461,13 @@ def main():
             kvsenv = None
 
         logger.info('KVS Server: %s', kvsserver)
+        if kvsq:
+            # If kvsq is not None, that means disBatch is being
+            # started programmatically (in a new thread).  kvsq will
+            # be used to communicate KVS contact info back to the code
+            # doing the start up.
+            kvsq.put(kvsserver)
+        
         kvs = kvsstcp.KVSClient(kvsserver)
         # Make pickle compatible copy of args.
         targs = copy.copy(args)
@@ -1488,7 +1486,8 @@ def main():
             taskSource = KVSTaskSource(kvs)
             if args.taskcommand:
                 logger.info('Tasks will come from: '+repr(args.taskcommand))
-                taskProcess = TaskProcess(taskSource, args.taskcommand, shell=True, env=kvsenv, close_fds=True)
+                if kvsq == None:
+                    taskProcess = TaskProcess(taskSource, args.taskcommand, shell=True, env=kvsenv, close_fds=True)
                 taskSource.waitForSignIn()
                 resultKey = taskSource.resultkey
                 logger.info('Task source name: '+taskSource.name.decode('utf8')) #TODO: Think about the decoding a bit more?
@@ -1563,5 +1562,52 @@ def main():
             print('Some tasks failed with non-zero exit codes -- please check the logs', file=sys.stderr)
             sys.exit(1)
 
-if '__main__' == __name__:
-    main()
+class DisBatcher(object):
+    def __init__(self, tasksname='DisBatcher', args=[], kvsserver=None):
+        if kvsserver == None:
+            # Start disBatch in a thread.
+            # disBatch in turn will start KVS, we use this Queue to
+            # get the connection info for the KVS server.
+            kvsq = Queue() 
+            save_sa = sys.argv
+            sys.argv = [sys.argv[0] + '.disBatch'] + ['--taskcommand', '#VIA DISBATCHER#'] + args
+            print(sys.argv)
+            self.db_thread = Thread(target=main, name="disBatch driver", args=(kvsq,))
+            self.db_thread.start()
+            kvsserver = kvsq.get()
+            sys.argv = save_sa
+        else:
+            self.db_thread = None
+
+        self.donetask = tasksname + ' done!'
+        self.resultkey = tasksname + ' result %d'
+        self.taskkey = tasksname + ' task'
+
+        self.kvs = kvsstcp.KVSClient(kvsserver)
+        self.kvs.put('task source name', tasksname, False)
+        self.kvs.put('task source done task', self.donetask, False)
+        self.kvs.put('task source result key', self.resultkey, False)
+        self.kvs.put('task source task key', self.taskkey, False)
+
+        self.tid2status = {}
+
+    def done(self):
+        self.kvs.put(self.taskkey, self.donetask, False)
+        if self.db_thread:
+            self.db_thread.join()
+            
+    def submit(self, c):
+        '''Add a task to the disBatch queue. These can include #DISBATCH directives. It is up to the user to track the corresponding task ids.'''
+        self.kvs.put(self.taskkey, c, False)
+
+    def syncTasks(self, taskIds):
+        '''Wait for specified task ids to complete and collect results, returning a dict from task id to return code and status report.'''
+        tid2status= {}
+        for tid in taskIds:
+            if tid not in self.tid2status:
+                r = self.kvs.get(self.resultkey%tid, False).decode('utf-8') # If encoding is False, we just get raw utf-8 bytes.
+                lags, taskId, streamIndex, repIndex, host, pid, returncode, time, start, end, outbytes, errbytes, cmd = r.split('\t', 12)
+                # do something with the rest of these results?
+                self.tid2status[tid] = (int(returncode), r)
+            tid2status[tid] = self.tid2status[tid]
+        return tid2status

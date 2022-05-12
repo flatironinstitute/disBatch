@@ -1,1 +1,6 @@
 /build/
+/exampleTaskFiles/*.log
+/exampleTaskFiles/*_disBatch_*
+/exampleTaskFiles/slurm*out
+/exampleTaskFiles/slurm*resize.*sh
+/exampleTaskFiles/dbTestOutputDir

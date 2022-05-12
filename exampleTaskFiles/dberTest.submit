@@ -1,0 +1,3 @@
+#!/bin/bash
+
+PYTHONPATH=$(readlink -f ${SLURM_SUBMIT_DIR}/../disbatch):$PYTHONPATH ./dberTest.py 23 --fill &> dberTestSLURM.log
