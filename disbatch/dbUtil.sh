@@ -1,13 +1,13 @@
 #!/bin/bash
 
-export DISBATCH_KVSSTCP_HOST={kvsserver:s} DISBATCH_ROOT={DisBatchRoot:s}
+export DISBATCH_KVSSTCP_HOST={kvsserver:s} PYTHONPATH={DisBatchRoot:s}:${{PYTHONPATH}}
 
 if [[ $1 == '--mon' ]]
 then
-    exec {DisBatchPython} ${{DISBATCH_ROOT}}/disbatch/dbMon.py {uniqueId:s}
+    exec {DisBatchPython} {DisBatchRoot:s}/disbatch/dbMon.py {uniqueId:s}
 elif [[ $1 == '--engine' ]]
 then
-    exec {DisBatchPython} ${{DISBATCH_ROOT}}/disbatch/disBatch_cli.py "$@"
+    exec {DisBatchPython} -c 'from disbatch import disBatch ; disBatch.main()' "$@"
 else
-    exec {DisBatchPython} ${{DISBATCH_ROOT}}/disbatch/disBatch_cli.py --context {DbUtilPath:} "$@" < /dev/null &> {uniqueId:s}_${{BASHPID}}_context_launch.log
+    exec {DisBatchPython} -c 'from disbatch import disBatch ; disBatch.main()' --context {DbUtilPath:} "$@" < /dev/null &> {uniqueId:s}_${{BASHPID}}_context_launch.log
 fi

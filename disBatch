@@ -1,1 +1,11 @@
-disbatch/disBatch_cli.py
+#!/usr/bin/env python3
+
+try:
+    from disbatch import disBatch
+except:
+    import os, sys
+    pp = os.environ.get('PYTHONPATH', '<Not Set>')
+    print(f'disBatch environment is incomplete. Check:\n\tPYTHONPATH {pp!r}.', file=sys.stderr)
+    sys.exit(1)
+
+disBatch.main()
