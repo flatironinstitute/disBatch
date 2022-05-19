@@ -93,9 +93,63 @@ def killPatiently(sub, name, timeout=15):
     return r
 
 def register(kvs, which):
+    # Contact the controller to be assigned an identifier via a random
+    # key.
     key = '%d'%(10e7*random.random())
     kvs.put('.controller', ('register', (which, key)))
     return kvs.get(key)
+
+class DisBatcher(object):
+    '''Encapsualtes a disBatch instance.'''
+
+    def __init__(self, tasksname='DisBatcher', args=[], kvsserver=None):
+        if kvsserver == None:
+            # Start disBatch in a thread.
+            # disBatch in turn will start KVS, we use this Queue to
+            # get the connection info for the KVS server.
+            kvsq = Queue() 
+            save_sa = sys.argv
+            sys.argv = [sys.argv[0] + '.disBatch', '--taskcommand', '#VIA DISBATCHER#'] + args
+            print(sys.argv)
+            self.db_thread = Thread(target=main, name="disBatch driver", args=(kvsq,))
+            self.db_thread.start()
+            kvsserver = kvsq.get()
+            sys.argv = save_sa
+        else:
+            self.db_thread = None
+
+        self.donetask = tasksname + ' done!'
+        self.resultkey = tasksname + ' result %d'
+        self.taskkey = tasksname + ' task'
+
+        self.kvs = kvsstcp.KVSClient(kvsserver)
+        self.kvs.put('task source name', tasksname, False)
+        self.kvs.put('task source done task', self.donetask, False)
+        self.kvs.put('task source result key', self.resultkey, False)
+        self.kvs.put('task source task key', self.taskkey, False)
+
+        self.tid2status = {}
+
+    def done(self):
+        self.kvs.put(self.taskkey, self.donetask, False)
+        if self.db_thread:
+            self.db_thread.join()
+            
+    def submit(self, c):
+        '''Add a task to the disBatch queue. These can include #DISBATCH directives. It is up to the user to track the corresponding task ids.'''
+        self.kvs.put(self.taskkey, c, False)
+
+    def syncTasks(self, taskIds):
+        '''Wait for specified task ids to complete and collect results, returning a dict from task id to return code and status report.'''
+        tid2status= {}
+        for tid in taskIds:
+            if tid not in self.tid2status:
+                r = self.kvs.get(self.resultkey%tid, False).decode('utf-8') # If encoding is False, we just get raw utf-8 bytes.
+                lags, taskId, streamIndex, repIndex, host, pid, returncode, time, start, end, outbytes, errbytes, cmd = r.split('\t', 12)
+                # do something with the rest of these results?
+                self.tid2status[tid] = (int(returncode), r)
+            tid2status[tid] = self.tid2status[tid]
+        return tid2status
 
 class DisBatchInfo:
     def __init__(self, args, name, uniqueId, wd):
@@ -1561,53 +1615,3 @@ def main(kvsq=None):
         if args.exit_code and driver.failed:
             print('Some tasks failed with non-zero exit codes -- please check the logs', file=sys.stderr)
             sys.exit(1)
-
-class DisBatcher(object):
-    def __init__(self, tasksname='DisBatcher', args=[], kvsserver=None):
-        if kvsserver == None:
-            # Start disBatch in a thread.
-            # disBatch in turn will start KVS, we use this Queue to
-            # get the connection info for the KVS server.
-            kvsq = Queue() 
-            save_sa = sys.argv
-            sys.argv = [sys.argv[0] + '.disBatch'] + ['--taskcommand', '#VIA DISBATCHER#'] + args
-            print(sys.argv)
-            self.db_thread = Thread(target=main, name="disBatch driver", args=(kvsq,))
-            self.db_thread.start()
-            kvsserver = kvsq.get()
-            sys.argv = save_sa
-        else:
-            self.db_thread = None
-
-        self.donetask = tasksname + ' done!'
-        self.resultkey = tasksname + ' result %d'
-        self.taskkey = tasksname + ' task'
-
-        self.kvs = kvsstcp.KVSClient(kvsserver)
-        self.kvs.put('task source name', tasksname, False)
-        self.kvs.put('task source done task', self.donetask, False)
-        self.kvs.put('task source result key', self.resultkey, False)
-        self.kvs.put('task source task key', self.taskkey, False)
-
-        self.tid2status = {}
-
-    def done(self):
-        self.kvs.put(self.taskkey, self.donetask, False)
-        if self.db_thread:
-            self.db_thread.join()
-            
-    def submit(self, c):
-        '''Add a task to the disBatch queue. These can include #DISBATCH directives. It is up to the user to track the corresponding task ids.'''
-        self.kvs.put(self.taskkey, c, False)
-
-    def syncTasks(self, taskIds):
-        '''Wait for specified task ids to complete and collect results, returning a dict from task id to return code and status report.'''
-        tid2status= {}
-        for tid in taskIds:
-            if tid not in self.tid2status:
-                r = self.kvs.get(self.resultkey%tid, False).decode('utf-8') # If encoding is False, we just get raw utf-8 bytes.
-                lags, taskId, streamIndex, repIndex, host, pid, returncode, time, start, end, outbytes, errbytes, cmd = r.split('\t', 12)
-                # do something with the rest of these results?
-                self.tid2status[tid] = (int(returncode), r)
-            tid2status[tid] = self.tid2status[tid]
-        return tid2status
