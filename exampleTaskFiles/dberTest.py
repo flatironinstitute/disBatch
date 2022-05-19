@@ -33,7 +33,7 @@ for x in range(NumTasks):
 # idempotent.
 tid2status = db.syncTasks(tasks)
 for tid in tasks:
-    print('task %d: %s returned %d, "%s"'%(tid, repr(tasks[tid]), tid2status[tid][0], tid2status[tid][1]))
+    print('task %d: %s returned %d, matched: %s'%(tid, repr(tasks[tid]), tid2status[tid]['ReturnCode'], tasks[tid] == tid2status[tid]['TaskCmd']))
 
 # Now try a repeat construct. Force an error for the index 112.
 db.submit(f'#DISBATCH REPEAT {NumTasks} start 100 step 3 x=${{DISBATCH_REPEAT_INDEX}} ; {{ date ; hostname ; sleep 2 ; echo $x^3 $(( x * x * x )) ; [[ $x == 112 ]] && exit 1 ; date ; }} > cube.log_$(printf "%03d" $x) 2>&1')
@@ -42,7 +42,7 @@ db.submit(f'#DISBATCH REPEAT {NumTasks} start 100 step 3 x=${{DISBATCH_REPEAT_IN
 tids = range(NumTasks, 2*NumTasks)
 tid2status = db.syncTasks(tids)
 for tid in tids:
-    print('task %d: returned %d, "%s"'%(tid, tid2status[tid][0], tid2status[tid][1]))
+    print('task %d: returned %d, "%s"'%(tid, tid2status[tid]['ReturnCode'], tid2status[tid]['TaskCmd']))
 
 # Tell DisBatcher no more tasks are coming.
 db.done()
