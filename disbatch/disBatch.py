@@ -100,7 +100,7 @@ def register(kvs, which):
     return kvs.get(key)
 
 class DisBatcher(object):
-    '''Encapsualtes a disBatch instance.'''
+    '''Encapsulates a disBatch instance.'''
 
     def __init__(self, tasksname='DisBatcher', args=[], kvsserver=None):
         if kvsserver == None:
@@ -110,7 +110,6 @@ class DisBatcher(object):
             kvsq = Queue() 
             save_sa = sys.argv
             sys.argv = [sys.argv[0] + '.disBatch', '--taskcommand', '#VIA DISBATCHER#'] + args
-            print(sys.argv)
             self.db_thread = Thread(target=main, name="disBatch driver", args=(kvsq,))
             self.db_thread.start()
             kvsserver = kvsq.get()
@@ -131,23 +130,26 @@ class DisBatcher(object):
         self.tid2status = {}
 
     def done(self):
+        '''Tell disBatch that there are no more tasks, which will cause it to
+shutdown when existing tasks have completed.'''
         self.kvs.put(self.taskkey, self.donetask, False)
         if self.db_thread:
             self.db_thread.join()
             
     def submit(self, c):
-        '''Add a task to the disBatch queue. These can include #DISBATCH directives. It is up to the user to track the corresponding task ids.'''
+        '''Add a task to the disBatch queue. These can include #DISBATCH
+directives. It is up to the user to track the corresponding task
+ids.'''
         self.kvs.put(self.taskkey, c, False)
 
     def syncTasks(self, taskIds):
-        '''Wait for specified task ids to complete and collect results, returning a dict from task id to return code and status report.'''
+        '''Wait for specified task ids to complete and collect results,
+returning a dictionary from task id to status report, itself a
+dictionary in json format.'''
         tid2status= {}
         for tid in taskIds:
             if tid not in self.tid2status:
-                r = self.kvs.get(self.resultkey%tid, False).decode('utf-8') # If encoding is False, we just get raw utf-8 bytes.
-                lags, taskId, streamIndex, repIndex, host, pid, returncode, time, start, end, outbytes, errbytes, cmd = r.split('\t', 12)
-                # do something with the rest of these results?
-                self.tid2status[tid] = (int(returncode), r)
+                self.tid2status[tid] = json.loads(self.kvs.get(self.resultkey%tid, False).decode('utf-8')) # If encoding is False, we just get raw utf-8 bytes.
             tid2status[tid] = self.tid2status[tid]
         return tid2status
 
@@ -413,10 +415,15 @@ class TaskReport:
             return self.taskInfo.kind + '    '
 
     header =  'ROE[ PSZ]\tTaskID\tLineNum\tRepeatIndex\tNode\tPID\tReturnCode\tElapsed\tStart\tFinish\tBytesOfLeakedOutput\tOutputSnippet\tBytesOfLeakedError\tErrorSnippet\tCommand'
-    def __str__(self):
-        # If this changes, update disBatcher.py too
+    fields = ['Flags', 'TaskId', 'TaskStreamIndex', 'TaskRepIndex', 'Host', 'PID', 'ReturnCode', 'Elapsed', 'Start', 'End', 'OutBytes', 'OutData', 'ErrBytes', 'ErrData', 'TaskCmd']
+    def reportDict(self):
         ti = self.taskInfo
-        return '\t'.join([str(x) for x in [self.flags(), ti.taskId, ti.taskStreamIndex, ti.taskRepIndex, self.host, self.pid, self.returncode, '%.3f'%(self.end - self.start), '%.3f'%self.start, '%.3f'%self.end, self.outbytes, repr(self.outdata), self.errbytes, repr(self.errdata), repr(ti.taskCmd)]])
+        rd =  dict(zip(TaskReport.fields, [self.flags(), ti.taskId, ti.taskStreamIndex, ti.taskRepIndex, self.host, self.pid, self.returncode, '%.3f'%(self.end - self.start), '%.3f'%self.start, '%.3f'%self.end, self.outbytes, repr(self.outdata), self.errbytes, repr(self.errdata), ti.taskCmd]))
+        return rd
+
+    def __str__(self):
+        rd = self.reportDict()
+        return '\t'.join([str(rd[f]) for f in TaskReport.fields])
 
 def parseStatusFiles(*files):
     status = dict()
@@ -963,7 +970,7 @@ class Driver(Thread):
                     # one per key
                     if self.trackResults:
                         logging.debug('Tracking result key: %r, value: %r', self.trackResults%tinfo.taskId, report)
-                        self.kvs.put(self.trackResults%tinfo.taskId, report, False)
+                        self.kvs.put(self.trackResults%tinfo.taskId, json.dumps(tReport.reportDict()), False)
                     if self.db_info.args.mailTo and self.finished%self.db_info.args.mailFreq == 0:
                         self.sendNotification()
             elif msg == 'task heart beat':
