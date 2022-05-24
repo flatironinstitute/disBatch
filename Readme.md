@@ -119,10 +119,9 @@ These fields are:
 
 **Users of Flatiron resources: disBatch is available via the module system. You do not need to clone this repo to use it.**
 
-`disBatch.py` requires the `kvsstcp` package, which should be installed in python's path, or placed in this directory.
-You can simply clone this git repository with `--recursive` (or run `git submodule update --init` if you've already cloned it).
-
-Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable `DISBATCH_ROOT` to the path of the directory containing the subdirectory `disbatch`. 
+disBatch requires the `kvsstcp` package, which should be installed in python's path, or placed in this directory.
+You can simply clone this git repository with `--recursive` (or run `git submodule update --init` if you've already cloned it) to get both.
+No additional installation steps are required. You can run `disBatch` directly from the top level directory of the git clone, but depending on your execution environment (e.g., using SLURM), the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable `PYTHONPATH` to include the path of the git clone (the directory containing this "Readme.md" file). 
 
 disBatch is designed to support a variety of execution environments, from your own desktop, to a local collection of workstations, to large clusters managed by job schedulers.
 It currently supports SLURM and can be executed from `sbatch`, but it is architected to make it simple to add support for other resource managers.
@@ -143,13 +142,13 @@ disBatch refers to a collection of execution resources as a *context* and the re
 
 ## Invocation
 ~~~~
-usage: disBatch.py [-h] [-e] [--force-resume] [--kvsserver [HOST:PORT]]
-                   [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-p PATH]
-                   [-r STATUSFILE] [-R] [-S] [--status-header] [-w]
-                   [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
-                   [-C TASK_LIMIT] [-c N] [--fill] [-g] [--no-retire]
-                   [-l COMMAND] [--retire-cmd COMMAND] [-s HOST:COUNT] [-t N]
-                   [taskfile]
+usage: disBatch [-h] [-e] [--force-resume] [--kvsserver [HOST:PORT]]
+                [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-p PATH]
+                [-r STATUSFILE] [-R] [-S] [--status-header] [-w]
+                [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
+                [-C TASK_LIMIT] [-c N] [--fill] [-g] [--no-retire]
+                [-l COMMAND] [--retire-cmd COMMAND] [-s HOST:COUNT] [-t N]
+                [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
 
@@ -228,7 +227,7 @@ While running this command, the follow environment variables will be set: `NODE`
 
 The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, `GPU_DEVICE_ORDINAL`) provided on each node and divides the resources between the running tasks.  For example, with slurm, if you want to run on _n_ nodes, with _t_ tasks per node, each using _c_ CPUs and 1 GPU (that is, _tc_ CPUs and _t_ GPUs per node, or _ntc_ CPUs and _nt_ GPUs total), you can do:
 
-    sbatch -N$n -c$c --ntasks-per-node=$t --gres=gpu:$t -p gpu --wrap 'disBatch.py -g $taskfile'`
+    sbatch -N$n -c$c --ntasks-per-node=$t --gres=gpu:$t -p gpu --wrap 'disBatch -g $taskfile'`
 
 `-S` Starts disBatch in a mode in which it waits for execution resources to be added. In this mode, disBatch starts up the task management system and
 generates a script `<Prefix>_dbUtil.sh`, where `<Prefix>` refers to the `-p` option or default, see above. We'll call this simply `dbUtils.sh` here,
