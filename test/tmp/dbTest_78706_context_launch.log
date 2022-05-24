@@ -1,8 +1,0 @@
-Traceback (most recent call last):
-  File "/mnt/home/yliu/projects/disBatch/2.0-beta//disBatch.py", line 1223, in <module>
-    kvs = kvsstcp.KVSClient(kvsserver)
-  File "/mnt/home/yliu/projects/disBatch/2.0-beta/kvsstcp/kvsclient.py", line 43, in __init__
-    self.connect(retry)
-  File "/mnt/home/yliu/projects/disBatch/2.0-beta/kvsstcp/kvsclient.py", line 140, in connect
-    self.socket.connect(self.addr)
-ConnectionRefusedError: [Errno 111] Connection refused
