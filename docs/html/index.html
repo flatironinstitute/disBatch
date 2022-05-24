@@ -41,7 +41,23 @@
               <!-- Local TOC -->
               <div class="local-toc"><ul>
 <li><a class="reference internal" href="#">Distributed processing of a batch of tasks.</a><ul>
-<li><a class="reference internal" href="#invocation">## Invocation</a></li>
+<li><a class="reference internal" href="#overview">Overview</a><ul>
+<li><a class="reference internal" href="#status-file">Status file</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#installation">Installation</a></li>
+<li><a class="reference internal" href="#invocation">Invocation</a><ul>
+<li><a class="reference internal" href="#considerations-for-large-runs">Considerations for large runs</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#disbatch-directives">#DISBATCH directives</a><ul>
+<li><a class="reference internal" href="#prefix-and-suffix">PREFIX and SUFFIX</a></li>
+<li><a class="reference internal" href="#barrier">BARRIER</a></li>
+<li><a class="reference internal" href="#repeat">REPEAT</a></li>
+<li><a class="reference internal" href="#perengine">PERENGINE</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#license">License</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#contents">Contents:</a></li>
@@ -74,16 +90,17 @@
              
   <section id="distributed-processing-of-a-batch-of-tasks">
 <h1>Distributed processing of a batch of tasks.<a class="headerlink" href="#distributed-processing-of-a-batch-of-tasks" title="Permalink to this headline"></a></h1>
-<p>## Overview</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Permalink to this headline"></a></h2>
 <p>One common usage pattern for distributed computing involves processing a
 long list of commands (aka <em>tasks</em>):</p>
-<blockquote>
-<div><p>( cd /path/to/workdir ; source SetupEnv ; myprog -a 0 -b 0 -c 0 ) &amp;&gt; task_0_0_0.log
-( cd /path/to/workdir ; source SetupEnv ; myprog -a 0 -b 0 -c 1 ) &amp;&gt; task_0_0_1.log
-…
-( cd /path/to/workdir ; source SetupEnv ; myprog -a 9 -b 9 -c 8 ) &amp;&gt; task_9_9_8.log
-( cd /path/to/workdir ; source SetupEnv ; myprog -a 9 -b 9 -c 9 ) &amp;&gt; task_9_9_9.log</p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="p">(</span> <span class="n">cd</span> <span class="o">/</span><span class="n">path</span><span class="o">/</span><span class="n">to</span><span class="o">/</span><span class="n">workdir</span> <span class="p">;</span> <span class="n">source</span> <span class="n">SetupEnv</span> <span class="p">;</span> <span class="n">myprog</span> <span class="o">-</span><span class="n">a</span> <span class="mi">0</span> <span class="o">-</span><span class="n">b</span> <span class="mi">0</span> <span class="o">-</span><span class="n">c</span> <span class="mi">0</span> <span class="p">)</span> <span class="o">&amp;&gt;</span> <span class="n">task_0_0_0</span><span class="o">.</span><span class="n">log</span>
+<span class="p">(</span> <span class="n">cd</span> <span class="o">/</span><span class="n">path</span><span class="o">/</span><span class="n">to</span><span class="o">/</span><span class="n">workdir</span> <span class="p">;</span> <span class="n">source</span> <span class="n">SetupEnv</span> <span class="p">;</span> <span class="n">myprog</span> <span class="o">-</span><span class="n">a</span> <span class="mi">0</span> <span class="o">-</span><span class="n">b</span> <span class="mi">0</span> <span class="o">-</span><span class="n">c</span> <span class="mi">1</span> <span class="p">)</span> <span class="o">&amp;&gt;</span> <span class="n">task_0_0_1</span><span class="o">.</span><span class="n">log</span>
+<span class="o">...</span>
+<span class="p">(</span> <span class="n">cd</span> <span class="o">/</span><span class="n">path</span><span class="o">/</span><span class="n">to</span><span class="o">/</span><span class="n">workdir</span> <span class="p">;</span> <span class="n">source</span> <span class="n">SetupEnv</span> <span class="p">;</span> <span class="n">myprog</span> <span class="o">-</span><span class="n">a</span> <span class="mi">9</span> <span class="o">-</span><span class="n">b</span> <span class="mi">9</span> <span class="o">-</span><span class="n">c</span> <span class="mi">8</span> <span class="p">)</span> <span class="o">&amp;&gt;</span> <span class="n">task_9_9_8</span><span class="o">.</span><span class="n">log</span>
+<span class="p">(</span> <span class="n">cd</span> <span class="o">/</span><span class="n">path</span><span class="o">/</span><span class="n">to</span><span class="o">/</span><span class="n">workdir</span> <span class="p">;</span> <span class="n">source</span> <span class="n">SetupEnv</span> <span class="p">;</span> <span class="n">myprog</span> <span class="o">-</span><span class="n">a</span> <span class="mi">9</span> <span class="o">-</span><span class="n">b</span> <span class="mi">9</span> <span class="o">-</span><span class="n">c</span> <span class="mi">9</span> <span class="p">)</span> <span class="o">&amp;&gt;</span> <span class="n">task_9_9_9</span><span class="o">.</span><span class="n">log</span>
+</pre></div>
+</div>
 <p>One could do this by submitting 1,000 separate jobs to a cluster computer, but that may
 present problems for the queuing system and can behave badly if the
 system is configured to handle jobs in a simple first come, first serve
@@ -104,358 +121,327 @@ command sequence. For example, the file could consists of the 1000 commands list
 after the other until all specified execution resources are in use. Then as one
 executing task exits, the next task in the file is launched. This repeats until all
 the lines in the file have been processed.</p>
-<p>Each task is run in a new shell. If you want to manipulate the execution environment of a task, add the appropriate operations to the command sequence&amp;mdash;`source SetupEnv` in the above is one example. For another, if you just need to set an environment variable, each task line would look something like:</p>
-<blockquote>
-<div><p>export PYTHONPATH=/d0/d1/d2:$PYTHONPATH ; rest ; of ; command ; sequence</p>
-</div></blockquote>
+<p>Each task is run in a new shell. If you want to manipulate the execution environment of a task, add the appropriate operations to the command sequence&amp;mdash;<code class="docutils literal notranslate"><span class="pre">source</span> <span class="pre">SetupEnv</span></code> in the above is one example. For another, if you just need to set an environment variable, each task line would look something like:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>export PYTHONPATH=/d0/d1/d2:$PYTHONPATH ; rest ; of ; command ; sequence
+</pre></div>
+</div>
 <p>Or, for more complex set ups, command sequences and input/output redirection requirements, you could place everything in a small shell script with appropriate arguments for the parts that vary from task to task, say RunMyprog.sh:</p>
-<blockquote>
-<div><p>#!/bin/bash</p>
-<p>id=$1
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>#!/bin/bash
+
+id=$1
 shift
 cd /path/to/workdir
 module purge
-module load gcc python3</p>
-<p>export PYTHONPATH=/d0/d1/d2:$PYTHONPATH
-myProg “$&#64;” &gt; results/${id}.out 2&gt; logs/${id}.log</p>
-</div></blockquote>
+module load gcc python3
+
+export PYTHONPATH=/d0/d1/d2:$PYTHONPATH
+myProg &quot;$@&quot; &gt; results/${id}.out 2&gt; logs/${id}.log
+</pre></div>
+</div>
 <p>The task file would then contain:</p>
-<blockquote>
-<div><p>./RunMyprog.sh 0_0_0 -a 0 -b 0 -c 0
-./RunMyprog.sh 0_0_1 -a 0 -b 0 -c 1
-…
-./RunMyprog.sh 9_9_8 -a 9 -b 9 -c 8
-./RunMyprog.sh 9_9_9 -a 9 -b 9 -c 9</p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">./</span><span class="n">RunMyprog</span><span class="o">.</span><span class="n">sh</span> <span class="mi">0_0_0</span> <span class="o">-</span><span class="n">a</span> <span class="mi">0</span> <span class="o">-</span><span class="n">b</span> <span class="mi">0</span> <span class="o">-</span><span class="n">c</span> <span class="mi">0</span>
+<span class="o">./</span><span class="n">RunMyprog</span><span class="o">.</span><span class="n">sh</span> <span class="mi">0_0_1</span> <span class="o">-</span><span class="n">a</span> <span class="mi">0</span> <span class="o">-</span><span class="n">b</span> <span class="mi">0</span> <span class="o">-</span><span class="n">c</span> <span class="mi">1</span>
+<span class="o">...</span>
+<span class="o">./</span><span class="n">RunMyprog</span><span class="o">.</span><span class="n">sh</span> <span class="mi">9_9_8</span> <span class="o">-</span><span class="n">a</span> <span class="mi">9</span> <span class="o">-</span><span class="n">b</span> <span class="mi">9</span> <span class="o">-</span><span class="n">c</span> <span class="mi">8</span>
+<span class="o">./</span><span class="n">RunMyprog</span><span class="o">.</span><span class="n">sh</span> <span class="mi">9_9_9</span> <span class="o">-</span><span class="n">a</span> <span class="mi">9</span> <span class="o">-</span><span class="n">b</span> <span class="mi">9</span> <span class="o">-</span><span class="n">c</span> <span class="mi">9</span>
+</pre></div>
+</div>
 <p>See #DISBATCH directives below for ways to simplify task lines.</p>
 <p>Once you have created the task file, running disBatch is straightforward. For example, working with a cluster managed by SLURM,
 all that needs to be done is to submit a job like the following:</p>
-<blockquote>
-<div><p>sbatch -n 20 –ntasks-per-node 5 disBatch TaskFileName</p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">sbatch</span> <span class="o">-</span><span class="n">n</span> <span class="mi">20</span> <span class="o">--</span><span class="n">ntasks</span><span class="o">-</span><span class="n">per</span><span class="o">-</span><span class="n">node</span> <span class="mi">5</span> <span class="n">disBatch</span> <span class="n">TaskFileName</span>
+</pre></div>
+</div>
 <p>This particular invocation will allocate sufficient resources to process
 20 tasks at a time, with no more than five running concurrently on any
 given node. disBatch will use environment variables initialized by SLURM to determine the execution resources to use for the run.
 This invocation assumes an appropriately installed disBatch is in your PATH, see below for installation notes.</p>
 <p>Various log files will be created as the run unfolds:</p>
 <ul class="simple">
-<li><p><cite>TaskFileName_134504_status.txt</cite> (assuming the SLURM Job ID is <cite>134504</cite>): status of every task (details below)</p></li>
-<li><p><cite>disBatch_134504_driver.txt</cite> (can be changed with <cite>-l</cite>), <cite>TaskFileName_134504_worker032_engine.txt</cite>:
+<li><p><code class="docutils literal notranslate"><span class="pre">TaskFileName_134504_status.txt</span></code> (assuming the SLURM Job ID is <code class="docutils literal notranslate"><span class="pre">134504</span></code>): status of every task (details below)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">disBatch_134504_driver.txt</span></code> (can be changed with <code class="docutils literal notranslate"><span class="pre">-l</span></code>), <code class="docutils literal notranslate"><span class="pre">TaskFileName_134504_worker032_engine.txt</span></code>:
 The disBatch log file contains details mostly of interest in case of a
 problem with disBatch itself. It can generally be ignored by end
 users (but keep it around in the event that something did go
 wrong&amp;mdash;it will aid debugging). The <a href="#id1"><span class="problematic" id="id2">``</span></a><a href="#id3"><span class="problematic" id="id4">*</span></a>_engine.txt’’ files contain similar information for each node acting as an execution resource</p></li>
-<li><p><cite>disBatch_134504_kvsinfo.txt</cite>: TCP address of invoked KVS server if any (for additional advanced status monitoring)</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">disBatch_134504_kvsinfo.txt</span></code>: TCP address of invoked KVS server if any (for additional advanced status monitoring)</p></li>
 </ul>
-<p>### Status file</p>
-<p>The <cite>_status.txt</cite> file contains tab-delimited lines of the form:</p>
-<blockquote>
-<div><p>314 315     -1      worker032       8016    0       10.0486528873   1458660919.78   1458660929.83   0       “”      0       “”      ‘cd /path/to/workdir ; myprog -a 3 -b 1 -c 4 &gt; task_3_1_4.log 2&gt;&amp;1’</p>
-</div></blockquote>
+<section id="status-file">
+<h3>Status file<a class="headerlink" href="#status-file" title="Permalink to this headline"></a></h3>
+<p>The <code class="docutils literal notranslate"><span class="pre">_status.txt</span></code> file contains tab-delimited lines of the form:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="mi">314</span> <span class="mi">315</span> <span class="o">-</span><span class="mi">1</span>  <span class="n">worker032</span>   <span class="mi">8016</span>    <span class="mi">0</span>   <span class="mf">10.0486528873</span>   <span class="mf">1458660919.78</span>   <span class="mf">1458660929.83</span>   <span class="mi">0</span>   <span class="s2">&quot;&quot;</span>  <span class="mi">0</span>   <span class="s2">&quot;&quot;</span>  <span class="s1">&#39;cd /path/to/workdir ; myprog -a 3 -b 1 -c 4 &gt; task_3_1_4.log 2&gt;&amp;1&#39;</span>
+</pre></div>
+</div>
 <p>These fields are:</p>
-<blockquote>
-<div><ol class="arabic simple">
-<li><p>Flags: The first field, blank in this case, may contain <cite>E</cite>, <cite>O</cite>, <cite>R</cite>, <cite>B</cite>, or <cite>S</cite> flags.
+<ol class="arabic simple">
+<li><p>Flags: The first field, blank in this case, may contain <code class="docutils literal notranslate"><span class="pre">E</span></code>, <code class="docutils literal notranslate"><span class="pre">O</span></code>, <code class="docutils literal notranslate"><span class="pre">R</span></code>, <code class="docutils literal notranslate"><span class="pre">B</span></code>, or <code class="docutils literal notranslate"><span class="pre">S</span></code> flags.
 Each program/task should be invoked in such a way that standard error
 and standard output end up in appropriate files. If that’s not the case
-<cite>E</cite> or <cite>O</cite> flags will be raised. <cite>R</cite> indicates that the task
-returned a non-zero exit code. <cite>B</cite> indicates a barrier (see below). <cite>S</cite> indicates the job was skipped (this may happen during “resume” runs).</p></li>
+<code class="docutils literal notranslate"><span class="pre">E</span></code> or <code class="docutils literal notranslate"><span class="pre">O</span></code> flags will be raised. <code class="docutils literal notranslate"><span class="pre">R</span></code> indicates that the task
+returned a non-zero exit code. <code class="docutils literal notranslate"><span class="pre">B</span></code> indicates a barrier (see below). <code class="docutils literal notranslate"><span class="pre">S</span></code> indicates the job was skipped (this may happen during “resume” runs).</p></li>
+<li><p>Task ID: The <code class="docutils literal notranslate"><span class="pre">314</span></code> is the 0-based index of the task (starting from the beginning of the task file, incremented for each task, including repeats).</p></li>
+<li><p>Line number: The <code class="docutils literal notranslate"><span class="pre">315</span></code> is the 1-based line from the task file. Blank lines, comments, directives and repeats may cause this to drift considerably from the value of Task ID.</p></li>
+<li><p>Repeat index: The <code class="docutils literal notranslate"><span class="pre">-1</span></code> is the repeat index (as in this example, <code class="docutils literal notranslate"><span class="pre">-1</span></code> indicates this task was not part of a repeat directive).</p></li>
+<li><p>Node: <code class="docutils literal notranslate"><span class="pre">worker032</span></code> identifies the node on which the task ran.</p></li>
+<li><p>PID: <code class="docutils literal notranslate"><span class="pre">8016</span></code> is the PID of the bash shell used to run the task.</p></li>
+<li><p>Exit code: <code class="docutils literal notranslate"><span class="pre">0</span></code> is the exit code returned.</p></li>
+<li><p>Elapsed time: <code class="docutils literal notranslate"><span class="pre">10.0486528873</span></code> (seconds),</p></li>
+<li><p>Start time:<code class="docutils literal notranslate"><span class="pre">1458660919.78</span></code> (epoch based),</p></li>
+<li><p>Finish time: <code class="docutils literal notranslate"><span class="pre">1458660929.83</span></code> (epoch based).</p></li>
+<li><p>Bytes of <em>leaked</em> output (not redirected to a file),</p></li>
+<li><p>Output snippet (up to 80 bytes consisting of the prefix and suffix of the output),</p></li>
+<li><p>Bytes of leaked error output,</p></li>
+<li><p>Error snippet,</p></li>
+<li><p>Command: <code class="docutils literal notranslate"><span class="pre">cd</span> <span class="pre">...</span></code> is the text of the task (repeated from the task file, but see below).</p></li>
 </ol>
-<p>1. Task ID: The <cite>314</cite> is the 0-based index of the task (starting from the beginning of the task file, incremented for each task, including repeats).
-1. Line number: The <cite>315</cite> is the 1-based line from the task file. Blank lines, comments, directives and repeats may cause this to drift considerably from the value of Task ID.
-1. Repeat index: The <cite>-1</cite> is the repeat index (as in this example, <cite>-1</cite> indicates this task was not part of a repeat directive).
-1. Node: <cite>worker032</cite> identifies the node on which the task ran.
-1. PID: <cite>8016</cite> is the PID of the bash shell used to run the task.
-1. Exit code: <cite>0</cite> is the exit code returned.
-1. Elapsed time: <cite>10.0486528873</cite> (seconds),
-1. Start time:<cite>1458660919.78</cite> (epoch based),
-1. Finish time: <cite>1458660929.83</cite> (epoch based).
-1. Bytes of <em>leaked</em> output (not redirected to a file),
-1. Output snippet (up to 80 bytes consisting of the prefix and suffix of the output),
-1. Bytes of leaked error output,
-1. Error snippet,
-1. Command: <cite>cd …</cite> is the text of the task (repeated from the task file, but see below).</p>
-</div></blockquote>
-<p>## Installation</p>
+</section>
+</section>
+<section id="installation">
+<h2>Installation<a class="headerlink" href="#installation" title="Permalink to this headline"></a></h2>
 <p><strong>Users of Flatiron resources: disBatch is available via the module system. You do not need to clone this repo to use it.</strong></p>
-<p><cite>disBatch.py</cite> requires the <cite>kvsstcp</cite> package, which should be installed in python’s path, or placed in this directory.
-You can simply clone this git repository with <cite>–recursive</cite> (or run <cite>git submodule update –init</cite> if you’ve already cloned it).</p>
-<p>Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable <cite>DISBATCH_ROOT</cite> to the path of the directory containing the subdirectory <cite>disbatch</cite>.</p>
+<p><code class="docutils literal notranslate"><span class="pre">disBatch.py</span></code> requires the <code class="docutils literal notranslate"><span class="pre">kvsstcp</span></code> package, which should be installed in python’s path, or placed in this directory.
+You can simply clone this git repository with <code class="docutils literal notranslate"><span class="pre">--recursive</span></code> (or run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">submodule</span> <span class="pre">update</span> <span class="pre">--init</span></code> if you’ve already cloned it).</p>
+<p>Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable <code class="docutils literal notranslate"><span class="pre">DISBATCH_ROOT</span></code> to the path of the directory containing the subdirectory <code class="docutils literal notranslate"><span class="pre">disbatch</span></code>.</p>
 <p>disBatch is designed to support a variety of execution environments, from your own desktop, to a local collection of workstations, to large clusters managed by job schedulers.
-It currently supports SLURM and can be executed from <cite>sbatch</cite>, but it is architected to make it simple to add support for other resource managers.</p>
+It currently supports SLURM and can be executed from <code class="docutils literal notranslate"><span class="pre">sbatch</span></code>, but it is architected to make it simple to add support for other resource managers.</p>
 <p>You can also run directly on one or more machines by setting an environment variable:</p>
-<blockquote>
-<div><p>DISBATCH_SSH_NODELIST=localhost:7,otherhost:3</p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">DISBATCH_SSH_NODELIST</span><span class="o">=</span><span class="n">localhost</span><span class="p">:</span><span class="mi">7</span><span class="p">,</span><span class="n">otherhost</span><span class="p">:</span><span class="mi">3</span>
+</pre></div>
+</div>
 <p>or specifying an invocation argument:</p>
-<blockquote>
-<div><p>-s localhost:7,otherhost:3</p>
-</div></blockquote>
-<p>This allows execution directly on your <cite>localhost</cite> and via ssh for remote hosts without the need for a resource management system.
-In this example, disBatch is told it can use seven CPUs on your local host and three on <cite>otherhost</cite>. Assuming the default mapping of one task to one CPU applies in this example, seven tasks could be in progress at any given time on <cite>localhost</cite>, and three on <cite>otherhost</cite>. Note that <cite>localhost</cite> is an actual name you can use to refer to the machine on which you are currently working. <cite>otherhost</cite> is fictious.
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">-</span><span class="n">s</span> <span class="n">localhost</span><span class="p">:</span><span class="mi">7</span><span class="p">,</span><span class="n">otherhost</span><span class="p">:</span><span class="mi">3</span>
+</pre></div>
+</div>
+<p>This allows execution directly on your <code class="docutils literal notranslate"><span class="pre">localhost</span></code> and via ssh for remote hosts without the need for a resource management system.
+In this example, disBatch is told it can use seven CPUs on your local host and three on <code class="docutils literal notranslate"><span class="pre">otherhost</span></code>. Assuming the default mapping of one task to one CPU applies in this example, seven tasks could be in progress at any given time on <code class="docutils literal notranslate"><span class="pre">localhost</span></code>, and three on <code class="docutils literal notranslate"><span class="pre">otherhost</span></code>. Note that <code class="docutils literal notranslate"><span class="pre">localhost</span></code> is an actual name you can use to refer to the machine on which you are currently working. <code class="docutils literal notranslate"><span class="pre">otherhost</span></code> is fictious.
 Hosts used via ssh must be set up to allow ssh to work without a password and must share the working directory for the disBatch run.</p>
 <p>disBatch refers to a collection of execution resources as a <em>context</em> and the resources proper as <em>engines</em>. So the earlier SLURM example created one context with four engines (capable of running five concurrent tasks each), while the SSH example created one context with two engines (capable of running seven and three concurrent tasks, respectively).</p>
+</section>
 <section id="invocation">
-<h2>## Invocation<a class="headerlink" href="#invocation" title="Permalink to this headline"></a></h2>
-<dl class="simple">
-<dt>usage: disBatch.py [-h] [-e] [–force-resume] [–kvsserver [HOST:PORT]]</dt><dd><p>[–logfile FILE] [–mailFreq N] [–mailTo ADDR] [-p PATH]
-[-r STATUSFILE] [-R] [-S] [–status-header] [-w]
-[–taskcommand COMMAND] [–taskserver [HOST:PORT]]
-[-C TASK_LIMIT] [-c N] [–fill] [-g] [–no-retire]
-[-l COMMAND] [–retire-cmd COMMAND] [-s HOST:COUNT] [-t N]
-[taskfile]</p>
-</dd>
-</dl>
-<p>Use batch resources to process a file of tasks, one task per line.</p>
-<dl>
-<dt>positional arguments:</dt><dd><p>taskfile              File with tasks, one task per line (“-” for stdin)</p>
-</dd>
-<dt>optional arguments:</dt><dd><dl class="option-list">
-<dt><kbd><span class="option">-h</span>, <span class="option">--help</span></kbd></dt>
-<dd><p>show this help message and exit</p>
-</dd>
-<dt><kbd><span class="option">-e</span>, <span class="option">--exit-code</span></kbd></dt>
-<dd><p>When any task fails, exit with non-zero status
-(default: only if disBatch itself fails)</p>
-</dd>
-<dt><kbd><span class="option">--force-resume</span></kbd></dt>
-<dd><p>With -r, proceed even if task commands/lines are
-different.</p>
-</dd>
-</dl>
-<dl class="simple">
-<dt>–kvsserver [HOST:PORT]</dt><dd><p>Use a running KVS server.</p>
-</dd>
-</dl>
-<dl class="option-list">
-<dt><kbd><span class="option">--logfile <var>FILE</var></span></kbd></dt>
-<dd><p>Log file.</p>
-</dd>
-<dt><kbd><span class="option">--mailFreq <var>N</var></span></kbd></dt>
-<dd><p>Send email every N task completions (default: 1). “–
-mailTo” must be given.</p>
-</dd>
-<dt><kbd><span class="option">--mailTo <var>ADDR</var></span></kbd></dt>
-<dd><p>Mail address for task completion notification(s).</p>
-</dd>
-<dt><kbd><span class="option">-p <var>PATH</var></span>, <span class="option">--prefix <var>PATH</var></span></kbd></dt>
-<dd><p>Path for log, dbUtil, and status files (default: “.”).
-If ends with non-directory component, use as prefix
-for these files names (default: TASKFILE_JOBID).</p>
-</dd>
-<dt><kbd><span class="option">-r <var>STATUSFILE</var></span>, <span class="option">--resume-from <var>STATUSFILE</var></span></kbd></dt>
-<dd><p>Read the status file from a previous run and skip any
-completed tasks (may be specified multiple times).</p>
-</dd>
-<dt><kbd><span class="option">-R</span>, <span class="option">--retry</span></kbd></dt>
-<dd><p>With -r, also retry any tasks which failed in previous
-runs (non-zero return).</p>
-</dd>
-<dt><kbd><span class="option">-S</span>, <span class="option">--startup-only</span></kbd></dt>
-<dd><p>Startup only the disBatch server (and KVS server if
-appropriate). Use “dbUtil…” script to add execution
-contexts. Incompatible with “–ssh-node”.</p>
-</dd>
-<dt><kbd><span class="option">--status-header</span></kbd></dt>
-<dd><p>Add header line to status file.</p>
-</dd>
-<dt><kbd><span class="option">-w</span>, <span class="option">--web</span></kbd></dt>
-<dd><p>Enable web interface.</p>
-</dd>
-<dt><kbd><span class="option">--taskcommand <var>COMMAND</var></span></kbd></dt>
-<dd><p>Tasks will come from the command specified via the KVS
-server (passed in the environment).</p>
-</dd>
-</dl>
-<dl class="simple">
-<dt>–taskserver [HOST:PORT]</dt><dd><p>Tasks will come from the KVS server.</p>
-</dd>
-</dl>
-</dd>
-<dt>context specific arguments:</dt><dd><dl class="option-list">
-<dt><kbd><span class="option">-C <var>TASK_LIMIT</var></span>, <span class="option">--context-task-limit <var>TASK_LIMIT</var></span></kbd></dt>
-<dd><p>Shutdown after running COUNT tasks (0 =&gt; no limit).</p>
-</dd>
-<dt><kbd><span class="option">-c <var>N</var></span>, <span class="option">--cpusPerTask <var>N</var></span></kbd></dt>
-<dd><p>Number of cores used per task; may be fractional
-(default: 1).</p>
-</dd>
-<dt><kbd><span class="option">--fill</span></kbd></dt>
-<dd><p>Try to use extra cores if allocated cores exceeds
-requested cores.</p>
-</dd>
-<dt><kbd><span class="option">-g</span>, <span class="option">--gpu</span></kbd></dt>
-<dd><p>Use assigned GPU resources</p>
-</dd>
-<dt><kbd><span class="option">--no-retire</span></kbd></dt>
-<dd><p>Don’t retire nodes from the batch system (e.g., if
-running as part of a larger job); equivalent to -k ‘’.</p>
-</dd>
-<dt><kbd><span class="option">-l <var>COMMAND</var></span>, <span class="option">--label <var>COMMAND</var></span></kbd></dt>
-<dd><p>Label for this context. Should be unique.</p>
-</dd>
-<dt><kbd><span class="option">--retire-cmd <var>COMMAND</var></span></kbd></dt>
-<dd><p>Shell command to run to retire a node (environment
-includes $NODE being retired, remaining $ACTIVE node
-list, $RETIRED node list; default based on batch
-system). Incompatible with “–ssh-node”.</p>
-</dd>
-</dl>
-<dl class="simple">
-<dt>-s HOST:COUNT, –ssh-node HOST:COUNT</dt><dd><p>Run tasks over SSH on the given nodes (can be
-specified multiple times for additional hosts;
-equivalent to setting DISBATCH_SSH_NODELIST)</p>
-</dd>
-</dl>
-<dl class="option-list">
-<dt><kbd><span class="option">-t <var>N</var></span>, <span class="option">--tasksPerNode <var>N</var></span></kbd></dt>
-<dd><p>Maximum concurrently executing tasks per node (up to
-cores/cpusPerTask).</p>
-</dd>
-</dl>
-</dd>
-</dl>
-<hr class="docutils" />
+<h2>Invocation<a class="headerlink" href="#invocation" title="Permalink to this headline"></a></h2>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>usage: disBatch.py [-h] [-e] [--force-resume] [--kvsserver [HOST:PORT]]
+                   [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-p PATH]
+                   [-r STATUSFILE] [-R] [-S] [--status-header] [-w]
+                   [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
+                   [-C TASK_LIMIT] [-c N] [--fill] [-g] [--no-retire]
+                   [-l COMMAND] [--retire-cmd COMMAND] [-s HOST:COUNT] [-t N]
+                   [taskfile]
+
+Use batch resources to process a file of tasks, one task per line.
+
+positional arguments:
+  taskfile              File with tasks, one task per line (&quot;-&quot; for stdin)
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -e, --exit-code       When any task fails, exit with non-zero status
+                        (default: only if disBatch itself fails)
+  --force-resume        With -r, proceed even if task commands/lines are
+                        different.
+  --kvsserver [HOST:PORT]
+                        Use a running KVS server.
+  --logfile FILE        Log file.
+  --mailFreq N          Send email every N task completions (default: 1). &quot;--
+                        mailTo&quot; must be given.
+  --mailTo ADDR         Mail address for task completion notification(s).
+  -p PATH, --prefix PATH
+                        Path for log, dbUtil, and status files (default: &quot;.&quot;).
+                        If ends with non-directory component, use as prefix
+                        for these files names (default: TASKFILE_JOBID).
+  -r STATUSFILE, --resume-from STATUSFILE
+                        Read the status file from a previous run and skip any
+                        completed tasks (may be specified multiple times).
+  -R, --retry           With -r, also retry any tasks which failed in previous
+                        runs (non-zero return).
+  -S, --startup-only    Startup only the disBatch server (and KVS server if
+                        appropriate). Use &quot;dbUtil...&quot; script to add execution
+                        contexts. Incompatible with &quot;--ssh-node&quot;.
+  --status-header       Add header line to status file.
+  -w, --web             Enable web interface.
+  --taskcommand COMMAND
+                        Tasks will come from the command specified via the KVS
+                        server (passed in the environment).
+  --taskserver [HOST:PORT]
+                        Tasks will come from the KVS server.
+context specific arguments:
+  -C TASK_LIMIT, --context-task-limit TASK_LIMIT
+                        Shutdown after running COUNT tasks (0 =&gt; no limit).
+  -c N, --cpusPerTask N
+                        Number of cores used per task; may be fractional
+                        (default: 1).
+  --fill                Try to use extra cores if allocated cores exceeds
+                        requested cores.
+  -g, --gpu             Use assigned GPU resources
+  --no-retire           Don&#39;t retire nodes from the batch system (e.g., if
+                        running as part of a larger job); equivalent to -k &#39;&#39;.
+  -l COMMAND, --label COMMAND
+                        Label for this context. Should be unique.
+  --retire-cmd COMMAND  Shell command to run to retire a node (environment
+                        includes $NODE being retired, remaining $ACTIVE node
+                        list, $RETIRED node list; default based on batch
+                        system). Incompatible with &quot;--ssh-node&quot;.
+  -s HOST:COUNT, --ssh-node HOST:COUNT
+                        Run tasks over SSH on the given nodes (can be
+                        specified multiple times for additional hosts;
+                        equivalent to setting DISBATCH_SSH_NODELIST)
+  -t N, --tasksPerNode N
+                        Maximum concurrently executing tasks per node (up to
+                        cores/cpusPerTask).
+</pre></div>
+</div>
 <p>The options for mail will only work if your computing environment permits processes to access mail via SMTP.</p>
-<p>A value for <cite>-c</cite> &lt; 1 effectively allows you to run more tasks concurrently than CPUs specified for the run. This is somewhat unusual, and generally not recommended, but could be appropriate in some cases.</p>
-<p>The <cite>–no-retire</cite> and <cite>–retire-cmd</cite> flags allow you to control what disBatch does when a node is no longer needed to run jobs.
+<p>A value for <code class="docutils literal notranslate"><span class="pre">-c</span></code> &lt; 1 effectively allows you to run more tasks concurrently than CPUs specified for the run. This is somewhat unusual, and generally not recommended, but could be appropriate in some cases.</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">--no-retire</span></code> and <code class="docutils literal notranslate"><span class="pre">--retire-cmd</span></code> flags allow you to control what disBatch does when a node is no longer needed to run jobs.
 When running under slurm, disBatch will by default run the command:</p>
-<blockquote>
-<div><p>scontrol update JobId=”$SLURM_JOBID” NodeList=”${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE”</p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">scontrol</span> <span class="n">update</span> <span class="n">JobId</span><span class="o">=</span><span class="s2">&quot;$SLURM_JOBID&quot;</span> <span class="n">NodeList</span><span class="o">=</span><span class="s2">&quot;${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE&quot;</span>
+</pre></div>
+</div>
 <p>which will tell slurm to release any nodes no longer being used.
 You can set this to run a different command, or nothing at all.
-While running this command, the follow environment variables will be set: <cite>NODE</cite> (the node that is no longer needed), <cite>ACTIVE</cite> (a comma-delimited list of nodes that are still active), <cite>RETIRED</cite> (a comma-delimited list of nodes that are no longer active, including <cite>$NODE</cite>), and possibly <cite>DRIVER_NODE</cite> (the node still running the main disBatch script, if it’s not in <cite>ACTIVE</cite>).</p>
-<p>The <cite>-g</cite> argument parses the CUDA environment varables (<cite>CUDA_VISIBLE_DEVICES</cite>, <cite>GPU_DEVICE_ORDINAL</cite>) provided on each node and divides the resources between the running tasks.  For example, with slurm, if you want to run on _n_ nodes, with _t_ tasks per node, each using _c_ CPUs and 1 GPU (that is, _tc_ CPUs and _t_ GPUs per node, or _ntc_ CPUs and _nt_ GPUs total), you can do:</p>
+While running this command, the follow environment variables will be set: <code class="docutils literal notranslate"><span class="pre">NODE</span></code> (the node that is no longer needed), <code class="docutils literal notranslate"><span class="pre">ACTIVE</span></code> (a comma-delimited list of nodes that are still active), <code class="docutils literal notranslate"><span class="pre">RETIRED</span></code> (a comma-delimited list of nodes that are no longer active, including <code class="docutils literal notranslate"><span class="pre">$NODE</span></code>), and possibly <code class="docutils literal notranslate"><span class="pre">DRIVER_NODE</span></code> (the node still running the main disBatch script, if it’s not in <code class="docutils literal notranslate"><span class="pre">ACTIVE</span></code>).</p>
+<p>The <code class="docutils literal notranslate"><span class="pre">-g</span></code> argument parses the CUDA environment varables (<code class="docutils literal notranslate"><span class="pre">CUDA_VISIBLE_DEVICES</span></code>, <code class="docutils literal notranslate"><span class="pre">GPU_DEVICE_ORDINAL</span></code>) provided on each node and divides the resources between the running tasks.  For example, with slurm, if you want to run on <em>n</em> nodes, with <em>t</em> tasks per node, each using <em>c</em> CPUs and 1 GPU (that is, <em>tc</em> CPUs and <em>t</em> GPUs per node, or <em>ntc</em> CPUs and <em>nt</em> GPUs total), you can do:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>sbatch -N$n -c$c --ntasks-per-node=$t --gres=gpu:$t -p gpu --wrap &#39;disBatch.py -g $taskfile&#39;`
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">-S</span></code> Starts disBatch in a mode in which it waits for execution resources to be added. In this mode, disBatch starts up the task management system and
+generates a script <code class="docutils literal notranslate"><span class="pre">&lt;Prefix&gt;_dbUtil.sh</span></code>, where <code class="docutils literal notranslate"><span class="pre">&lt;Prefix&gt;</span></code> refers to the <code class="docutils literal notranslate"><span class="pre">-p</span></code> option or default, see above. We’ll call this simply <code class="docutils literal notranslate"><span class="pre">dbUtils.sh</span></code> here,
+but remember to include <code class="docutils literal notranslate"><span class="pre">&lt;Prefix&gt;_</span></code> in actual use. You can add execution resources by doing one or more of the following multiple times:</p>
+<ol class="arabic">
+<li><p>Submit <code class="docutils literal notranslate"><span class="pre">dbUtils.sh</span></code> as a job, e.g.:</p>
 <blockquote>
-<div><p>sbatch -N$n -c$c –ntasks-per-node=$t –gres=gpu:$t -p gpu –wrap ‘disBatch.py -g $taskfile’`</p>
+<div><p><code class="docutils literal notranslate"><span class="pre">sbatch</span> <span class="pre">-N</span> <span class="pre">5</span> <span class="pre">--ntasks-per-node</span> <span class="pre">7</span> <span class="pre">dbUtil.sh</span></code></p>
 </div></blockquote>
-<p><cite>-S</cite> Starts disBatch in a mode in which it waits for execution resources to be added. In this mode, disBatch starts up the task management system and
-generates a script <cite>&lt;Prefix&gt;_dbUtil.sh</cite>, where <cite>&lt;Prefix&gt;</cite> refers to the <cite>-p</cite> option or default, see above. We’ll call this simply <cite>dbUtils.sh</cite> here,
-but remember to include <cite>&lt;Prefix&gt;_</cite> in actual use. You can add execution resources by doing one or more of the following multiple times:
-1. Submit <cite>dbUtils.sh</cite> as a job, e.g.:</p>
-<blockquote>
-<div><p><cite>sbatch -N 5 –ntasks-per-node 7 dbUtil.sh</cite></p>
-</div></blockquote>
-<ol class="arabic" start="2">
+</li>
 <li><p>Use ssh, e.g.:</p>
 <blockquote>
-<div><p><cite>./dbUtil.sh -s localhost:4,friendlyNeighbor:5</cite></p>
+<div><p><code class="docutils literal notranslate"><span class="pre">./dbUtil.sh</span> <span class="pre">-s</span> <span class="pre">localhost:4,friendlyNeighbor:5</span></code></p>
 </div></blockquote>
 </li>
 </ol>
 <p>Each of these creates an execution context, which contains one of more execution engines (five engines in the first, two in the second).
 An engine can run one or more tasks currently. In the first example, each of the five engines will run up to seven tasks concurrently, while in the
-second example, the engine on <cite>localhost</cite> will run up to four tasks concurrently and the engine on <cite>friendlyNeighbor</cite> will run up to five.
-<cite>./dbUtil.sh –mon</cite> will start a simple ASCII-based monitor that tracks the overall state of the disBatch run, and the activity of the individual
+second example, the engine on <code class="docutils literal notranslate"><span class="pre">localhost</span></code> will run up to four tasks concurrently and the engine on <code class="docutils literal notranslate"><span class="pre">friendlyNeighbor</span></code> will run up to five.
+<code class="docutils literal notranslate"><span class="pre">./dbUtil.sh</span> <span class="pre">--mon</span></code> will start a simple ASCII-based monitor that tracks the overall state of the disBatch run, and the activity of the individual
 contexts and engines. By cursoring over an engine, you can send a shutdown signal to the engine or its context. This signal is <em>soft</em>, triggering
 a graceful shutdown that will occur only after currently assigned tasks are complete. Other execution resources are uneffected.</p>
-<p>When a context is started, you can also supply the argument <cite>–context-task-limit N</cite>. This will shutdown the context and all associated engines
-after it has run <cite>N</cite> tasks.</p>
+<p>When a context is started, you can also supply the argument <code class="docutils literal notranslate"><span class="pre">--context-task-limit</span> <span class="pre">N</span></code>. This will shutdown the context and all associated engines
+after it has run <code class="docutils literal notranslate"><span class="pre">N</span></code> tasks.</p>
 <p>Taken together, these mechanisms enable disBatch to run on a dynamic pool of execution resources, so you can “borrow” a colleague’s workstation overnight, or
 claim a large chunk of a currently idle partition, but return some if demands picks up, or chain together a series of time limited allocations to
 accomplish a long run. When using this mode, keep in mind two caveats: (i) The time quantum is determined by your task duration. If any given task might
 run for hours or days, then the utility of this is limited. You can still use standard means (kill, scancel) to terminate contexts and engines, but
 you will likely have incomplete tasks to
-reckon with; (ii) The task manangement system must itself be run in a setting where a long lived process is OK. Say in a <cite>screen</cite> or <cite>tmux</cite> session on
+reckon with; (ii) The task manangement system must itself be run in a setting where a long lived process is OK. Say in a <code class="docutils literal notranslate"><span class="pre">screen</span></code> or <code class="docutils literal notranslate"><span class="pre">tmux</span></code> session on
 the login node of a cluster, or on your personal workstation (assuming it has the appropriate connectivity to reach the other resources you plan to use).</p>
-<p><cite>-r</cite> uses the status file of a previous run to determine what tasks to run during this disBatch invocation. Only those tasks that haven’t yet run (or with <cite>-R</cite>, those that haven’t run or did but returned a non-0 exit code) are run this time. By default, the numeric task identifier and the text of the command are used to determine if a current task is the same as one found in the status file. <cite>–force-resume</cite> restricts the comparison to just the numeric identifier.</p>
-<p><cite>–kvsserver</cite>, <cite>–taskcommand</cite>, and <cite>–taskserver</cite> implement advanced functionality (placing disBatch in an existing shared key store context and allowing for a programmatic rather than textual task interface). Contact the authors for more details.</p>
-<p>### Considerations for large runs</p>
+<p><code class="docutils literal notranslate"><span class="pre">-r</span></code> uses the status file of a previous run to determine what tasks to run during this disBatch invocation. Only those tasks that haven’t yet run (or with <code class="docutils literal notranslate"><span class="pre">-R</span></code>, those that haven’t run or did but returned a non-0 exit code) are run this time. By default, the numeric task identifier and the text of the command are used to determine if a current task is the same as one found in the status file. <code class="docutils literal notranslate"><span class="pre">--force-resume</span></code> restricts the comparison to just the numeric identifier.</p>
+<p><code class="docutils literal notranslate"><span class="pre">--kvsserver</span></code>, <code class="docutils literal notranslate"><span class="pre">--taskcommand</span></code>, and <code class="docutils literal notranslate"><span class="pre">--taskserver</span></code> implement advanced functionality (placing disBatch in an existing shared key store context and allowing for a programmatic rather than textual task interface). Contact the authors for more details.</p>
+<section id="considerations-for-large-runs">
+<h3>Considerations for large runs<a class="headerlink" href="#considerations-for-large-runs" title="Permalink to this headline"></a></h3>
 <p>If you do submit jobs with order 10000 or more tasks, you should
 carefully consider how you want to organize the output (and error) files
 produced by each of the tasks. It is generally a bad idea to have more
 than a few thousand files in any one directory, so you will probably
 want to introduce at least one extra level of directory hierarchy so
 that the files can be divided into smaller groups. Intermediate
-directory <cite>13</cite>, say, might hold all the files for tasks 13000 to
+directory <code class="docutils literal notranslate"><span class="pre">13</span></code>, say, might hold all the files for tasks 13000 to
 13999.</p>
-<p>## #DISBATCH directives</p>
-<p>### PREFIX and SUFFIX</p>
+</section>
+</section>
+<section id="disbatch-directives">
+<h2>#DISBATCH directives<a class="headerlink" href="#disbatch-directives" title="Permalink to this headline"></a></h2>
+<section id="prefix-and-suffix">
+<h3>PREFIX and SUFFIX<a class="headerlink" href="#prefix-and-suffix" title="Permalink to this headline"></a></h3>
 <p>In order to simplify task files, disBatch supports a couple of
 directives to specify common task prefix strings and suffix strings. It
 also provides environment variables to identify various aspects of the
 submission. Here’s an example</p>
-<blockquote>
-<div><p># Note there is a space at the end of the next line.
-#DISBATCH PREFIX ( cd /path/to/workdir ; source SetupEnv ;
-#DISBATCH SUFFIX  ) &amp;&gt; ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log</p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># Note there is a space at the end of the next line.</span>
+<span class="c1">#DISBATCH PREFIX ( cd /path/to/workdir ; source SetupEnv ;</span>
+<span class="c1">#DISBATCH SUFFIX  ) &amp;&gt; ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log</span>
+</pre></div>
+</div>
 <p>These are textually prepended and appended, respectively, to the text of
 each subsequent task line. If the suffix includes redirection and a task is a proper command sequence (a series of
-commands joined by <cite>;</cite>), then the task should be wrapped in <cite>( … )</cite>, as in this example, so that the standard error and standard output of the whole sequence
+commands joined by <code class="docutils literal notranslate"><span class="pre">;</span></code>), then the task should be wrapped in <code class="docutils literal notranslate"><span class="pre">(</span> <span class="pre">...</span> <span class="pre">)</span></code>, as in this example, so that the standard error and standard output of the whole sequence
 will be redirected to the log file. If this is not done, only standard
 error and standard output for the last component of the command sequence
 will be captured. This is probably not what you want unless you have
 redirected these outputs for the previous individual parts of the
 command sequence.</p>
 <p>Using these, the above commands could be replaced with:</p>
-<blockquote>
-<div><p>myprog -a 0 -b 0 -c 0
-myprog -a 0 -b 0 -c 1</p>
-<blockquote>
-<div><p>…</p>
-</div></blockquote>
-<p>myprog -a 9 -b 9 -c 8
-myprog -a 9 -b 9 -c 9</p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">myprog</span> <span class="o">-</span><span class="n">a</span> <span class="mi">0</span> <span class="o">-</span><span class="n">b</span> <span class="mi">0</span> <span class="o">-</span><span class="n">c</span> <span class="mi">0</span>
+<span class="n">myprog</span> <span class="o">-</span><span class="n">a</span> <span class="mi">0</span> <span class="o">-</span><span class="n">b</span> <span class="mi">0</span> <span class="o">-</span><span class="n">c</span> <span class="mi">1</span>
+<span class="o">...</span>
+<span class="n">myprog</span> <span class="o">-</span><span class="n">a</span> <span class="mi">9</span> <span class="o">-</span><span class="n">b</span> <span class="mi">9</span> <span class="o">-</span><span class="n">c</span> <span class="mi">8</span>
+<span class="n">myprog</span> <span class="o">-</span><span class="n">a</span> <span class="mi">9</span> <span class="o">-</span><span class="n">b</span> <span class="mi">9</span> <span class="o">-</span><span class="n">c</span> <span class="mi">9</span>
+</pre></div>
+</div>
 <p>Note: the log files will have a different naming scheme, but there will still be one per task.</p>
-<p>Later occurrences of <cite>#DISBATCH PREFIX</cite> or <cite>#DISBATCH SUFFIX</cite> in a task
+<p>Later occurrences of <code class="docutils literal notranslate"><span class="pre">#DISBATCH</span> <span class="pre">PREFIX</span></code> or <code class="docutils literal notranslate"><span class="pre">#DISBATCH</span> <span class="pre">SUFFIX</span></code> in a task
 file simply replace previous ones. When these are used, the tasks
 reported in the status file include the prefix and suffix in
 force at the time the task was launched.</p>
-<p>### BARRIER</p>
+</section>
+<section id="barrier">
+<h3>BARRIER<a class="headerlink" href="#barrier" title="Permalink to this headline"></a></h3>
 <p>If your tasks fall into groups where a later group should only begin
 after all tasks of the previous group have completely finished, you can
 use this directive:</p>
-<blockquote>
-<div><p>#DISBATCH BARRIER</p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1">#DISBATCH BARRIER</span>
+</pre></div>
+</div>
 <p>When disBatch encounters this directive, it will not launch another task
 until all tasks in progress have completed. The following form:</p>
-<blockquote>
-<div><p>#DISBATCH BARRIER CHECK</p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1">#DISBATCH BARRIER CHECK</span>
+</pre></div>
+</div>
 <p>checks the exit status of the tasks done since the last barrier (or
 start of the run). If any task had a non-zero exit status, the run
 will exit once this barrier is met.</p>
-<p>### REPEAT</p>
+</section>
+<section id="repeat">
+<h3>REPEAT<a class="headerlink" href="#repeat" title="Permalink to this headline"></a></h3>
 <p>For those problems that are easily handled via a job-array-like approach:</p>
-<blockquote>
-<div><p>#DISBATCH REPEAT 5 start 100 step 50 [command]</p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1">#DISBATCH REPEAT 5 start 100 step 50 [command]</span>
+</pre></div>
+</div>
 <p>will expand into five tasks, each with the environment variable
-<cite>DISBATCH_REPEAT_INDEX</cite> set to one of 100, 150, 200, 250, or 300.
+<code class="docutils literal notranslate"><span class="pre">DISBATCH_REPEAT_INDEX</span></code> set to one of 100, 150, 200, 250, or 300.
 The tasks will consist of the concatenation of the prefix, command (if provided),
-and the suffix currently in effect. <cite>start</cite> defaults to 0, <cite>step</cite>
+and the suffix currently in effect. <code class="docutils literal notranslate"><span class="pre">start</span></code> defaults to 0, <code class="docutils literal notranslate"><span class="pre">step</span></code>
 to 1. Note: the semantics here differ somewhat from many range
-constructs, the number immediately following <cite>REPEAT</cite> sets the
+constructs, the number immediately following <code class="docutils literal notranslate"><span class="pre">REPEAT</span></code> sets the
 number of tasks that will be executed; the next two numbers affect
 only the value that the repeat index will have in
 the environment for each of the repeat task instances. So, returning to our earlier example, the task file
 could be:</p>
-<blockquote>
-<div><p>#DISBATCH PREFIX  ( cd /path/to/workdir ; a=$((DISBATCH_REPEAT_INDEX/100)) b=$(((DISBATCH_REPEAT_INDEX%100)/10 )) c=$((DISBATCH_REPEAT_INDEX%10)) ; myprog -a $a -b $b -c $c ) &amp;&gt; task_${a}_${b}_${c}.log
-#DISBATCH REPEAT 1000</p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1">#DISBATCH PREFIX  ( cd /path/to/workdir ; a=$((DISBATCH_REPEAT_INDEX/100)) b=$(((DISBATCH_REPEAT_INDEX%100)/10 )) c=$((DISBATCH_REPEAT_INDEX%10)) ; myprog -a $a -b $b -c $c ) &amp;&gt; task_${a}_${b}_${c}.log</span>
+<span class="c1">#DISBATCH REPEAT 1000</span>
+</pre></div>
+</div>
 <p>This is not a model of clarify, but does illustrate that the repeat constuct can be relatively powerful. Many users may find it more convenient to use the tool of their choice to generate a text file with 1000 invocations explictly written out.</p>
-<p>### PERENGINE</p>
-<blockquote>
-<div><p>#DISBATCH PERENGINE START { command ; sequence ; } &amp;&gt; engine_start_${DISBATCH_ENGINE_RANK}.log
-#DISBATCH PERENGINE STOP { command ; sequence ; } &amp;&gt; engine_stop_${DISBATCH_ENGINE_RANK}.log</p>
-</div></blockquote>
+</section>
+<section id="perengine">
+<h3>PERENGINE<a class="headerlink" href="#perengine" title="Permalink to this headline"></a></h3>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1">#DISBATCH PERENGINE START { command ; sequence ; } &amp;&gt; engine_start_${DISBATCH_ENGINE_RANK}.log</span>
+<span class="c1">#DISBATCH PERENGINE STOP { command ; sequence ; } &amp;&gt; engine_stop_${DISBATCH_ENGINE_RANK}.log</span>
+</pre></div>
+</div>
 <p>Use these to specify commands that should run at the time an engine joins a disBatch run or at the time the engine leaves the disBatch run, respectively.
 You could, for example, use these to bulk copy some heavily referenced read-only data to the engine’s local storage area before any tasks are run, and then delete that data when the engine shuts down.
 You can use the environment variable DISBATCH_ENGINE_RANK to distinguish one engine from another; for example, it is used here to keep log files separate.</p>
 <p>These directives must come before any other tasks.</p>
-<p>## License</p>
+</section>
+</section>
+<section id="license">
+<h2>License<a class="headerlink" href="#license" title="Permalink to this headline"></a></h2>
 <p>Copyright 2017 Simons Foundation</p>
 <p>Licensed under the Apache License, Version 2.0 (the “License”);
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at</p>
-<blockquote>
-<div><p><a class="reference external" href="http://www.apache.org/licenses/LICENSE-2.0">http://www.apache.org/licenses/LICENSE-2.0</a></p>
-</div></blockquote>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">http</span><span class="p">:</span><span class="o">//</span><span class="n">www</span><span class="o">.</span><span class="n">apache</span><span class="o">.</span><span class="n">org</span><span class="o">/</span><span class="n">licenses</span><span class="o">/</span><span class="n">LICENSE</span><span class="o">-</span><span class="mf">2.0</span>
+</pre></div>
+</div>
 <p>Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an “AS IS” BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
