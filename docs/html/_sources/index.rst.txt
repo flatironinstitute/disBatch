@@ -4,17 +4,3 @@
    contain the root `toctree` directive.
 
 .. mdinclude:: ../Readme.md
-
-Contents:
-=========
-
-.. toctree::
-   :maxdepth: 2
-
-   authors
-
-Feedback
-========
-
-If you encounter any errors or problems with **disBatch**, please open a GitHub issue at
-https://github.com/flatironinstitute/disBatch.

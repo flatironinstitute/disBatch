@@ -4,3 +4,4 @@
 /exampleTaskFiles/slurm*out
 /exampleTaskFiles/slurm*resize.*sh
 /exampleTaskFiles/dbTestOutputDir
+/tmp
