@@ -97,7 +97,7 @@ These fields are:
 
   1. Flags: The first field, blank in this case, may contain `E`, `O`, `R`, `B`, or `S` flags.
      Each program/task should be invoked in such a way that standard error
-     and standard output end up in appropriate files. If that's not the case
+     and standard output end up in appropriate files. If that is not the case
      `E` or `O` flags will be raised. `R` indicates that the task
      returned a non-zero exit code. `B` indicates a barrier (see below). `S` indicates the job was skipped (this may happen during "resume" runs).
   1. Task ID: The `314` is the 0-based index of the task (starting from the beginning of the task file, incremented for each task, including repeats).
@@ -301,7 +301,7 @@ Using these, the above commands could be replaced with:
 
     myprog -a 0 -b 0 -c 0
     myprog -a 0 -b 0 -c 1
-     ... 
+    ... 
     myprog -a 9 -b 9 -c 8
     myprog -a 9 -b 9 -c 9
 
