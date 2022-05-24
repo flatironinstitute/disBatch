@@ -197,9 +197,9 @@ returned a non-zero exit code. <code class="docutils literal notranslate"><span 
 <section id="installation">
 <h2>Installation<a class="headerlink" href="#installation" title="Permalink to this headline"></a></h2>
 <p><strong>Users of Flatiron resources: disBatch is available via the module system. You do not need to clone this repo to use it.</strong></p>
-<p><code class="docutils literal notranslate"><span class="pre">disBatch.py</span></code> requires the <code class="docutils literal notranslate"><span class="pre">kvsstcp</span></code> package, which should be installed in python’s path, or placed in this directory.
-You can simply clone this git repository with <code class="docutils literal notranslate"><span class="pre">--recursive</span></code> (or run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">submodule</span> <span class="pre">update</span> <span class="pre">--init</span></code> if you’ve already cloned it).</p>
-<p>Depending on your execution environment, the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable <code class="docutils literal notranslate"><span class="pre">DISBATCH_ROOT</span></code> to the path of the directory containing the subdirectory <code class="docutils literal notranslate"><span class="pre">disbatch</span></code>.</p>
+<p>disBatch requires the <code class="docutils literal notranslate"><span class="pre">kvsstcp</span></code> package, which should be installed in python’s path, or placed in this directory.
+You can simply clone this git repository with <code class="docutils literal notranslate"><span class="pre">--recursive</span></code> (or run <code class="docutils literal notranslate"><span class="pre">git</span> <span class="pre">submodule</span> <span class="pre">update</span> <span class="pre">--init</span></code> if you’ve already cloned it) to get both.
+No additional installation steps are required. You can run <code class="docutils literal notranslate"><span class="pre">disBatch</span></code> directly from the top level directory of the git clone, but depending on your execution environment (e.g., using SLURM), the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable <code class="docutils literal notranslate"><span class="pre">PYTHONPATH</span></code> to include the path of the git clone (the directory containing this “Readme.md” file).</p>
 <p>disBatch is designed to support a variety of execution environments, from your own desktop, to a local collection of workstations, to large clusters managed by job schedulers.
 It currently supports SLURM and can be executed from <code class="docutils literal notranslate"><span class="pre">sbatch</span></code>, but it is architected to make it simple to add support for other resource managers.</p>
 <p>You can also run directly on one or more machines by setting an environment variable:</p>
@@ -217,13 +217,13 @@ Hosts used via ssh must be set up to allow ssh to work without a password and mu
 </section>
 <section id="invocation">
 <h2>Invocation<a class="headerlink" href="#invocation" title="Permalink to this headline"></a></h2>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>usage: disBatch.py [-h] [-e] [--force-resume] [--kvsserver [HOST:PORT]]
-                   [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-p PATH]
-                   [-r STATUSFILE] [-R] [-S] [--status-header] [-w]
-                   [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
-                   [-C TASK_LIMIT] [-c N] [--fill] [-g] [--no-retire]
-                   [-l COMMAND] [--retire-cmd COMMAND] [-s HOST:COUNT] [-t N]
-                   [taskfile]
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>usage: disBatch [-h] [-e] [--force-resume] [--kvsserver [HOST:PORT]]
+                [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-p PATH]
+                [-r STATUSFILE] [-R] [-S] [--status-header] [-w]
+                [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
+                [-C TASK_LIMIT] [-c N] [--fill] [-g] [--no-retire]
+                [-l COMMAND] [--retire-cmd COMMAND] [-s HOST:COUNT] [-t N]
+                [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
 
@@ -298,7 +298,7 @@ When running under slurm, disBatch will by default run the command:</p>
 You can set this to run a different command, or nothing at all.
 While running this command, the follow environment variables will be set: <code class="docutils literal notranslate"><span class="pre">NODE</span></code> (the node that is no longer needed), <code class="docutils literal notranslate"><span class="pre">ACTIVE</span></code> (a comma-delimited list of nodes that are still active), <code class="docutils literal notranslate"><span class="pre">RETIRED</span></code> (a comma-delimited list of nodes that are no longer active, including <code class="docutils literal notranslate"><span class="pre">$NODE</span></code>), and possibly <code class="docutils literal notranslate"><span class="pre">DRIVER_NODE</span></code> (the node still running the main disBatch script, if it’s not in <code class="docutils literal notranslate"><span class="pre">ACTIVE</span></code>).</p>
 <p>The <code class="docutils literal notranslate"><span class="pre">-g</span></code> argument parses the CUDA environment varables (<code class="docutils literal notranslate"><span class="pre">CUDA_VISIBLE_DEVICES</span></code>, <code class="docutils literal notranslate"><span class="pre">GPU_DEVICE_ORDINAL</span></code>) provided on each node and divides the resources between the running tasks.  For example, with slurm, if you want to run on <em>n</em> nodes, with <em>t</em> tasks per node, each using <em>c</em> CPUs and 1 GPU (that is, <em>tc</em> CPUs and <em>t</em> GPUs per node, or <em>ntc</em> CPUs and <em>nt</em> GPUs total), you can do:</p>
-<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>sbatch -N$n -c$c --ntasks-per-node=$t --gres=gpu:$t -p gpu --wrap &#39;disBatch.py -g $taskfile&#39;`
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span>sbatch -N$n -c$c --ntasks-per-node=$t --gres=gpu:$t -p gpu --wrap &#39;disBatch -g $taskfile&#39;`
 </pre></div>
 </div>
 <p><code class="docutils literal notranslate"><span class="pre">-S</span></code> Starts disBatch in a mode in which it waits for execution resources to be added. In this mode, disBatch starts up the task management system and
