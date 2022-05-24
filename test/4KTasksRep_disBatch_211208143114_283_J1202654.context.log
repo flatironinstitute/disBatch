@@ -1,0 +1,7 @@
+2021-12-08 14:31:14,856 INFO     root           : SLURM context started on worker3120 (3430195).
+2021-12-08 14:31:14,857 INFO     root           : launch cmd: ['srun', '-N', '1', '-n', '10', '-w', 'worker3120', 'bash', '-c', 'if [[ $SLURM_LOCALID == 0 ]] ; then /mnt/home/yliu/projects/disBatch/4KTasksRep_disBatch_211208143114_283_dbUtil.sh --engine -n worker3120 .context_0 ; else { sleep 3 ; echo "pruned $SLURM_LOCALID" ; } ; fi']
+2021-12-08 14:31:14,860 INFO     root           : launch cmd: ['srun', '-N', '1', '-n', '10', '-w', 'worker3121', 'bash', '-c', 'if [[ $SLURM_LOCALID == 0 ]] ; then /mnt/home/yliu/projects/disBatch/4KTasksRep_disBatch_211208143114_283_dbUtil.sh --engine -n worker3121 .context_0 ; else { sleep 3 ; echo "pruned $SLURM_LOCALID" ; } ; fi']
+2021-12-08 15:14:59,590 INFO     DisBatch Context: Engine worker3121 exited: 0
+2021-12-08 15:14:59,591 INFO     DisBatch Context: Retiring node "worker3121" with command scontrol update JobId="$SLURM_JOBID" NodeList="${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE"
+2021-12-08 15:15:03,663 INFO     DisBatch Context: Engine worker3120 exited: 0
+2021-12-08 15:15:03,663 INFO     DisBatch Context: Retiring node "worker3120" with command scontrol update JobId="$SLURM_JOBID" NodeList="${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE"

@@ -44,8 +44,8 @@ source_suffix = '.rst'
 master_doc = 'index'
 
 # General information about the project.
-project = u'HumanBase Pipeline'
-copyright = u'2020, Jerry Vinokurov'
+project = u'disBatch'
+copyright = u'2017, Simons Foundation'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the

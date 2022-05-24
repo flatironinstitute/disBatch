@@ -1,0 +1,8 @@
+module add slurm disBatch/2.0-beta
+
+sbatch -N1 disBatch 4KTasksRep
+
+disBatch -S -p ./tmp/dbTestXXXXXXXXXXX 4KTasksRep
+sbatch -N1 -p scc ./tmp/dbTestXXXXXXXXXXX_dbUtil.sh
+
+

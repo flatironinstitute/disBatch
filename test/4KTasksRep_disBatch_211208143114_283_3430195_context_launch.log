@@ -1,0 +1,6 @@
+To reset Slurm environment variables, execute
+  For bash or sh shells:  . ./slurm_job_1202654_resize.sh
+  For csh shells:         source ./slurm_job_1202654_resize.csh
+To reset Slurm environment variables, execute
+  For bash or sh shells:  . ./slurm_job_1202654_resize.sh
+  For csh shells:         source ./slurm_job_1202654_resize.csh

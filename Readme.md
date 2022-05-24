@@ -302,7 +302,7 @@ Using these, the above commands could be replaced with:
 
     myprog -a 0 -b 0 -c 0
     myprog -a 0 -b 0 -c 1
-     ... 
+    ... 
     myprog -a 9 -b 9 -c 8
     myprog -a 9 -b 9 -c 9
 

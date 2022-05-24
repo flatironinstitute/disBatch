@@ -1,0 +1,57 @@
+2021-08-12 12:53:04,599 INFO     DisBatch       : Starting feeder (2394704) on scclin011.flatironinstitute.org in /mnt/home/yliu/projects/disBatch.
+2021-08-12 12:53:04,600 INFO     kvs            : Raised max open files from 1024 to 4096
+2021-08-12 12:53:04,601 INFO     kvs            : Setting queue size to 4000
+2021-08-12 12:53:04,605 INFO     DisBatch       : KVS Server: 10.128.45.55:37000
+2021-08-12 12:53:04,606 INFO     kvs            : Accepted connect from ('10.128.45.55', 37078)
+2021-08-12 12:53:04,611 INFO     kvs            : Accepted connect from ('10.128.45.55', 37080)
+2021-08-12 12:53:04,612 INFO     kvs            : Accepted connect from ('10.128.45.55', 37082)
+2021-08-12 12:53:04,613 INFO     DisBatch       : Processing repeat: 4000 1000000 1
+2021-08-12 12:53:54,462 INFO     kvs            : Accepted connect from ('10.128.45.55', 37500)
+2021-08-12 12:53:54,471 INFO     kvs            : Closing connection from ('10.128.45.55', 37500)
+2021-08-12 12:56:36,527 INFO     DisBatch       : Starting feeder (2395307) on scclin011.flatironinstitute.org in /mnt/home/yliu/projects/disBatch.
+2021-08-12 12:56:36,527 INFO     kvs            : Raised max open files from 1024 to 4096
+2021-08-12 12:56:36,528 INFO     kvs            : Setting queue size to 4000
+2021-08-12 12:56:36,531 INFO     DisBatch       : KVS Server: 10.128.45.55:39493
+2021-08-12 12:56:36,532 INFO     kvs            : Accepted connect from ('10.128.45.55', 37916)
+2021-08-12 12:56:36,537 INFO     kvs            : Accepted connect from ('10.128.45.55', 37918)
+2021-08-12 12:56:36,538 INFO     kvs            : Accepted connect from ('10.128.45.55', 37920)
+2021-08-12 12:56:36,538 INFO     DisBatch       : Processing repeat: 4000 1000000 1
+2021-08-12 12:56:45,844 INFO     kvs            : Accepted connect from ('10.128.45.55', 37998)
+2021-08-12 12:56:45,853 INFO     kvs            : Closing connection from ('10.128.45.55', 37998)
+2021-08-12 14:44:27,953 INFO     DisBatch       : Starting feeder (2408075) on scclin011.flatironinstitute.org in /mnt/home/yliu/projects/disBatch.
+2021-08-12 14:44:33,350 INFO     kvs            : Raised max open files from 1024 to 4096
+2021-08-12 14:44:33,352 INFO     kvs            : Setting queue size to 4000
+2021-08-12 14:45:38,451 INFO     DisBatch       : KVS Server: 10.128.45.55:33137
+2021-08-12 14:45:42,510 INFO     kvs            : Accepted connect from ('10.128.45.55', 57704)
+2021-08-12 14:58:45,997 INFO     kvs            : Accepted connect from ('10.128.45.55', 36006)
+2021-08-12 14:59:05,516 INFO     kvs            : Accepted connect from ('10.128.45.55', 36164)
+2021-08-12 14:59:05,517 INFO     DisBatch       : Processing repeat: 4000 1000000 1
+2021-08-12 15:01:27,558 INFO     kvs            : Accepted connect from ('10.128.45.55', 37352)
+2021-08-12 15:01:27,559 INFO     kvs            : Accepted connect from ('10.128.45.55', 37354)
+2021-08-12 15:01:34,318 INFO     kvs            : Closing connection from ('10.128.45.55', 37352)
+2021-08-12 15:01:34,318 INFO     kvs            : Closing connection from ('10.128.45.55', 37354)
+2021-08-12 15:05:17,177 INFO     kvs            : Accepted connect from ('10.128.45.55', 39282)
+2021-08-12 15:05:17,186 INFO     kvs            : Closing connection from ('10.128.45.55', 39282)
+2021-08-12 15:07:05,081 INFO     kvs            : Accepted connect from ('10.128.45.55', 40230)
+2021-08-12 15:07:05,081 INFO     kvs            : Accepted connect from ('10.128.45.55', 40232)
+2021-08-12 15:09:59,243 INFO     kvs            : Closing connection from ('10.128.45.55', 40230)
+2021-08-12 15:09:59,244 INFO     kvs            : Closing connection from ('10.128.45.55', 40232)
+2021-08-12 15:10:01,888 INFO     kvs            : Accepted connect from ('10.128.45.55', 41710)
+2021-08-12 15:10:01,889 INFO     kvs            : Accepted connect from ('10.128.45.55', 41712)
+2021-08-12 15:10:15,757 INFO     kvs            : Closing connection from ('10.128.45.55', 41710)
+2021-08-12 15:10:15,758 INFO     kvs            : Closing connection from ('10.128.45.55', 41712)
+2021-08-12 15:11:12,857 ERROR    DisBatch       : Watchdog
+Traceback (most recent call last):
+  File "/cm/shared/sw/pkg/flatiron/disBatch/2.0-beta/disBatch", line 1426, in <module>
+    kvs.put('.controller', ('driver heart beat', None))
+  File "/cm/shared/sw/pkg/flatiron/disBatch/2.0-beta/disBatch", line 1426, in <module>
+    kvs.put('.controller', ('driver heart beat', None))
+  File "/cm/shared/sw/pkg/devel/python3/3.7.3/lib/python3.7/bdb.py", line 88, in trace_dispatch
+    return self.dispatch_line(frame)
+  File "/cm/shared/sw/pkg/devel/python3/3.7.3/lib/python3.7/bdb.py", line 113, in dispatch_line
+    if self.quitting: raise BdbQuit
+bdb.BdbQuit
+2021-08-12 15:11:12,868 INFO     DisBatch       : Shutting down
+2021-08-12 15:11:12,868 INFO     DisBatch       : checking engines: []
+2021-08-12 15:11:12,869 INFO     DisBatch       : Shutting down KVS server.
+2021-08-12 15:11:12,869 INFO     kvs            : Calling server shutdown

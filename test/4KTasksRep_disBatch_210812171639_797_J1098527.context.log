@@ -1,0 +1,4 @@
+2021-08-12 17:16:39,602 INFO     root           : SLURM context started on worker3035 (42589).
+2021-08-12 17:16:39,603 INFO     root           : launch cmd: ['srun', '-N', '1', '-n', '40', '-w', 'worker3035', 'bash', '-c', 'if [[ $SLURM_LOCALID == 0 ]] ; then /mnt/home/yliu/projects/disBatch/4KTasksRep_disBatch_210812171639_797_dbUtil.sh --engine -n worker3035 .context_0 ; else { sleep 3 ; echo "pruned $SLURM_LOCALID" ; } ; fi']
+2021-08-12 17:38:37,959 INFO     DisBatch Context: Engine worker3035 exited: 0
+2021-08-12 17:38:37,960 INFO     DisBatch Context: Retiring node "worker3035" with command scontrol update JobId="$SLURM_JOBID" NodeList="${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE"

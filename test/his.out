@@ -1,0 +1,996 @@
+    1  ps -lfU ajohnson | grep snap_45
+    2  ps -lfU ajohnson | grep snap_45 | wc -l
+    3  uptime
+    4  dmesg -T | tail -100
+    5  vim /mnt/home/carriero/.bash_history
+    6  ssh popeye
+    7  vim /mnt/home/carriero/.bash_history
+    8  ssh popeye date
+    9  cd /mnt/home/carriero/.ssh/
+   10  ks
+   11  ls
+   12  more authorized_keys
+   13  more authorized_keys | grep popeye
+   14  more gpkp
+   15  ls
+   16  exit
+   17  ping popeye
+   18  ssh popeye
+   19  ssh popeye2
+   20  exit
+   21  htop
+   22  srun hostname
+   23  dmesg -T
+   24  df -H &
+   25  ps -lfU $USER
+   26  cat /proc/3521172/stack 
+   27  su
+   28  usage: disBatch [-h] [-p PATH] [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-S] [-r STATUSFILE] [-R] [--force-resume] [-e] [-w] [--kvsserver [HOST:PORT]] [--taskcommand COMMAND] [--taskserver [HOST:PORT]] [-C TASK_LIMIT] [-c N] [-g] [-k COMMAND] [-K]
+   29                  [-l COMMAND] [-s HOST:COUNT] [-t N]
+   30                  [taskfile]
+   31  Use batch resources to process a file of tasks, one task per line.
+   32  positional arguments:
+   33    taskfile              File with tasks, one task per line ("-" for stdin)
+   34  optional arguments:
+   35    -h, --help            show this help message and exit
+   36    -p PATH, --prefix PATH
+   37                          Path for log, dbUtil, and status files (default: "."). If ends with non-directory component, use as prefix for these files names (default: TASKFILE_JOBID).
+   38    --logfile FILE        Log file.
+   39    --mailFreq N          Send email every N task completions (default: 1). "--mailTo" must be given.
+   40    --mailTo ADDR         Mail address for task completion notification(s).
+   41    -S, --startup-only    Startup only the disBatch server (and KVS server if appropriate). Use "dbUtil..." script to add execution contexts. Incompatible with "--ssh-node".
+   42    -r STATUSFILE, --resume-from STATUSFILE
+   43                          Read the status file from a previous run and skip any completed tasks (may be specified multiple times).
+   44    -R, --retry           With -r, also retry any tasks which failed in previous runs (non-zero return).
+   45    --force-resume        With -r, proceed even if task commands/lines are different.
+   46    -e, --exit-code       When any task fails, exit with non-zero status (default: only if disBatch itself fails)
+   47    -w, --web             Enable web interface.
+   48    --kvsserver [HOST:PORT]
+   49                          Use a running KVS server.
+   50    --taskcommand COMMAND
+   51                          Tasks will come from the command specified via the KVS server (passed in the environment).
+   52    --taskserver [HOST:PORT]
+   53                          Tasks will come from the KVS server.
+   54    -C TASK_LIMIT, --context-task-limit TASK_LIMIT
+   55                          Shutdown after running COUNT tasks (0 => no limit).
+   56    -c N, --cpusPerTask N
+   57                          Number of cores used per task; may be fractional (default: 1).
+   58    -g, --gpu             Use assigned GPU resources
+   59    -k COMMAND, --retire-cmd COMMAND
+   60                          Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".
+   61    -K, --no-retire       Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.
+   62    -l COMMAND, --label COMMAND
+   63                          Label for this context. Should be unique.
+   64    -s HOST:COUNT, --ssh-node HOST:COUNT
+   65                          Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)
+   66    -t N, --tasksPerNode N
+   67                          Maximum concurrently executing tasks per node (up to cores/cpusPerTask).
+   68  srun -N2 --pty -p gpu -t 0-1 --gpus=2 -c 1 --mem=1G -C 'v100|a100' bash -i
+   69  module add slurm
+   70  srun -N2 --pty -p gpu -t 0-1 --gpus=2 -c 1 --mem=1G -C 'v100|a100' bash -i
+   71  srun hostname
+   72  squeue -u $USER
+   73  env | grep SLURM
+   74  srun -n 1 hostname
+   75  srun -N 1 hostname
+   76  srun -N 1 -n 1 hostname
+   77  env | grep SLURM
+   78  squeue -u $USER
+   79  sacct -u $USER
+   80  srun hostname
+   81  srun -n 1 hostname
+   82  srun -N 1 hostname
+   83  srun hostname
+   84  srun -N 1 hostname
+   85  srun -n 1 hostname
+   86  srun -N 1 -n 1 hostname
+   87  env | grep SLURM 
+   88  srun -N 1 -n 1 -w workergpu17 hostname
+   89  srun hostname
+   90  srun -N 1 -n 1 hostname
+   91  srun -N 1 -n 1 --pty bash
+   92  srun -N 1 -n 1 hostname
+   93  srun -N 1 -n 1 --pty bash
+   94  ps -lfu pyang
+   95  echo 'salloc -p gpu --gpus=v100 --gpus=1 -c 10 --exclusive'
+   96  squeue -p gpu
+   97  env | grep SLURM
+   98  ./restartX11vnc
+   99  ./restartX11vnc
+  100  ssh-add -L
+  101  cd projects/disBatch/git/2020/disBatch/
+  102  ls
+  103  git log -p HEAD..master
+  104  git merge master
+  105  git status
+  106  emacs -nw 
+  107  git add Readme.md
+  108  git diff HEAD -- Readme.md
+  109  git diff master -- Readme.md
+  110  emacs disBatch.py 
+  111  emacs -nw disBatch.py 
+  112  git mergetool
+  113  which git
+  114  git mergetool --tool-help
+  115  git mergetool --tool-ediff
+  116  module add modules-nix
+  117  module add nix/git
+  118  git mergetool --tool-help
+  119  git mergetool
+  120  ls -ltr
+  121  mv \#disBatch.py# fooDisBatch.py
+  122  git mergetool
+  123  ls -ltr
+  124  git status
+  125  git branch -a
+  126  git commit --hel
+  127  git commit -m 'Fold in changes from master.'
+  128  git status
+  129  git diff
+  130  git diff dynamicdb origin/dynamicdb
+  131  git diff dynamicdb origin/master
+  132  git push
+  133  pwd
+  134  git push --set-upstream origin dynamicdb
+  135  ~/bin/nodeinfo.py worker5052
+  136  ~/bin/nodeinfo.py worker5106
+  137  squeue -j 1052657
+  138  module add slurm
+  139  squeue -j 1052657
+  140  squeue -j 1052641
+  141  pwd
+  142  cd
+  143  bin/useReport jhall
+  144  ssh worker4004
+  145  squeue -u jhall
+  146  cd projects/disBatch/git/2020/
+  147  cd disBatch/
+  148  pandoc
+  149  pandoc Readme.md | lynx -stdin
+  150  ls -ltra
+  151  ~/bin/slurmUseSummary -s | he
+  152  ~/bin/slurmUseSummary -s | head
+  153  ~/bin/slurmUseSummary -s | head -44
+  154  ~/bin/waiting
+  155  sudo bash
+  156  ssh worker2013
+  157  cd
+  158  bin/featureInfo bnk
+  159  bin/featureInfo bnl
+  160  bin/sStatus 
+  161  bin/featureInfo bnl
+  162  squeue -p bnl
+  163  cd projects/bamscan/
+  164  ls -ltr
+  165  diff bamScanMPHunt.py bamScanMPHuntDebug.py
+  166  less bamScanMPHuntDebug.py
+  167  find /mnt/ceph/users/genedata/ -name '*.bam' -ls | head
+  168  ls  /mnt/ceph/users/genedata/ 
+  169  ls  /mnt/ceph/users/SFARI
+  170  find   /mnt/ceph/SFARI/ -name '*.bam' -ls | head
+  171  sudo bash
+  172  dmesg -T | tail -50
+  173  dmesg -T | grep -v NFS | tail -40
+  174  dmesg -T | grep -vi NFS | tail -40
+  175  w
+  176  df -H
+  177  ls /data
+  178  uptime
+  179  uname -a
+  180  cat /etc/issue
+  181  ls /etc/
+  182  cat /etc/centos-release
+  183  dmesg | grep -i smrt
+  184  dmesg | grep -i dev
+  185  lsblk
+  186  ls /data
+  187  ps uaxww | grep -i drop
+  188  ps uaxww | grep -i drop | wc -l
+  189  ps uaxww | grep -i drop | grep defunc | wc -l
+  190  ps uaxww | grep -i drop | grep-v defunc 
+  191  ps uaxww | grep -i drop | grep -v defunc 
+  192  ls -l /mnt/ext4
+  193  ls -l /mnt/ext4/wyan/
+  194  ls -l /mnt/ext4/wyan/dropbox/
+  195  df -H 
+  196  ls -l /mnt/ext4
+  197  ls -l /mnt/
+  198  df -H /mnt/ext4
+  199  df -H /mnt/ceph
+  200  df -H /mnt/home
+  201  mount
+  202  mount | grep ext
+  203  cat > /dev/null
+  204  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  205    960  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  206  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  207  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  208  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  209  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  210  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  211  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  212  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  213  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  214  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  215  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  216  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  217  date ; ~/bin/usageTrend.py home -t 5e9 -o current
+  218  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  219  find ~cbertrand -type f -size +1000000000c -ls
+  220  ls -ltr /mnt/home/cbertrand/Work/Projects/dot-David-GG/calculation/run-outliers
+  221  od -c  /mnt/home/cbertrand/Work/Projects/dot-David-GG/calculation/run-outliers/out-1038511.1.019
+  222  head   /mnt/home/cbertrand/Work/Projects/dot-David-GG/calculation/run-outliers/out-1038511.1.019
+  223  tail   /mnt/home/cbertrand/Work/Projects/dot-David-GG/calculation/run-outliers/out-1038511.1.019
+  224  ls -l   /mnt/home/cbertrand/Work/Projects/dot-David-GG/calculation/run-outliers/out-1038511.1.019
+  225  ls --si -l   /mnt/home/cbertrand/Work/Projects/dot-David-GG/calculation/run-outliers/out-1038511.1.019
+  226  gzip -c --fast    /mnt/home/cbertrand/Work/Projects/dot-David-GG/calculation/run-outliers/out-1038511.1.019 | wc -c
+  227  date ; gzip -c --fast    /mnt/home/cbertrand/Work/Projects/dot-David-GG/calculation/run-outliers/out-1038511.1.019 | wc -c ; date
+  228  dc
+  229  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  230  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  231  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  232  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  233  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  234  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  235  df -i -sh ~jlee
+  236  df -Hi ~jlee
+  237  df -H ~jlee
+  238  date ; ~/bin/usageTrend.py home -t 10e3 -o current -m files
+  239  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  240  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  241  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  242  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  243  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  244  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  245  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  246  date ; ~/bin/usageTrend.py home -t 5e9 -o delta
+  247  date ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  248  date ; ~/bin/usageTrend.py home -t 5e9 -o delta ; ~/bin/usageTrend.py home -t 10e3 -o delta -m files
+  249  date ; ~/bin/usageTrend.py home -t 10e9 -o delta ; ~/bin/usageTrend.py home -t 50e3 -o delta -m files
+  250  bin/userInfo hkang
+  251  bin/userInfo mcranmer
+  252  date ; ~/bin/usageTrend.py home -t 10e9 -o delta ; ~/bin/usageTrend.py home -t 50e3 -o delta -m files
+  253  ls /mnt/ceph/users/gkabacaoglu
+  254  date ; ~/bin/usageTrend.py home -t 10e9 -o delta ; ~/bin/usageTrend.py home -t 50e3 -o delta -m files
+  255  bin/userInfo lzhang
+  256  bin/userInfo kpatil
+  257  date ; ~/bin/usageTrend.py home -t 10e9 -o delta ; ~/bin/usageTrend.py home -t 50e3 -o delta -m files
+  258  man find
+  259  find ~jmorton -size +10000000c -newerct 20210628 -ls
+  260  find ~jmorton -size +10000000c -newerct 20210628 -ls
+  261  date ; ~/bin/usageTrend.py home -t 10e9 -o delta ; ~/bin/usageTrend.py home -t 50e3 -o delta -m files
+  262  df -H ~nchua
+  263  date ; ~/bin/usageTrend.py home -t 10e9 -o delta ; ~/bin/usageTrend.py home -t 50e3 -o delta -m files
+  264  id genedata
+  265  grep genedata ~/projects/userManagement/scc-ansible/users.csv 
+  266  find /mnt/home/genedata -type f -newerct '10 July 2021' -ls
+  267  sudo bash
+  268  time ls /mnt/home/shassan/ceph/test_agn/Simfast21/Halos/
+  269  ssh rustyamd1
+  270  ~carriero/bin/useReport schen
+  271  ~/bin/slurmUseSummary -s | he
+  272  ~/bin/slurmUseSummary -s | head
+  273  ~/bin/slurmUseSummary -s | head -44
+  274  su
+  275  ~/bin/slurmUseSummary -s | head -44
+  276  bin/waiting
+  277  bin/featureInfo bnl
+  278  bin/gpuUsage
+  279  bin/gpuUsage -u lperez -t 2
+  280  ~carriero/bin/gpuUsage -u lperez -t 2
+  281  scontrol -d show job 1050451
+  282  module add slurm
+  283  scontrol -d show job 1050451
+  284  cat /mnt/home/lperez/NeuralNetCreation/HyperParams_cLHclustering_sfrgt0_N1000_VPF.sh
+  285  bin/useReport lperez -f rss
+  286  bin/useReport lperez 
+  287  bin/gpuUsage
+  288  bin/userInfo lperez
+  289  ~/bin/slurmUseSummary -s | head -44
+  290  bin/waiting
+  291  su
+  292  ~/bin/slurmUseSummary -s | head -44
+  293  bin/waiting
+  294  bin/userInfo ajohnson
+  295  bin/useReport ajohnson
+  296  id ajohnson
+  297  scontrol -d show job 1052209
+  298  cat /mnt/home/ajohnson/AstroCode/rungetFields.sh
+  299  squeue -u ajohnson 
+  300  ssh worker5011
+  301  squeue -u ajohnson
+  302  salloc -N 1 -p scc -n 10 -t 0-0:35:0
+  303  history | grep cat
+  304  cat /mnt/home/ajohnson/AstroCode/rungetFields.sh
+  305  squeue -u ajohnson
+  306  ssh worker1228
+  307  squeue -u ajohnson
+  308  scontrol -d show job 1052463
+  309  cat /mnt/home/ajohnson/AstroCode/rungetFields.sh
+  310  scontrol -d show job 1052463
+  311  ssh worker1228 ps -lfU ajohnson | wc -l
+  312  ssh worker1228 
+  313  squeue -u ajohnson
+  314  ~/bin/slurmUseSummary -s | head -44
+  315  su
+  316  bin/waiting
+  317  bin/gpuUsage
+  318  bin/featureInfo gpu
+  319  sacct -j 1048826 -o jobid,start,elapsed,state,nodelist%70
+  320  ~/bin/slurmUseSummary -s | head -44
+  321  bin/waiting
+  322  bin/gpuUsage
+  323  ~/bin/slurmUseSummary -s | head -44
+  324  bin/wait
+  325  bin/waiting
+  326  bin/featureInfo 'skylake and not gpu'
+  327  bin/featureInfo 'skylake and not gpu and not bnl'
+  328  bin/waiting
+  329  su
+  330  ~/bin/slurmUseSummary -s | head -44
+  331  bin/waiting
+  332  bin/gpuUsage
+  333  scontrol -d show job 1049100
+  334  ~carriero/bin/gpuUsage -u ingvild -t 3
+  335  which disBatch
+  336  module add disBatch/2.0-beta 
+  337  disBatch -h
+  338  ~/bin/slurmUseSummary -s | head -44
+  339  bin/waiting
+  340  bin/useReport nsheng
+  341  bin/waiting
+  342  ~/bin/slurmUseSummary -s | head -44
+  343  su
+  344  ~/bin/slurmUseSummary -s | head -44
+  345  bin/waiting
+  346  squeue -u nsheng
+  347  scontrol -d show job 1053443
+  348  su
+  349  bin/waiting
+  350  ~/bin/slurmUseSummary -s | head -44
+  351  su
+  352  bin/waiting
+  353  bin/gpuUsage
+  354  bin/waiting
+  355  squeue -u nsheng
+  356  bin/slurmUseSummary -s | head -44
+  357  sacctmgr -P show qos cca,ccb,ccm,ccn,ccq,scc
+  358  squeue -u nsheng | wc -l
+  359  su
+  360  squeue -u nsheng 
+  361  scontrol -d show job 1053484
+  362  bin/useReport nsheng
+  363  squeue -u nsheng
+  364  squeue -u nsheng | wc -l
+  365  bin/userInfo nsheng
+  366  bin/waiting | grep nsheng
+  367  bin/waiting | grep 0v nsheng
+  368  bin/waiting | grep iv nsheng
+  369  bin/waiting | grep -v nsheng
+  370  bin/waiting | grep nsheng
+  371  bin/waiting | grep nsheng | wc -l
+  372  su
+  373  bin/slurmUseSummary -s | head -44
+  374  bin/waiting
+  375  bin/slurmUseSummary -s | head -44
+  376  su
+  377  mail -s 'testing' ncarriero@flatironinstitute.org
+  378  ls /var/spool/mail/carriero 
+  379  ls -l /var/spool/mail/carriero 
+  380  cat  /var/spool/mail/carriero 
+  381  bin/slurmUseSummary -s | head -44
+  382  su
+  383  ping worker2013
+  384  bin/slurmUseSummary -s | head -44
+  385  bin/waiting
+  386  bin/featureInfo bnl
+  387  su
+  388  /bin/ls /mnt/ceph/users/shassan
+  389  /bin/ls /mnt/ceph/users/shassan/simba_aton/
+  390  /bin/ls /mnt/ceph/users/shassan/simba_aton/simba_N256L100/rionfit/
+  391  /bin/ls -l /mnt/ceph/users/shassan/simba_aton/simba_N256L100/rionfit/
+  392  squeue -u rfarhadifar
+  393  bin/slurmUseSummary -s | head -44
+  394  su
+  395  bin/slurmUseSummary -s | head -44
+  396  sacctmgr -P show qos cca,ccb,ccm,ccn,ccq,scc
+  397  su
+  398  sacctmgr -P show qos cca,ccb,ccm,ccn,ccq,scc
+  399  bin/slurmUseSummary -s | head -44
+  400  bin/waiting
+  401  bin/useReport nverlinde
+  402  bin/userInfo nverlinde
+  403  scontrol -d show job 1064254
+  404  cat /mnt/home/nverlinde/Puck_200115_09batch.pbs
+  405  bin/userInfo nverlinde
+  406  bin/useReport nverlinde
+  407  squeue -u nverlinde
+  408  squeue -u nverlinde -f rss
+  409  bin/useReport nverlinde -f rss
+  410  id nverlinde
+  411  ~/bin/slurmUseSummary -s | he
+  412  ~/bin/slurmUseSummary -s | head -44
+  413  su
+  414  bin/useReport chiaminchung
+  415  scontrol show job 1066271
+  416  cat /mnt/home/dsalim/space_time_pde/experiments/rb2d/GAMMA0pt003125/Ra1e6_D_transport_MC_BC_L2.sh
+  417  squeue -u dsalim
+  418  bin/useReport dsalim -f rss
+  419  ssh root@jenny
+  420  htop
+  421  nslookup yfermin.lin
+  422  bin/slurmUseSummary -s | head -44
+  423  bin/waiting
+  424  bin/slurmUseSummary -s | head -44
+  425  bin/featureInfo 'not gpu'
+  426  bin/slurmUseSummary -s | head -44
+  427  id genedata
+  428  sudo bash
+  429  bin/slurmUseSummary -s | head -44
+  430  bin/waiting
+  431  squeue -u nsheng
+  432  module add slurm
+  433  squeue -u nsheng
+  434  bin/useReport nsheng
+  435  bin/slurmUseSummary -s | head -44
+  436  sudo bash
+  437  bin/userInfo nsheng
+  438  bin/useReport nsheng
+  439  squeue -u nsheng
+  440  scontrol show job 1067261
+  441  cat /mnt/home/nsheng/project/dmft/benchmarks/bar/Dimer_GTAU_1000/scripts/cthyb_10_1.00e+06_62.sbatch
+  442  squeue -u nsheng
+  443  bin/slurmUseSummary -s | head -44
+  444  sudo bash
+  445  bin/slurmUseSummary -s | head -44
+  446  bin/waiting
+  447  bin/slurmUseSummary -s | head -44
+  448  sudo bash
+  449  bin/slurmUseSummary -s | head -44
+  450  bin/waiting
+  451  sudo bash
+  452  ssh worker4006
+  453  bin/slurmUseSummary -s | head -33
+  454  bin/waiting
+  455  sudo bash
+  456  cd tmp/
+  457  ls -ltr
+  458  sbatch -N1 -p scc dbTest_dbUtil.sh 
+  459  cat dbTest_dbUtil.sh 
+  460  sbatch -N3 -p scc dbTest_dbUtil.sh 
+  461  sbatch -N1 -p scc dbTest_dbUtil.sh 
+  462  ls -ltr | tail
+  463  squeue -u $USER
+  464  sbatch -N3 -p scc dbTest_dbUtil.sh 
+  465  sbatch -N2 -p scc dbTest_dbUtil.sh 
+  466  squeue -u $USER
+  467  find /cm/shared/apps/slurm -name 'Slurmdb.pm*'
+  468  which seff
+  469  ls -l /cm/shared/apps/slurm/
+  470  ls -l /cm/shared/apps/slurm/20.02.5
+  471  ls -l /cm/shared/apps/slurm/20.02.5/lib64/
+  472  cd ~/projects/userManagement/scc-ansible/
+  473  git pull
+  474  ls ~mweinberg/
+  475  sudo bash
+  476  ssh workergpu55
+  477  stty sane
+  478  squeue -u mobrien
+  479  ssh worker5084
+  480  git pull
+  481  ssh-agent -L
+  482  ssh-add -L
+  483  ps uaxww | grep ssh
+  484  htop
+  485  htop
+  486  ./restartX11vnc
+  487  ps -lfU nsheng
+  488  su
+  489  ssh-add ~/.ssh/gh
+  490  git pull
+  491  diff disBatch.py disBatchFOO 
+  492  git status
+  493  rm disBatchFOO
+  494  git tag -a 2.0-rc1
+  495  git push --tags
+  496  cd /tmp
+  497  mkdir ghtest
+  498  cd ghtest
+  499  git checkout git@github.com:flatironinstitute/disBatch.git
+  500  git clone git@github.com:flatironinstitute/disBatch.git
+  501  cd disBatch/
+  502  git check tags/2.0-rc1
+  503  git checkout tags/2.0-rc1
+  504  grep srun disBatch.py 
+  505  pwd
+  506  cd ../..
+  507  rm -r ghtest
+  508  rm -fr ghtest
+  509  cd
+  510  module show disBatch/2.0-beta 
+  511  grep srun /cm/shared/sw/pkg/flatiron/disBatch/2.0-beta/disBatch.py 
+  512  pwd
+  513  cd projects/disBatch/git/2020/
+  514  ls
+  515  mkdir tmp
+  516  cd tmp
+  517  git clone git@github.com:flatironinstitute/disBatch.git
+  518  git branch
+  519  git diff -help
+  520  git diff --help
+  521  mkdir tgr
+  522  rsync -a disBatch tgr/
+  523  ls
+  524  cd disBatch/
+  525  git branch
+  526  rm -r ../tgr
+  527  rm -fr ../tgr
+  528  pwd
+  529  git branch -a
+  530  cd ..
+  531  mv disBatch disBatchMaster
+  532  git clone git@github.com:flatironinstitute/disBatch.git
+  533  cd disBatch
+  534  git branch dynamicdb
+  535  git branch
+  536  cd ..
+  537  rm -rf disBatch
+  538  git clone git@github.com:flatironinstitute/disBatch.git
+  539  cd disBatch
+  540  git branch -a
+  541  git chechout -b dynamicdb
+  542  git checkout -b dynamicdb
+  543  git branch -a
+  544  rm -rf disBatch
+  545  git clone git@github.com:flatironinstitute/disBatch.git
+  546  cd disBatch
+  547  git branch -a
+  548  git fetch --all
+  549  git branch -a
+  550  git checkout dynamicdb
+  551  git branch -a
+  552  grep srun disBatch.py 
+  553  emacs -nw
+  554  su
+  555  mail -s "testing" -r rusty@flatirioninstitute.org -S from="rusty@flatironinstitute.org" ncarriero@flatironinstitute.org
+  556  mail -s "testing" -r rusty@flatironinstitute.org -S from="rusty@flatironinstitute.org" ncarriero@flatironinstitute.org
+  557  mail -s "testing" -r rusty@flatironinstitute.org -S from="rusty@flatironinstitute.org" njcarriero@gmail.com
+  558  ~/bin/slurmUseSummary -s | head -44
+  559  ~/bin/waiting
+  560  ~/bin/userInfo nsheng
+  561  squeue -u nsheng
+  562  ~/bin/useReport nsheng
+  563  scontrol -d show job 1056349
+  564  cat /mnt/home/nsheng/project/dmft/benchmarks/bar/Dimer_GTAU/scripts/cthyb_10_1.00e+08_99.sbatch
+  565  ~/bin/useReport nsheng
+  566  ~/bin/userInfo nsheng
+  567  su
+  568  ~/bin/slurmUseSummary -s | head -44
+  569  su
+  570  bin/wai
+  571  ~/bin/waiting
+  572  ~/bin/slurmUseSummary -s | head -44
+  573  ~/bin/waiting
+  574  ~/bin/slurmUseSummary -s | head -44
+  575  bin/wai
+  576  ~/bin/waiting
+  577  ~/bin/gpuUsage
+  578  ~/bin/waiting
+  579  ~/bin/featureInfo 'skylane and opa'
+  580  ~/bin/featureInfo 'skylake and opa'
+  581  ~/bin/waiting
+  582  ~/bin/featureInfo gpu
+  583  scontrol -d show job 1058194
+  584  ssh ccqlin033
+  585  ~/bin/featureInfo v100
+  586  ~/bin/waiting
+  587  ~/bin/featureInfo -l
+  588  salloc -p gpu --gpus=v100 --gpus=1 -c 10 --exclusive
+  589  salloc -p gpu --gpus=v100s-32gb --gpus=1 -c 10 --exclusive
+  590  salloc -p gpu --gres=v100s-32gb:1 -c 10 --exclusive
+  591  salloc -p gpu --gres:v100s-32gb=1 -c 10 --exclusive
+  592  salloc -p gpu --gpus=v100s-32gb:1 -c 10 --exclusive
+  593  salloc -p gpu --gpus=v100s-32gb:1 -c 10 
+  594  salloc -p gpu -C v100 --gpus=1 -c 10 
+  595  squeue -u $USER
+  596  squeue -u pyang
+  597  salloc -N 1 -p gpu -C v100 --gpus=4 -c 10 -t 0-1:0
+  598  salloc -N 1 -p gpu -C v100 --gpus=4  -t 0-1:0
+  599  salloc -N 1 -p gpu -C v100 --gpus=4  -t 0-1:0 --exclusive
+  600  salloc -N 1 -p gpu -C v100  -t 0-1:0 --exclusive
+  601  salloc -N 1 -p gpu -C v100 -gpu=1 -t 0-1:0 --exclusive
+  602  salloc -N 1 -p gpu -C v100 --gpu=1 -t 0-1:0 --exclusive
+  603  pwd
+  604  cd
+  605  bin/slurmUseSummary -s | head -44
+  606  bin/waiting
+  607  bin/featureInfo a100
+  608  squeue -f a100
+  609  squeue --help | grep -i constraint
+  610  squeue --help | grep -i feature
+  611  bin/featureInfo -g
+  612  bin/featureInfo -l
+  613  bin/sStatus a100
+  614  bin/sStatus | grep workergpu
+  615  ping workergpu53
+  616  ~/bin/slurmUseSummary -s | head -44
+  617  bin/waiting
+  618  squeue -u fguth
+  619  bin/gpuUsage
+  620  df -H ~sansar
+  621  ls -ld /mnt/ceph/users/sansar
+  622  find ~sansar -size +1000000c -ls
+  623  find ~sansar -size +10000000c -ls
+  624  ~/bin/slurmUseSummary -s | head -44
+  625  bin/waiting
+  626  su
+  627  bin/waiting
+  628  su
+  629  sacct -u ajermyn -S 0701 -o nodelist,jobid
+  630  sacct -u ajermyn -S 0701 -o nodelist%100,jobid
+  631  sacct -u ajermyn -S 0701 -o nodelist%100,jobid | grep 792
+  632  sacct -u ajermyn -S 0701 -o nodelist%100,jobid,workdir | grep 792
+  633  sacct -u ajermyn -S 0701 -o nodelist%100,jobid,workdir%90 | grep 792
+  634  cd /mnt/ceph/users/ajermyn/Stokes/Stokes_disBatch/time_2021_06_28_11_39_49
+  635  ls -ltr *statu*
+  636  less tasks_1054792_status.txt 
+  637  wc -l tasks
+  638  tail tasks_1054792_driver.log 
+  639  less tasks_1054792_status.txt 
+  640  su
+  641  cd
+  642  cd /mnt/ceph/users/tmakinen/
+  643  ls -ld  /mnt/ceph/users/tmakinen/
+  644  ls -ld --si /mnt/ceph/users/ksu
+  645  ~/bin/slurmUseSummary -s | head -44
+  646  bin/useReport pcossio
+  647  ~/bin/slurmUseSummary -s | head -44
+  648  bin/userInfo pcosiso
+  649  bin/userInfo pcossio
+  650  grep -i david ~/projects/userManagement/scc-ansible/users.csv 
+  651  grep -i yang ~/projects/userManagement/scc-ansible/users.csv 
+  652  grep -i miguel ~/projects/userManagement/scc-ansible/users.csv 
+  653  grep -i paul ~/projects/userManagement/scc-ansible/users.csv 
+  654  grep -i ccm ~/projects/userManagement/scc-ansible/users.csv  | tail
+  655  grep -i ccq ~/projects/userManagement/scc-ansible/users.csv  | tail
+  656  grep -i ccq ~/projects/userManagement/scc-ansible/users.csv  | tail -40
+  657  grep -i ccq ~/projects/userManagement/scc-ansible/users.csv  | grep paul
+  658  grep -i ccq ~/projects/userManagement/scc-ansible/users.csv  | grep pyang
+  659  grep -i ccq ~/projects/userManagement/scc-ansible/users.csv  | grep yang
+  660  grep -i pyang ~/projects/userManagement/scc-ansible/users.csv  
+  661  cd projects/userManagement/scc-ansible/
+  662  git pull
+  663  grep pyang users.csv 
+  664  grep Miguel users.csv 
+  665  ~/bin/userInfo mnorales
+  666  ~/bin/userInfo mmorales
+  667  cd
+  668  ~/bin/slurmUseSummary -s | head -44
+  669  bin/waiting
+  670  bin/featureInfo rome
+  671  bin/featureInfo 'not gpu'
+  672  su
+  673  ~/bin/slurmUseSummary -s | head -44
+  674  bin/waiting
+  675  squeue -u dmalhotra 
+  676  su
+  677  ps uaaxwww
+  678  ps uaaxwww | grep -v root
+  679  cat /proc/383364/environ
+  680  cat /proc/1777421/environ
+  681  ~/bin/slurmUseSummary -s | head -44
+  682  bin/waiting
+  683  su
+  684  ~/bin/slurmUseSummary -s | head -44
+  685  bin/waiting
+  686  ~/bin/slurmUseSummary -s | head -44
+  687  sacctmgr -P show qos cca,ccb,ccm,ccn,ccq,scc
+  688  su
+  689  ~/bin/slurmUseSummary -s | head -44
+  690  bin/useReport usteinwandel
+  691  bin/useReport cfeng
+  692  bin/useReport -f rss
+  693  bin/useReport cfeng -f rss
+  694  scontrol -d show job 1066342
+  695  cat /mnt/home/cfeng/projects/honeycomb_heisenberg/jobs/taskZ4_24_h17
+  696  less /mnt/home/cfeng/projects/honeycomb_heisenberg/jobs/taskZ4_24_h17_1066342_status.txt 
+  697  cat /mnt/home/cfeng/projects/honeycomb_heisenberg/jobs/taskZ4_24_h17_1066342_status.txt 
+  698  tail  /mnt/home/cfeng/projects/honeycomb_heisenberg/taskZ4_24_009_h17.log
+  699  tail  /mnt/home/cfeng/projects/honeycomb_heisenberg/unZ4_24_h17_nmetts500.sh
+  700  cat  /mnt/home/cfeng/projects/honeycomb_heisenberg/runZ4_24_h17_nmetts500.sh
+  701  grep -C3 -i killed  /mnt/home/cfeng/projects/honeycomb_heisenberg/runZ4_24_h17_nmetts500.sh
+  702  cat  /mnt/home/cfeng/projects/honeycomb_heisenberg/runZ4_24_h17_nmetts500.sh
+  703  head -76  /mnt/home/cfeng/projects/honeycomb_heisenberg/taskZ4_24_009_h17.log | tail -15
+  704  head -76  /mnt/home/cfeng/projects/honeycomb_heisenberg/runZ4_24_h17_nmetts500.sh | tail -15
+  705  cat /mnt/home/cfeng/projects/honeycomb_heisenberg/jobs/taskZ4_24_h17_1066342_status.txt 
+  706  ssh worker5217 dmesg | grep -i kill
+  707  grep '_nmetts' /mnt/home/cfeng/projects/honeycomb_heisenberg/jobs/taskZ4_24_h17
+  708  bin/gpuUsage
+  709  bin/waiting
+  710  ~/bin/slurmUseSummary -s | head -44
+  711  su
+  712  bin/userInfo dberenberg
+  713  scontrol show job 1070813
+  714  ssh worker5084
+  715  cd ceph
+  716  find . -maxdepth 4 -newerct '1 Jan 2021' -iname '*.mpeg'
+  717  cd ~nmccrea/
+  718  ls
+  719  ls ceph
+  720  ./restartX11vnc
+  721  env | grep SLURM
+  722  ./restartX11vnc
+  723  htop
+  724  uptime
+  725  htop
+  726  uptime
+  727  htop
+  728  uptime
+  729  htop
+  730  ssh viswall06
+  731  htop
+  732  ps -lfU ltung
+  733  bin/lineage 1632386
+  734  last ltung | head
+  735  id ltung
+  736  squeue -u ltung
+  737  module add slurm
+  738  squeue -u ltung
+  739  ls ~~~~~ltung
+  740  ls ~ltung
+  741  ls ~ltung/test
+  742  ls -l ~ltung/test
+  743  ls -l ~ltung/test/test_family/
+  744  cat  ~ltung/test/test_family/2-family_stats 
+  745  ls -la ~ltung
+  746  ls -ltra ~ltung
+  747  last ltung
+  748  ps -lfU ltung
+  749  ssh rusty1 ps -lfU ltung
+  750  squeue -u ltung
+  751  bin/useReport ltung
+  752  last ltung | head
+  753  ~/bin/slurmUseSummary -s | head -44
+  754  bin/featureInfo rome
+  755  su
+  756  ~/bin/slurmUseSummary -s | head -44
+  757  bin/featureInfo ib
+  758  date
+  759  bin/userInfo cfilion
+  760  bin/useReport astrashko
+  761  ssh worker1015
+  762  bin/useReport -h
+  763  ~carriero/bin/useReport -J 1078252
+  764  ~carriero/bin/useReport -q job 1078252
+  765  ssh worker1045 ps -lfU astrashko
+  766  ssh worker1045 ps -lfU astrashko | grep full_CGF_MPS
+  767  ssh worker1045 ps -lfU astrashko | grep full_CGD_MPS
+  768  squeue -u astrashko
+  769  scontrol -d show job 1078252
+  770  cd /mnt/ceph/users/astrashko/MPS_Experimenting_with_data/1_uncorrelated_label_noise
+  771  emacs -nw
+  772  cd ps uaxwww | grep -v root
+  773  ls -ld /mnt/home/mrenzo/ceph/RUNS/accretors//m1_10.0000_m2_5.0000_initial_z_0.019_initial_period_in_days_1.0000e+02_grid_index_0 
+  774  ls -l /mnt/home/mrenzo/ceph/RUNS/accretors//m1_10.0000_m2_5.0000_initial_z_0.019_initial_period_in_days_1.0000e+02_grid_index_0 
+  775  sudo
+  776  sudo bash
+  777  ssh worker1151
+  778  cd
+  779  squeue -u jhall
+  780  module add slurm
+  781  squeue -u jhall
+  782  scontrol -d show job 1038884
+  783  cd /mnt/ceph/users/sfida/variants/snvs_indels/WGS4/2021_06_wgs4_3690_exome/deepvariant/tasks/gvcf_individual
+  784  ls *status*
+  785  less gvcf_individual.txt_disBatch_210608104135_644_status.txt 
+  786  emacs -nw
+  787  bin/slurmUseSummary -s | head -44
+  788  su
+  789  bin/slurmUseSummary -s | head -44
+  790  bin/waiting
+  791  module add slurm
+  792  squeue -u toleskiw 
+  793  su
+  794  bin/slurmUseSummary -s | head -44
+  795  su
+  796  bin/slurmUseSummary -s | head -44
+  797  su
+  798  ~carriero/bin/slurmUseSummary -s | head -44
+  799  su
+  800  ~carriero/bin/slurmUseSummary -s | head -44
+  801  bin/waiting
+  802  ~carriero/bin/slurmUseSummary -s | head -44
+  803  bin/waiting
+  804  sacctmgr -P show qos cca,ccb,ccm,ccn,ccq,scc
+  805  su
+  806  ~carriero/bin/slurmUseSummary -s | head -44
+  807  bin/srUser vmulligan
+  808  cat bin/srUser 
+  809  ~carriero/bin/slurmUseSummary -s | head -44
+  810  bin/waiting
+  811  su
+  812  bin/waiting
+  813  bin/featureInfo skylake
+  814  bin/featureInfo 'skylake and not bnl and not gpu'
+  815  scontrol -d show job 1049493
+  816  cat /mnt/home/lperez/NeuralNetCreation/MeasureClustering/RunNNCorrfuncClustering_cCV.sh
+  817  ~carriero/bin/slurmUseSummary -s | head -44
+  818  bin/useReport sphilippov
+  819  ~carriero/bin/slurmUseSummary -s | head -44
+  820  bin/waiting
+  821  cd projects/slurm/utils/current/
+  822  ls
+  823  ls -ltr | tail
+  824  cat ~/bin/useReport
+  825  diff useReportJAWIP.py useReportJA.py
+  826  ls -ltr ~/bin
+  827  which disBatch
+  828  module show disBatch/2.0-beta 
+  829  cd /cm/shared/sw/pkg/flatiron/disBatch/2.0-beta
+  830  ls
+  831  cp disBatch.py disBatchFOO
+  832  git pull
+  833  ssh-agent bash
+  834  ls --si -ld /mnt/ceph/users/yjiang
+  835  df -H /mnt/ceph
+  836  ssh rusty1 ps -lfU ltung
+  837  ssh rusty2 ps -lfU ltung
+  838  ssh rusty2 w | grep ltung
+  839  ssh rusty1 w | grep ltung
+  840  nslookup 10.128.61.32
+  841  ssh gw160 ps -lfU ltung
+  842  ssh gw162 ps -lfU ltung
+  843  ssh rusty2
+  844  jobs
+  845  ~carriero/bin/slurmUseSummary -s | head -44
+  846  ssh worker1000
+  847  owd
+  848  pwd
+  849  htop
+  850  ps -lfY yhe
+  851  ps -lfU yhe
+  852  su
+  853  strace -f -p 783231
+  854  su
+  855  su
+  856  ~/bin/slurmUseSummary -s | head -44
+  857  bin/waiting
+  858  su 
+  859  ssh rusty1 ps -lfU ltung
+  860  ssh rusty2 ps -lfU ltung
+  861  find /mnt/ceph/users/adaly/ size +10000000c -ls | head
+  862  find /mnt/ceph/users/adaly/ size +10000000c -newerct 'Jun 1 2021' -ls 
+  863  find /mnt/ceph/users/adaly/ size +10000000c -newerct 'Jun 1 2021' -type f -ls 
+  864  file /mnt/ceph/users/adaly/datasets/csplotch_mouse_st/tmp_out/0/combined_1.csv
+  865  gzip -c --fast  /mnt/ceph/users/adaly/datasets/csplotch_mouse_st/tmp_out/0/combined_1.csv | wc -l
+  866  ls -l --si  /mnt/ceph/users/adaly/datasets/csplotch_mouse_st/tmp_out/0/combined_1.csv
+  867  gzip -c --fast /mnt/ceph/users/adaly/datasets/csplotch_mouse_st/tmp_out/0/combined_1.csv > /tmp/combined_1.csv.gz
+  868  ls -l --si /tmp/combined_1.csv.gz 
+  869  gzip -c --fast /mnt/ceph/users/adaly/datasets/splotch_dlpfc/WSI/151507_full_image.tif > /tmp/151507_full_image.tif.gz
+  870  ls -l --si  /mnt/ceph/users/adaly/datasets/splotch_dlpfc/WSI/151507_full_image.tif /tmp/151507_full_image.tif.gz
+  871  rm /tmp/151507_full_image.tif.gz /tmp/combined_1.csv.gz 
+  872  time gzip -c /mnt/ceph/users/adaly/datasets/csplotch_mouse_st/splotch_outputs_WTG93A/102/combined_10239.csv > /tmp/combined_10239.csv.gz
+  873  ls -l --si /mnt/ceph/users/adaly/datasets/csplotch_mouse_st/splotch_outputs_WTG93A/102/combined_10239.csv /tmp/combined_10239.csv.gz
+  874  rm /tmp/combined_10239.csv.gz 
+  875  find /mnt/ceph/users/adaly/ size +10000000c -ls | head
+  876  ~/bin/slurmUseSummary -s | head -44
+  877  bin/featureInfo 'not gpu'
+  878  bin/waiting
+  879  bin/useReport jbonini
+  880  squeue -u jbonini
+  881  MODULEPATH= ENABLE_LMOD=1 bash
+  882  module avail
+  883  module spider
+  884  module add slurm
+  885  module list
+  886  squeue -u jbonini
+  887  ~/bin/slurmUseSummary -s | head -44
+  888  bin/useReport jhall
+  889  ~/bin/slurmUseSummary -s | head -44
+  890  bin/useReport bxiao
+  891  ~/bin/slurmUseSummary -s | head -44
+  892  bin/useReport hxu
+  893  bin/useReport hxu -t .9
+  894  ~/bin/slurmUseSummary -s | head -44
+  895  bin/waiting
+  896  squeue -u jbonini
+  897  bin/waiting | grep -v boni
+  898  su
+  899  ~/bin/slurmUseSummary -s | head -44
+  900  squeue -u jbonini
+  901  bin/useReport jbonini
+  902  scontrol -d show job 1076328
+  903  cat /mnt/ceph/users/jbonini/light_matter/mult_CO2/new_lower_couling/eight_along_z/t0/run_121/job.sh
+  904  bin/slurmUseSummary -s | head -44
+  905  bin/gpuUsage
+  906  bin/slurmUseSummary -s | head -44
+  907  bin/waiting
+  908  su
+  909  bin/slurmUseSummary -s | head -44
+  910  bin/useReport usteinwandel
+  911  bin/featureInfo 'not gpu and not info and not bnl'
+  912  bin/slurmUseSummary -s | head -44
+  913  bin/featureInfo 'not gpu and not info and not bnl'
+  914  sacctmgr -P show qos cca,ccb,ccm,ccn,ccq,scc
+  915  bin/waiting
+  916  bin/slurmUseSummary -s | head -44
+  917  bin/featureInfo rome
+  918  su
+  919  bin/slurmUseSummary -s | head -44
+  920  su
+  921  bin/slurmUseSummary -s | head -44
+  922  ssh wokrer5166
+  923  ssh worker5166
+  924  ssh worker5275
+  925  ssh worker5259
+  926  ssh worker5264
+  927  squeue -u jhall
+  928  ssh worker5031
+  929  scontrol -d show job 1078882
+  930  cd /mnt/ceph/users/sfida/variants/snvs_indels/WES1/2021_07_wes1_27158_exome/gatk/tasks/pvcf
+  931  ls -ltr
+  932  su
+  933  cd /mnt/ceph/users/nsheng/project/dmft/benchmarks/bar/Dimer_GTAU_100000_2/scripts
+  934  wc -l *status*
+  935  wc -l cthyb_10.sh
+  936  head  cthyb_10.sh
+  937  bin/slurmUseSummary -s | head -44
+  938  ~/bin/slurmUseSummary -s | head -44
+  939  su
+  940  wc -l *status*
+  941  emacs -nw
+  942  cd
+  943  bin/gpuUsage -u jberman -t 2
+  944  squeue -u jberman
+  945  scontrol -d show job 1077132
+  946  ping worker2003
+  947  ping worker2013
+  948  ping worker2023
+  949  squeue -u yhe
+  950  squeue -u yhe -p bnl
+  951  ssh worker2118
+  952  squeue -u yhe -p bnl
+  953  scontrol -d show job 1079893
+  954  cat /mnt/ceph/users/yhe/01.FT.DQMC/00.Square.Hubbard/V2021.06.06.GHF.Complex/03.RashbaSC0.75.vs.Mu/L16/ChemP0.50/qsub.mpi.parallel.txt
+  955  ssh worker2118
+  956  cd /scratch
+  957  df -H
+  958  df -H /scratch
+  959  dmesg -T
+  960  htop
+  961  su
+  962  cd tmp
+  963  ls -ltr
+  964  ./dbTestZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ_dbUtil.sh --mon
+  965  su
+  966  htop
+  967  squeue -u $USER
+  968  htop
+  969  bin/userInfo gkabacaoglu
+  970  ssh worker3060
+  971  htop
+  972  ps -lfU $USER
+  973  htop
+  974  unset SLURM_JOBID
+  975  mpirun -n 13 hostname
+  976  /mnt/home/sgenel/HOME_RUNS/CosmologicalBoxes/CAMELS/L200n256/zoom_2_1P_18_1/
+  977  ldd /mnt/home/sgenel/HOME_RUNS/CosmologicalBoxes/CAMELS/L200n256/zoom_2_1P_18_1/Arepo
+  978  ldd /mnt/home/sgenel/HOME_RUNS/CosmologicalBoxes/CAMELS/L200n256/zoom_2_1P_18_1/Arepo 
+  979  ls -l /mnt/home/sgenel/HOME_RUNS/CosmologicalBoxes/CAMELS/L200n256/zoom_2_1P_18_1/Arepo 
+  980  ls -l /mnt/home/sgenel/HOME_RUNS/CosmologicalBoxes/CAMELS/L200n256/zoom_2_1P_18_1/code/Arepo/Arepo
+  981  ompi_info 
+  982  ompi_info --param all --level 9
+  983  ompi_info --param all all --level 9
+  984  ompi_info --param all pml --level 9
+  985  htop
+  986  scontrol -d show job 1085792
+  987  htop
+  988  ./restartX11vnc
+  989  htop
+  990  dmesg | grep -i kill
+  991  history
+  992  history | grep disBatch
+  993  history | grep "disBatch -S
+"
+  994  history | grep "disBatch -S"
+  995  history >& /tmp/tmp.out
