@@ -4,7 +4,15 @@ import sys
 from disbatch import disBatch
 
 # This test script accepts at least one argument: the number of tasks to run.
-# The rest, if any, are arguments that will be passed to disBatch.
+# The rest, if any, are arguments that will be passed to disBatch:
+#
+#  - If testing on your local machine, try something like
+#
+#      dberTest.py 15 -s localhost:5
+#
+#  - If testing via a SLURM submission, disBatch will auto detect
+#    that, so no additional arguments are needed
+#
 NumTasks = int(sys.argv[1])
 dbArgs = sys.argv[2:]
 
