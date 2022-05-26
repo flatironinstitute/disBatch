@@ -3,7 +3,7 @@
 import sys
 from disbatch import disBatch
 
-# This test script accepts at least one argument: the number of tasks to run.
+# This test script requires at least one argument: the number of tasks to run.
 # The rest, if any, are arguments that will be passed to disBatch:
 #
 #  - If testing on your local machine, try something like
