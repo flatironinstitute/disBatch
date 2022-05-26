@@ -1,6 +1,27 @@
 Distributed processing of a batch of tasks.
 ===========================================
 
+## TL;DR
+
+Create a file `Tasks`:
+
+    myprog arg0 &> myprog_0.log
+    myprog arg1 &> myprog_1.log
+    ...
+    myprog argN &> myprog_N.log
+
+Then run:
+
+    disBatch -s localhost:5 Tasks
+
+to execute all of the invocations in `Tasks`. `disBatch` will start the first five running concurrently on your local machine. When one finishes, the next will be started until all are done.
+
+Run:
+
+    sbatch -n 5 disBatch Tasks
+
+to do the same, but using computational resources allocated via SLURM. (Of course, you may need to provide additional SLURM arguments to specify a partition, time limit, etc, and see the discussion below about PYTHONPATH.)
+  
 ## Overview
 
 One common usage pattern for distributed computing involves processing a
@@ -30,7 +51,7 @@ In any event, when processing such a list of tasks, it is helpful to
 acquire metadata about the execution of each task: where it ran, how
 long it took, its exit return code, etc.
 
-**disBatch** has been designed to support this usage in a simple and
+disBatch has been designed to support this usage in a simple and
 portable way, as well as to provide the sort of metadata that can be
 helpful for debugging and reissuing failed tasks.
 
@@ -42,9 +63,9 @@ the lines in the file have been processed.
 
 Each task is run in a new shell. If you want to manipulate the execution environment of a task, add the appropriate operations to the command sequence&mdash;`source SetupEnv` in the above is one example. For another, if you just need to set an environment variable, each task line would look something like:
 
-    export PYTHONPATH=/d0/d1/d2:$PYTHONPATH ; rest ; of ; command ; sequence
+    export LD_LIBRARY_PATH=/d0/d1/d2:$LD_LIBRARY_PATH ; rest ; of ; command ; sequence
     
-Or, for more complex set ups, command sequences and input/output redirection requirements, you could place everything in a small shell script with appropriate arguments for the parts that vary from task to task, say RunMyprog.sh:
+Or, for more complex set ups, command sequences and input/output redirection requirements, you could place everything in a small shell script with appropriate arguments for the parts that vary from task to task, say `RunMyprog.sh`:
 
     #!/bin/bash
     
@@ -52,9 +73,9 @@ Or, for more complex set ups, command sequences and input/output redirection req
     shift
     cd /path/to/workdir
     module purge
-    module load gcc python3
+    module load gcc openblas python3 
     
-    export PYTHONPATH=/d0/d1/d2:$PYTHONPATH
+    export LD_LIBRARY_PATH=/d0/d1/d2:$LD_LIBRARY_PATH
     myProg "$@" > results/${id}.out 2> logs/${id}.log
 
 The task file would then contain:
@@ -225,23 +246,23 @@ which will tell slurm to release any nodes no longer being used.
 You can set this to run a different command, or nothing at all.
 While running this command, the follow environment variables will be set: `NODE` (the node that is no longer needed), `ACTIVE` (a comma-delimited list of nodes that are still active), `RETIRED` (a comma-delimited list of nodes that are no longer active, including `$NODE`), and possibly `DRIVER_NODE` (the node still running the main disBatch script, if it's not in `ACTIVE`).
 
-The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, `GPU_DEVICE_ORDINAL`) provided on each node and divides the resources between the running tasks.  For example, with slurm, if you want to run on _n_ nodes, with _t_ tasks per node, each using _c_ CPUs and 1 GPU (that is, _tc_ CPUs and _t_ GPUs per node, or _ntc_ CPUs and _nt_ GPUs total), you can do:
+The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, `GPU_DEVICE_ORDINAL`) provided on each node and divides the resources between the running tasks.  For example, with slurm, if you want to  _t_ tasks concurrently, each using _c_ CPUs and 1 GPU (that is, _tc_ CPUs and _t_ GPUs total), you can do:
 
-    sbatch -N$n -c$c --ntasks-per-node=$t --gres=gpu:$t -p gpu --wrap 'disBatch -g $taskfile'`
+    sbatch -n $t -c$c --gpus-per-tasks=1 -p gpu disBatch -g $taskfile'`
 
 `-S` Starts disBatch in a mode in which it waits for execution resources to be added. In this mode, disBatch starts up the task management system and
 generates a script `<Prefix>_dbUtil.sh`, where `<Prefix>` refers to the `-p` option or default, see above. We'll call this simply `dbUtils.sh` here,
 but remember to include `<Prefix>_` in actual use. You can add execution resources by doing one or more of the following multiple times:
 1. Submit `dbUtils.sh` as a job, e.g.:
 
-    `sbatch -N 5 --ntasks-per-node 7 dbUtil.sh`
+    sbatch -n 40 dbUtil.sh
 
 2. Use ssh, e.g.:
 
-    `./dbUtil.sh -s localhost:4,friendlyNeighbor:5`
+    ./dbUtil.sh -s localhost:4,friendlyNeighbor:5
 
-Each of these creates an execution context, which contains one of more execution engines (five engines in the first, two in the second).
-An engine can run one or more tasks currently. In the first example, each of the five engines will run up to seven tasks concurrently, while in the
+Each of these creates an execution context, which contains one of more execution engines (if using, for example, 8-core nodes, then five for the first; two in the second).
+An engine can run one or more tasks currently. In the first example, each of the five engines will run up to eight tasks concurrently, while in the
 second example, the engine on `localhost` will run up to four tasks concurrently and the engine on `friendlyNeighbor` will run up to five.
 `./dbUtil.sh --mon` will start a simple ASCII-based monitor that tracks the overall state of the disBatch run, and the activity of the individual
 contexts and engines. By cursoring over an engine, you can send a shutdown signal to the engine or its context. This signal is *soft*, triggering
@@ -361,6 +382,14 @@ You could, for example, use these to bulk copy some heavily referenced read-only
 You can use the environment variable DISBATCH_ENGINE_RANK to distinguish one engine from another; for example, it is used here to keep log files separate.
 
 These directives must come before any other tasks.
+
+## Embedded disBatch
+
+You can start disBatch from within a python script by instantiating a "DisBatcher" object.
+
+See `exampleTaskFiles/dberTest.py` for an example.
+
+<The "DisBatcher" class (defined in `disbatch/disBatch.py`) illustrates how to interact with disBatch via KVS amd could be used to enable similar functionality in the setting of other languages.
 
 ## License
 
