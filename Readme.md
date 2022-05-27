@@ -16,11 +16,11 @@ Then run:
 
 to execute all of the invocations in `Tasks`. `disBatch` will start the first five running concurrently on your local machine. When one finishes, the next will be started until all are done.
 
-Run:
+Or run:
 
     sbatch -n 5 disBatch Tasks
 
-to do the same, but using computational resources allocated via SLURM. (Of course, you may need to provide additional SLURM arguments to specify a partition, time limit, etc, and see the discussion below about PYTHONPATH.)
+to execute the tasks using computational resources allocated via SLURM. (Of course, you may need to provide additional SLURM arguments to specify a partition, time limit, etc, and see the [discussion](#user-content-installation) about PYTHONPATH.)
   
 ## Overview
 
@@ -61,7 +61,8 @@ after the other until all specified execution resources are in use. Then as one
 executing task exits, the next task in the file is launched. This repeats until all
 the lines in the file have been processed.
 
-Each task is run in a new shell. If you want to manipulate the execution environment of a task, add the appropriate operations to the command sequence&mdash;`source SetupEnv` in the above is one example. For another, if you just need to set an environment variable, each task line would look something like:
+Each task is run in a new shell. If you want to manipulate the execution environment of a task, add the appropriate operations to the command sequence&mdash;`source SetupEnv` in the
+above is one example. For another, if you just need to set an environment variable, each task line would look something like:
 
     export LD_LIBRARY_PATH=/d0/d1/d2:$LD_LIBRARY_PATH ; rest ; of ; command ; sequence
     
@@ -86,27 +87,35 @@ The task file would then contain:
     ./RunMyprog.sh 9_9_8 -a 9 -b 9 -c 8
     ./RunMyprog.sh 9_9_9 -a 9 -b 9 -c 9
 
-See \#DISBATCH directives below for ways to simplify task lines.
+See [\#DISBATCH directives](#user-content-disbatch-directives) for ways to simplify task lines.
 
 Once you have created the task file, running disBatch is straightforward. For example, working with a cluster managed by SLURM,
 all that needs to be done is to submit a job like the following:
 
-    sbatch -n 20 --ntasks-per-node 5 disBatch TaskFileName
+    sbatch -n 20 -c 4 disBatch TaskFileName
 
 This particular invocation will allocate sufficient resources to process
-20 tasks at a time, with no more than five running concurrently on any
-given node. disBatch will use environment variables initialized by SLURM to determine the execution resources to use for the run.
-This invocation assumes an appropriately installed disBatch is in your PATH, see below for installation notes.
+20 tasks at a time, each of which needs 4 cores.
+disBatch will use environment variables initialized by SLURM to determine the execution resources to use for the run.
+This invocation assumes an appropriately installed disBatch is in your PATH, see [installation](#user-content-installation) for details.
+
+disBatch also allows the pool of execution resources to be increased or decreased during the course of a run:
+
+    sbatch -n 10 -c 4 ./TaskFileName_dbUtil.sh
+
+will add enough resources to run 10 more tasks concurrently. `TaskFileName_dbUtl.sh` is a utility script created by `disBatch` when the run starts (the actual name is a little more complex, see [startup](#user-content-startup)).
 
 Various log files will be created as the run unfolds:
 
-* `TaskFileName_134504_status.txt` (assuming the SLURM Job ID is `134504`): status of every task (details below)
-* `disBatch_134504_driver.txt` (can be changed with `-l`), `TaskFileName_134504_worker032_engine.txt`: 
-  The disBatch log file contains details mostly of interest in case of a
-  problem with disBatch itself. It can generally be ignored by end
+* `TaskFileName_*_status.txt`: status of every task (details below). `*` elides a unique identifier disBatch creates to distinguish one run from another
+* `TaskFileName_*_[context|driver|engine].log`:
+  The disBatch driver log file contains details mostly of interest in case of a
+  problem with disBatch itself. (The driver log file name can be changed with `-l`). It can generally be ignored by end
   users (but keep it around in the event that something did go
-  wrong&mdash;it will aid debugging). The ``*_engine.txt'' files contain similar information for each node acting as an execution resource
-* `disBatch_134504_kvsinfo.txt`: TCP address of invoked KVS server if any (for additional advanced status monitoring)
+  wrong&mdash;it will aid debugging). The `*_[context|engine].log` files contain similar information for the disBatch components that manage execution resources.
+* `disBatch_*_kvsinfo.txt`: TCP address of invoked KVS server if any (for additional advanced status monitoring)
+
+While disBatch is a python3 application, it can run tasks from any language environment&mdash;anything you can run from a shell, can be run as a task.
 
 ### Status file
 
@@ -120,7 +129,7 @@ These fields are:
      Each program/task should be invoked in such a way that standard error
      and standard output end up in appropriate files. If that is not the case
      `E` or `O` flags will be raised. `R` indicates that the task
-     returned a non-zero exit code. `B` indicates a barrier (see below). `S` indicates the job was skipped (this may happen during "resume" runs).
+     returned a non-zero exit code. `B` indicates a [barrier](#user-content-disbatch-directives). `S` indicates the job was skipped (this may happen during "resume" runs).
   1. Task ID: The `314` is the 0-based index of the task (starting from the beginning of the task file, incremented for each task, including repeats).
   1. Line number: The `315` is the 1-based line from the task file. Blank lines, comments, directives and repeats may cause this to drift considerably from the value of Task ID.
   1. Repeat index: The `-1` is the repeat index (as in this example, `-1` indicates this task was not part of a repeat directive).
@@ -134,7 +143,8 @@ These fields are:
   1. Output snippet (up to 80 bytes consisting of the prefix and suffix of the output),
   1. Bytes of leaked error output,
   1. Error snippet,
-  1. Command: `cd ...` is the text of the task (repeated from the task file, but see below).
+  1. Command: `cd ...` is the text of the task (repeated from the task file, but subject to modification by [directives](#user-content-disbatch-directives)).
+
 
 ## Installation
 
@@ -142,8 +152,11 @@ These fields are:
 
 disBatch requires the `kvsstcp` package, which should be installed in python's path, or placed in this directory.
 You can simply clone this git repository with `--recursive` (or run `git submodule update --init` if you've already cloned it) to get both.
-No additional installation steps are required. You can run `disBatch` directly from the top level directory of the git clone, but depending on your execution environment (e.g., using SLURM), the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable `PYTHONPATH` to include the path of the git clone (the directory containing this "Readme.md" file). 
+No additional installation steps are required, but you can use `pip` to add it to a particular python installation.
 
+You can run `disBatch` directly from the top level directory of the git clone, but depending on your execution environment (e.g., when using SLURM), the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable `PYTHONPATH` to include the path of the git clone (the directory containing this "Readme.md" file) or install with pip and invoke `disBatch` from that installation in your SLURM submission.
+
+## Execution Environments
 disBatch is designed to support a variety of execution environments, from your own desktop, to a local collection of workstations, to large clusters managed by job schedulers.
 It currently supports SLURM and can be executed from `sbatch`, but it is architected to make it simple to add support for other resource managers.
 
@@ -159,7 +172,7 @@ This allows execution directly on your `localhost` and via ssh for remote hosts 
 In this example, disBatch is told it can use seven CPUs on your local host and three on `otherhost`. Assuming the default mapping of one task to one CPU applies in this example, seven tasks could be in progress at any given time on `localhost`, and three on `otherhost`. Note that `localhost` is an actual name you can use to refer to the machine on which you are currently working. `otherhost` is fictious. 
 Hosts used via ssh must be set up to allow ssh to work without a password and must share the working directory for the disBatch run.
 
-disBatch refers to a collection of execution resources as a *context* and the resources proper as *engines*. So the earlier SLURM example created one context with four engines (capable of running five concurrent tasks each), while the SSH example created one context with two engines (capable of running seven and three concurrent tasks, respectively).
+disBatch refers to a collection of execution resources as a *context* and the resources proper as *engines*. So the SLURM example `sbatch -n 20 -c 4`, run on a cluster with 16-core nodes, might create one context with five engines (one each for five 16-core nodes, capable of running four concurrent 4-core tasks each), while the SSH example creates one context with two engines (capable of running seven and three concurrent tasks, respectively).
 
 ## Invocation
 ~~~~
@@ -191,7 +204,9 @@ optional arguments:
   -p PATH, --prefix PATH
                         Path for log, dbUtil, and status files (default: ".").
                         If ends with non-directory component, use as prefix
-                        for these files names (default: TASKFILE_JOBID).
+                        for these files names (default:
+			  <Taskfile>_disBatch_<YYYYMMDDhhmmss>_<Random>
+			).
   -r STATUSFILE, --resume-from STATUSFILE
                         Read the status file from a previous run and skip any
                         completed tasks (may be specified multiple times).
@@ -250,8 +265,8 @@ The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, 
 
     sbatch -n $t -c$c --gpus-per-tasks=1 -p gpu disBatch -g $taskfile'`
 
-`-S` Starts disBatch in a mode in which it waits for execution resources to be added. In this mode, disBatch starts up the task management system and
-generates a script `<Prefix>_dbUtil.sh`, where `<Prefix>` refers to the `-p` option or default, see above. We'll call this simply `dbUtils.sh` here,
+`-S` Startup only mode. In this mode, `disBatch` starts up the task management system and then waits for execution resources to be added.
+<a id='user-content-startup'>At startup</a>, `disBatch` always generates a script `<Prefix>_dbUtil.sh`, where `<Prefix>` refers to the `-p` option or default, see above. We'll call this simply `dbUtils.sh` here,
 but remember to include `<Prefix>_` in actual use. You can add execution resources by doing one or more of the following multiple times:
 1. Submit `dbUtils.sh` as a job, e.g.:
 
@@ -389,7 +404,7 @@ You can start disBatch from within a python script by instantiating a "DisBatche
 
 See `exampleTaskFiles/dberTest.py` for an example.
 
-<The "DisBatcher" class (defined in `disbatch/disBatch.py`) illustrates how to interact with disBatch via KVS amd could be used to enable similar functionality in the setting of other languages.
+The "DisBatcher" class (defined in `disbatch/disBatch.py`) illustrates how to interact with disBatch via KVS. This approach could be used to enable similar functionality in other language settings.
 
 ## License
 
