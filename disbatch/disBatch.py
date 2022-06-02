@@ -1446,7 +1446,7 @@ def main(kvsq=None):
         argp.add_argument('--logfile', metavar='FILE', default=None, type=argparse.FileType('w'), help='Log file.')
         argp.add_argument('--mailFreq', default=None, type=int, metavar='N', help='Send email every N task completions (default: 1). "--mailTo" must be given.')
         argp.add_argument('--mailTo', metavar='ADDR', default=None, help='Mail address for task completion notification(s).')
-        argp.add_argument('-p', '--prefix', metavar='PATH', default='.', help='Path for log, dbUtil, and status files (default: "."). If ends with non-directory component, use as prefix for these files names (default: TASKFILE_JOBID).')
+        argp.add_argument('-p', '--prefix', metavar='PATH', default='.', help='Path for log, dbUtil, and status files (default: "."). If ends with non-directory component, use as prefix for these files names (default: <Taskfile>_disBatch_<YYYYMMDDhhmmss>_<Random>).')
         argp.add_argument('-r', '--resume-from', metavar='STATUSFILE', action='append', help='Read the status file from a previous run and skip any completed tasks (may be specified multiple times).')
         argp.add_argument('-R', '--retry', action='store_true', help='With -r, also retry any tasks which failed in previous runs (non-zero return).')
         argp.add_argument('-S', '--startup-only', action='store_true', help='Startup only the disBatch server (and KVS server if appropriate). Use "dbUtil..." script to add execution contexts. Incompatible with "--ssh-node".') #TODO: Add addDBExecContext file name override?
@@ -1490,7 +1490,7 @@ def main(kvsq=None):
             if not forceDir:
                 rpp, name = os.path.split(rp)
             else:
-                rpp, name = rp, '' # Be design, this will trigger the error exit.
+                rpp, name = rp, '' # By design, this will trigger the error exit.
             if not os.path.isdir(rpp):
                 print(f'Directory {rpp} does not exist.', file=sys.stderr)
                 sys.exit(1)
