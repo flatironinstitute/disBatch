@@ -697,6 +697,7 @@ class Driver(Thread):
         if db_info.args.status_header:
             print(TaskReport.header, file=self.statusFile)
         self.statusLastOffset = self.statusFile.tell()
+        self.noMoreTasks = False
         self.tasksDone = False
         
         self.daemon = True
@@ -734,7 +735,7 @@ class Driver(Thread):
                 e.stop()
 
     def updateStatus(self, activeCylinders):
-        status = dict(more='No more tasks.' if self.tasksDone else 'More tasks.',
+        status = dict(more='No more tasks.' if self.noMoreTasks else 'More tasks.',
                       barriers=self.barrierCount,
                       contexts=self.contexts,
                       currentReturnCode=self.currentReturnCode,
@@ -782,7 +783,7 @@ class Driver(Thread):
     def run(self):
         self.kvs.put('DisBatch status', '<Starting...>', False)
 
-        cRank2taskCount, cylKey2eRank, engineHeartBeat, enginesDone, finishedTasks, hbFails, noMore = DD(int), {}, {}, False, {}, set(), False
+        cRank2taskCount, cylKey2eRank, engineHeartBeat, enginesDone, finishedTasks, hbFails = DD(int), {}, {}, False, {}, set()
         notifiedAllDone, outstanding, pending, retired = False, {}, [], -1
         assignedCylinders, freeCylinders = set(), set()
         while not (self.tasksDone and enginesDone):
@@ -860,7 +861,7 @@ class Driver(Thread):
                 logger.info('Emergency shutdown')
                 break
             elif msg == 'no more tasks':
-                noMore = True
+                self.noMoreTasks = True
                 logger.info('No more tasks: %d accepted', o)
                 self.barriers.append(TaskReport(TaskInfo(o, -1, -1, None, None, kind='D'), start=time.time()))
                 # If no tasks where actually processed, we won't
@@ -1044,7 +1045,7 @@ class Driver(Thread):
                     logger.info('Context %d reached task limit %d', e.cRank, limit)
                     self.stopContext(e.cRank)
 
-            if noMore and not pending and not notifiedAllDone:
+            if self.noMoreTasks and not pending and not notifiedAllDone:
                 # Really nothing more to do.
                 notifiedAllDone = True
                 for ckey in assignedCylinders.union(freeCylinders):
@@ -1336,7 +1337,7 @@ def main(kvsq=None):
             print('Failed to change working directory to "%s".'%dbInfo.wd, file=sys.stderr)
         context.setNode(args.node)
         logger = logging.getLogger('DisBatch Engine')
-        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.DEBUG}
+        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': dbInfo.args.loglevel}
         lconf['filename'] = '%s_%s_%s_engine_%d.log'%(dbInfo.uniqueId, context.label, args.node, rank)
         logging.basicConfig(**lconf)
         logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, rank, myHostname, myPid, os.getcwd())
@@ -1411,7 +1412,7 @@ def main(kvsq=None):
             sys.exit(1)
 
         logger = logging.getLogger('DisBatch Context')
-        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.DEBUG}
+        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': dbInfo.args.loglevel}
         lconf['filename'] = '%s_%s.context.log'%(dbInfo.uniqueId, context.label)
         logging.basicConfig(**lconf)
         logging.info('%s context started on %s (%d) with args "%s.', context.sysid, myHostname, myPid, repr(sys.argv))
@@ -1444,6 +1445,7 @@ def main(kvsq=None):
         argp.add_argument('--force-resume', action='store_true', help="With -r, proceed even if task commands/lines are different.")
         argp.add_argument('--kvsserver', nargs='?', default=True, metavar='HOST:PORT', help='Use a running KVS server.')
         argp.add_argument('--logfile', metavar='FILE', default=None, type=argparse.FileType('w'), help='Log file.')
+        argp.add_argument('--loglevel', choices=['CRITICAL', 'ERROR', 'WARNING', 'INFO', 'DEBUG'], default='INFO', help='Logging level (default: INFO).')
         argp.add_argument('--mailFreq', default=None, type=int, metavar='N', help='Send email every N task completions (default: 1). "--mailTo" must be given.')
         argp.add_argument('--mailTo', metavar='ADDR', default=None, help='Mail address for task completion notification(s).')
         argp.add_argument('-p', '--prefix', metavar='PATH', default='.', help='Path for log, dbUtil, and status files (default: "."). If ends with non-directory component, use as prefix for these files names (default: <Taskfile>_disBatch_<YYYYMMDDhhmmss>_<Random>).')
@@ -1497,7 +1499,8 @@ def main(kvsq=None):
             uniqueId = rp
             
         logger = logging.getLogger('DisBatch')
-        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': logging.DEBUG}
+        args.loglevel = getattr(logging, args.loglevel)
+        lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': args.loglevel}
         if args.logfile:
             args.logfile.close()
             lconf['filename'] = args.logfile.name
