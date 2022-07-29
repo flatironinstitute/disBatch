@@ -271,6 +271,23 @@ class SlurmContext(BatchContext):
         else:
             self.cpusPerTask = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
 
+        # We need to keep SLURM from binding resources, but provide a
+        # hook to allow user to alter srun options.
+        # Note: the context is used to set the log file name, so
+        # logging isn't available now.
+        opt_file = os.environ.get('DISBATCH_SLURM_SRUN_OPTIONS_FILE', None)
+        if opt_file:
+            print('Taking srun options from "%s".'%opt_file, flush=True)
+            opts = open(opt_file).read().split('\n')
+        else:
+            opts = ['SLURM_CPU_BIND=none', 'SLURM_GPU_BIND=none']
+        print('Adding srun options:', flush=True)
+        for l in opts:
+            if l:
+                print('    '+l, flush=True)
+                name, value = l.split('=', 1)
+                os.environ[name] = value
+
         doFill = args.fill and 'SLURM_JOB_CPUS_PER_NODE' in os.environ
         self.fillInfo = f'{doFill} ; {args.fill}'
         if doFill:
@@ -1415,7 +1432,9 @@ def main(kvsq=None):
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': dbInfo.args.loglevel}
         lconf['filename'] = '%s_%s.context.log'%(dbInfo.uniqueId, context.label)
         logging.basicConfig(**lconf)
-        logging.info('%s context started on %s (%d) with args "%s.', context.sysid, myHostname, myPid, repr(sys.argv))
+        logging.info('%s context started on %s (%d).', context.sysid, myHostname, myPid)
+        logger.info('Args: %r', sys.argv)
+        logger.info('Env: %r', os.environ)
         if context.sysid == 'SLURM': logging.info('Fill info: %s', context.fillInfo)
 
         # Apply lesser of -c and -t limits
@@ -1507,8 +1526,9 @@ def main(kvsq=None):
         else:
             lconf['filename'] = uniqueId + '_driver.log'
         logging.basicConfig(**lconf)
-
         logger.info('Starting feeder (%d) on %s in %s.', myPid, myHostname, os.getcwd())
+        logger.info('Args: %r', sys.argv)
+        logger.info('Env: %r', os.environ)
 
         if args.kvsserver is True:
             # start our own
