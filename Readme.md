@@ -261,9 +261,9 @@ which will tell slurm to release any nodes no longer being used.
 You can set this to run a different command, or nothing at all.
 While running this command, the follow environment variables will be set: `NODE` (the node that is no longer needed), `ACTIVE` (a comma-delimited list of nodes that are still active), `RETIRED` (a comma-delimited list of nodes that are no longer active, including `$NODE`), and possibly `DRIVER_NODE` (the node still running the main disBatch script, if it's not in `ACTIVE`).
 
-The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, `GPU_DEVICE_ORDINAL`) provided on each node and divides the resources between the running tasks.  For example, with slurm, if you want to  _t_ tasks concurrently, each using _c_ CPUs and 1 GPU (that is, _tc_ CPUs and _t_ GPUs total), you can do:
+The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, `GPU_DEVICE_ORDINAL`) provided on each node and divides the resources between the running tasks.  For example, with SLURM, if you want to run 12 tasks concurrently, each using 3 CPUs and 1 GPU (that is, 12*3 CPUs and 12 GPUs total), you can do:
 
-    sbatch -n $t -c$c --gpus-per-tasks=1 -p gpu disBatch -g $taskfile'`
+    sbatch -n 12 -c 3 --gpus-per-tasks=1 -p gpu disBatch -g TaskFile
 
 `-S` Startup only mode. In this mode, `disBatch` starts up the task management system and then waits for execution resources to be added.
 <a id='user-content-startup'>At startup</a>, `disBatch` always generates a script `<Prefix>_dbUtil.sh`, where `<Prefix>` refers to the `-p` option or default, see above. We'll call this simply `dbUtils.sh` here,
@@ -385,7 +385,7 @@ could be:
     #DISBATCH PREFIX  ( cd /path/to/workdir ; a=$((DISBATCH_REPEAT_INDEX/100)) b=$(((DISBATCH_REPEAT_INDEX%100)/10 )) c=$((DISBATCH_REPEAT_INDEX%10)) ; myprog -a $a -b $b -c $c ) &> task_${a}_${b}_${c}.log
     #DISBATCH REPEAT 1000
 
-This is not a model of clarify, but does illustrate that the repeat constuct can be relatively powerful. Many users may find it more convenient to use the tool of their choice to generate a text file with 1000 invocations explictly written out.
+This is not a model of clarity, but it does illustrate that the repeat constuct can be relatively powerful. Many users may find it more convenient to use the tool of their choice to generate a text file with 1000 invocations explictly written out.
 
 ### PERENGINE
 
