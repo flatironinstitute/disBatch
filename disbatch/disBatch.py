@@ -75,14 +75,14 @@ def killPatiently(sub, name, timeout=15):
         waited = True
         r = waitTimeout(sub, timeout)
     if r is None:
-        logger.warn('Terminating %s...', name)
+        logger.warning('Terminating %s...', name)
         try:
             sub.terminate()
         except OSError:
             pass
         r = waitTimeout(sub, timeout)
     if r is None:
-        logger.warn('Killing %s.', name)
+        logger.warning('Killing %s.', name)
         try:
             sub.kill()
         except OSError:
@@ -158,32 +158,29 @@ class DisBatchInfo:
         self.args, self.name, self.uniqueId, self.wd = args, name, uniqueId, wd
 
 class BatchContext:
-    def __init__(self, sysid, dbInfo, rank, nodes, cylinders, args, contextLabel=None):
+    def __init__(self, sysid, dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel=None):
         if contextLabel is None:
             contextLabel = 'context%05'%rank
-        self.sysid, self.dbInfo, self.rank, self.nodes, self.cylinders, self.args, self.label = sysid, dbInfo, rank, nodes, cylinders, args, contextLabel
-
-        # Subclass may have already set this based on context-specific info.
-        if not hasattr(self, 'cpusPerTask'):
-            self.cpusPerTask = 1
-            if args.cpusPerTask != -1.0:
-                self.cpusPerTask = args.cpusPerTask
+        self.sysid, self.dbInfo, self.rank, self.nodes, self.cylinders, self.cores_per_cylinder, self.args, self.label = sysid, dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel
 
         self.error = False # engine errors (non-zero return values)
         self.kvsKey = '.context_%d'%rank
         self.retireCmd = None
 
     def __str__(self):
-        return 'Context type: %s\nLabel: %s\nNodes: %r\nCylinders: %r\n'%(self.sysid, self.label, self.nodes, self.cylinders)
+        return 'Context type: %s\nLabel: %s\nNodes: %r\nCylinders: %r\nCores per cylinder: %r\n'%(self.sysid, self.label, self.nodes, self.cylinders, self.cores_per_cylinder)
 
     def launch(self, kvs):
         '''Launch the engine processes on all the nodes by calling launchNode for each.'''
         kvs.put(self.kvsKey, self)
         kvs.put('.controller', ('context info', self))
         self.engines = dict() # live subprocesses
-        for n in self.nodes:
-            self.engines[n] = self.launchNode(n)
-
+        for x, n in enumerate(self.nodes):
+            if self.cylinders[x]:
+                self.engines[n] = self.launchNode(n)
+            else:
+                logging.info(f'Skipping launch for {n}, no cylinders available.')
+                
     def poll(self):
         '''Check if any engines have stopped.'''
         for n, e in list(self.engines.items()):
@@ -215,7 +212,7 @@ class BatchContext:
             try:
                 SUB.check_call(self.retireCmd, close_fds=True, shell=True, env=env)
             except Exception as e:
-                logger.warn('Retirement planning needs improvement: %s', repr(e))
+                logger.warning('Retirement planning needs improvement: %s', repr(e))
         else:
             logger.info('Retiring node "%s" (no-op)', node)
 
@@ -252,8 +249,31 @@ def nl2flat(nl):
     return SUB.check_output(["scontrol", "show", "hostnames", nl], universal_newlines=True).splitlines()
 
 class SlurmContext(BatchContext):
+# Example SLURM environment
+# $ salloc -c 5 -n 10 --ntasks-per-node=3 -p scc -t 0-1
+# SLURM_CPUS_PER_TASK=5                                    ;; set if -c is specified
+# SLURM_TASKS_PER_NODE=3(x4)
+# SLURM_JOB_RESERVATION=rocky8
+# SLURM_NNODES=4
+# SLURM_NTASKS_PER_NODE=3                                  ;; set if --ntasks-per-node is specified
+# SLURM_JOB_NODELIST=worker[2080,5071-5072,5422]
+# SLURM_CLUSTER_NAME=slurm
+# SLURM_NODELIST=worker[2080,5071-5072,5422]
+# SLURM_NTASKS=12
+# SLURM_JOB_CPUS_PER_NODE=40,128(x3)
+# SLURM_JOB_NAME=interactive
+# SLURM_JOBID=1568029
+# SLURM_JOB_NUM_NODES=4
+# SLURM_NPROCS=12
+# SLURM_JOB_ID=1568029
+
     def __init__(self, dbInfo, rank, args):
-        jobid = os.environ['SLURM_JOBID']
+        # Note: the context is used to set the log file name, so
+        # logging isn't available now. Keep a list of log messages to
+        # report later.
+        self.for_log = [] 
+
+        jobid = os.environ['SLURM_JOB_ID']
         nodes = nl2flat(os.environ['SLURM_NODELIST'])
         
         def decodeSlurmVal(val):
@@ -265,47 +285,72 @@ class SlurmContext(BatchContext):
                 vv += [int(c)]*int(m)
             return vv
 
-        cylinders = decodeSlurmVal(os.environ['SLURM_TASKS_PER_NODE'])
+        cores_per_cylinder = None
+
+        scpt = os.environ.get('SLURM_CPUS_PER_TASK')
         if args.cpusPerTask != -1.0:
             self.cpusPerTask = args.cpusPerTask
+            cores_per_cylinder = [args.cpusPerTask]*len(nodes)
+            if scpt:
+                self.for_log.append((f'Argument cpusPerTask is set to {self.cpusPerTask}, ingoring SLURM_CPUS_PER_TASK ({scpt})', logging.WARNING))
         else:
-            self.cpusPerTask = int(os.environ.get('SLURM_CPUS_PER_TASK', 1))
+            self.cpusPerTask = int(scpt) if scpt else 1
 
+        sntpn = os.environ.get('SLURM_NTASKS_PER_NODE')
+        self.tasksPerNode = None
+        if args.tasksPerNode != -1:
+            self.tasksPerNode = args.tasksPerNode
+            if sntpn:
+                self.for_log.append((f'Argument tasksPerNode is set to {self.tasksPerNode}, ingoring SLURM_NTASKS_PER_NODE ({sntpn})', logging.WARNING))
+        elif sntpn:
+            self.tasksPerNode = int(sntpn)
+
+        jcpnl = decodeSlurmVal(os.environ['SLURM_JOB_CPUS_PER_NODE'])
+        self.stpnl = decodeSlurmVal(os.environ['SLURM_TASKS_PER_NODE'])
+
+        if self.tasksPerNode:
+            cylinders = [self.tasksPerNode] * len(nodes)
+        else:
+            if args.fill:
+                self.for_log.append(('Fill requested, ignoring SLURM_TASKS_PER_NODE.', logging.WARNING))
+                cylinders = [int(jcpn//self.cpusPerTask) for jcpn in jcpnl]
+                self.for_log.append((f'Cores per node: {jcpnl} /({self.cpusPerTask} cores per task) -> {cylinders}', logging.INFO))
+            else:
+                # Follow SLURM_TASKS_PER_NODE, but honor cpusPerTask
+                cylinders = [min(stpn, int(jcpn//self.cpusPerTask)) for stpn, jcpn in zip(self.stpnl, jcpnl)]
+                self.for_log.append((f'Tasks per node: {self.stpnl} -> {cylinders}, using {self.cpusPerTask} cores per task.', logging.INFO))
+        if cores_per_cylinder is None:
+            cores_per_cylinder = [jcpn//c for jcpn, c in zip(jcpnl, cylinders)]
+        
         # We need to keep SLURM from binding resources, but provide a
         # hook to allow user to alter srun options.
-        # Note: the context is used to set the log file name, so
-        # logging isn't available now.
         opt_file = os.environ.get('DISBATCH_SLURM_SRUN_OPTIONS_FILE', None)
         if opt_file:
-            print('Taking srun options from "%s".'%opt_file, flush=True)
+            self.for_log.append(('Taking srun options from "%s".'%opt_file, logging.INFO))
             opts = open(opt_file).read().split('\n')
         else:
             opts = ['SLURM_CPU_BIND=none', 'SLURM_GPU_BIND=none']
-        print('Adding srun options:', flush=True)
+        self.for_log.append(('Adding srun options:', logging.INFO))
         for l in opts:
             if l:
-                print('    '+l, flush=True)
+                self.for_log.append(('    '+l, logging.INFO))
                 name, value = l.split('=', 1)
                 os.environ[name] = value
 
-        doFill = args.fill and 'SLURM_JOB_CPUS_PER_NODE' in os.environ
-        self.fillInfo = f'{doFill} ; {args.fill}'
-        if doFill:
-            # If extra cores were allocated, override slurm
-            jcpnl = decodeSlurmVal(os.environ['SLURM_JOB_CPUS_PER_NODE'])
-            ncylinders = [max(tpn, int(jcpn/self.cpusPerTask)) for (tpn, jcpn) in zip(cylinders, jcpnl)]
-            self.fillInfo = f'Fill in: {cylinders} -> {ncylinders}'
-            if ncylinders != cylinders:
-                cylinders = ncylinders
         contextLabel = args.label if args.label else 'J%s'%jobid
-        super(SlurmContext, self).__init__('SLURM', dbInfo, rank, nodes, cylinders, args, contextLabel)
+        super(SlurmContext, self).__init__('SLURM', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel)
         self.driverNode = None
         self.retireCmd = "scontrol update JobId=\"$SLURM_JOBID\" NodeList=\"${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE\""
 
     def launchNode(self, n):
         lfp = '%s_%s_%s_engine_wrap.log'%(self.dbInfo.uniqueId, self.label, n)
         # To convince SLURM to give us the right gres, request the right number of tasks.
-        tasks = self.cylinders[self.nodes.index(n)]
+        nx = self.nodes.index(n)
+        tasks = self.cylinders[nx]
+        if self.stpnl[nx] < tasks:
+            #TODO: Ponder *always* using STPNL.
+            logging.warning(f'To keep SLURM happy, running "-n {self.stpnl[nx]}", instead of {tasks}.')
+            tasks = self.stpnl[nx]
         # To allow the engine to do its thing correctly, only run it for the 0th local task.
         cmd = ['srun', '-N', '1', '-n', str(tasks), '-w', n, 'bash', '-c', f'if [[ $SLURM_LOCALID == 0 ]] ; then {DbUtilPath} --engine -n {n} {self.kvsKey} ; else {{ sleep 3 ; echo "pruned $SLURM_LOCALID" ; }} ; fi']
         logging.info('launch cmd: %s', repr(cmd))
@@ -342,10 +387,13 @@ class SlurmContext(BatchContext):
 # not provide one, one will be created from the PID and epoch time.
 class SSHContext(BatchContext):
     def __init__(self, dbInfo, rank, args):
+        # Record messages for logging once the logger is started.
+        self.for_log = []
+        
         nodelist = args.ssh_node if args.ssh_node else os.getenv('DISBATCH_SSH_NODELIST')
         contextLabel = args.label if args.label else 'SSH%d'%rank
 
-        cylinders, nodes = [], []
+        core_count, nodes = [], []
         if type(nodelist) is not str: nodelist = ','.join(nodelist)
         for p in nodelist.split(','):
             p = p.strip()
@@ -354,12 +402,29 @@ class SSHContext(BatchContext):
                 n, e = p.rsplit(':', 1)
                 e = int(e)
             except ValueError:
-                raise ValueError('SSH nodelist items must be HOST:COUNT')
+                raise ValueError('SSH nodelist items must be HOST:CORECOUNT')
             if n == 'localhost': n = myHostname
             nodes.append(n)
-            cylinders.append(e)
+            core_count.append(e)
+        self.for_log.append((f'nodes: {nodes}, cores: {core_count}', logging.INFO))
 
-        super(SSHContext, self).__init__('SSH', dbInfo, rank, nodes, cylinders, args, contextLabel)
+        if args.cpusPerTask != -1.0:
+            self.cpusPerTask = args.cpusPerTask
+        else:
+            self.cpusPerTask = 1
+
+        if args.tasksPerNode != -1:
+            self.tasksPerNode = args.taskPerNode
+        else:
+            self.tasksPerNode = None
+
+        if self.tasksPerNode:
+            cylinders = [self.tasksPerNode] * len(nodes)
+        else:
+            cylinders = [int(cc//self.cpusPerTask) for cc in core_count]
+            self.for_log.append((f'Tasks per node: {cylinders}, using {self.cpusPerTask} cores per task.', logging.INFO))
+        cores_per_cylinder = [cc//max(1, c) for cc, c in zip(core_count, cylinders)]
+        super(SSHContext, self).__init__('SSH', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel)
 
     def launchNode(self, n):
         prefix = [] if compHostnames(n, myHostname) else ['ssh', n]
@@ -629,7 +694,7 @@ def statusTaskFilter(tasks, status, retry=False, force=False):
                 if s != t:
                     msg = 'Recovery status file task mismatch %s:\n' + str(s) + '\n' + str(t)
                     if force:
-                        logger.warn(msg, '-- proceeding anyway')
+                        logger.warning(msg, '-- proceeding anyway')
                     else:
                         raise Exception(msg % '(use --force-resume to proceed anyway)')
                 yield s
@@ -741,7 +806,7 @@ class Driver(Thread):
             s.sendmail([mailTo], [mailTo], msg.as_string())
             self.statusLastOffset = self.statusFile.tell()
         except Exception as e:
-            logger.warn('Failed to send notification message: "%s". Disabling.', e)
+            logger.warning('Failed to send notification message: "%s". Disabling.', e)
             self.mailTo = None
             # Be sure to seek back to EOF to append
             self.statusFile.seek(0, 2)
@@ -1161,8 +1226,9 @@ class EngineBlock(Thread):
             super(EngineBlock.Cylinder, self).__init__()
             self.daemon = True
             self.context, self.engineRank, self.cylinderRank, self.fetchTask = context, engineRank, cylinderRank, fetchTask
-            logger.info('Cylinder %d initializing', self.cylinderRank)
             self.localEnv = env.copy()
+            self.localEnv['DISBATCH_CORES_PER_TASK'] = str(self.context.cores_per_cylinder[self.context.nodeId])
+            logger.info('Cylinder %d initializing, %s cores', self.cylinderRank, self.localEnv['DISBATCH_CORES_PER_TASK'])
             for v, l in envres.items():
                 try:
                     self.localEnv[v] = l[0 if -1 == cylinderRank else cylinderRank] # Allow the per engine cylinder to access cylinder
@@ -1208,8 +1274,8 @@ class EngineBlock(Thread):
                     self.shuttingDown = True
                     break
 
-                logger.info('Cylinder %d executing %s.', self.cylinderRank, ti)
                 self.localEnv['DISBATCH_STREAM_INDEX'], self.localEnv['DISBATCH_REPEAT_INDEX'], self.localEnv['DISBATCH_TASKID'] = str(ti.taskStreamIndex), str(ti.taskRepIndex), str(ti.taskId)
+                logger.info('Cylinder %d executing %s.', self.cylinderRank, ti)
                 t0 = time.time()
                 try:
                     self.taskProc = SUB.Popen(['/bin/bash', '-c', ti.taskCmd], env=self.localEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
@@ -1247,10 +1313,9 @@ class EngineBlock(Thread):
         self.daemon = True
         self.context = context
         self.rank = rank
-        cylinders = context.wCylinders[context.nodeId]
+        cylinders = context.cylinders[context.nodeId]
 
         env = os.environ
-        env['DISBATCH_CORES_PER_TASK'] = str(int(context.cylinders[context.nodeId]/cylinders))
         envres = {}
         for v in context.envres:
             e = env.get(v)
@@ -1284,10 +1349,12 @@ class EngineBlock(Thread):
         peStart.join()
         logger.info('Engine %d completed start tasks', self.rank)
         
+        logger.info('Engine %d running normal tasks, %d-way concurrency', self.rank, cylinders)
         self.cylinders = [self.Cylinder(context, env, envres, kvs, self.rank, x, self.FetchTask('.cylinder %d %d'%(self.rank, x), constantKeyGen, kvsstcp.KVSClient.get)) for x in range(cylinders)]
         self.finished, self.inFlight, self.liveCylinders = 0, 0, len(self.cylinders)
         self.start()
         self.join()
+        logger.info('Engine %d completed normal tasks', self.rank)
 
         logger.info('Engine %d running stop tasks', self.rank)
         peStop = self.Cylinder(context, env, envres, kvs, self.rank, -1, self.FetchTask('.per engine STOP %d', indexKeyGen, kvsstcp.KVSClient.view))
@@ -1322,7 +1389,7 @@ def contextArgs(argp):
     argp.add_argument('--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
     argp.add_argument('-l', '--label', type=str, metavar='COMMAND', help="Label for this context. Should be unique.")
     argp.add_argument('--retire-cmd', type=str, metavar='COMMAND', help='Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".')
-    argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:COUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
+    argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:CORECOUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
     argp.add_argument('-t', '--tasksPerNode', metavar='N', default=-1, type=int, help='Maximum concurrently executing tasks per node (up to cores/cpusPerTask).')
 
     return ['context_task_limit', 'cpusPerTask', 'env_resource', 'fill', 'gpu', 'retire_cmd', 'label', 'ssh_node', 'tasksPerNode']
@@ -1358,6 +1425,9 @@ def main(kvsq=None):
         lconf['filename'] = '%s_%s_%s_engine_%d.log'%(dbInfo.uniqueId, context.label, args.node, rank)
         logging.basicConfig(**lconf)
         logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, rank, myHostname, myPid, os.getcwd())
+        logger.info('argv: %r', sys.argv)
+        logger.info('args: %r', args)
+        logger.info('Env: %r', os.environ)
 
         e = EngineBlock(kvs, context, rank)
 
@@ -1405,8 +1475,6 @@ def main(kvsq=None):
             args.cpusPerTask = dbInfo.args.cpusPerTask
         if args.tasksPerNode == -1:
             args.tasksPerNode = dbInfo.args.tasksPerNode
-        if args.tasksPerNode == -1:
-            args.tasksPerNode = float('inf')
         if args.env_resource == []:
             args.env_resource = dbInfo.args.env_resource
         
@@ -1433,16 +1501,18 @@ def main(kvsq=None):
         lconf['filename'] = '%s_%s.context.log'%(dbInfo.uniqueId, context.label)
         logging.basicConfig(**lconf)
         logging.info('%s context started on %s (%d).', context.sysid, myHostname, myPid)
-        logger.info('Args: %r', sys.argv)
+        logger.info('argv: %r', sys.argv)
+        logger.info('args: %r', args)
         logger.info('Env: %r', os.environ)
-        if context.sysid == 'SLURM': logging.info('Fill info: %s', context.fillInfo)
-
-        # Apply lesser of -c and -t limits
-        context.wCylinders = [min(c, args.tasksPerNode) for c in context.cylinders]
-        if [c for c in context.wCylinders if c == 0]:
-            print('At least one engine lacks enough cylinders to run tasks (%r).'%context.wCylinders, file=sys.stderr)
+        # Log any messages generated by the context constructor.
+        for m, ll in getattr(context, 'for_log', []): 
+            logger.log(ll, m)
+        nogo = [x for x, c in enumerate(context.cylinders) if c == 0]
+        if nogo:
+            logger.warning('At least one engine lacks enough cylinders to run tasks (%r).'%([context.nodes[x] for x in nogo]))
+        if len(nogo) == len(context.cylinders):
+            logger.error('No viable engines.')
             sys.exit(1)
-        # TODO: communicate to jobs how many CPUs they have available?
 
         if args.gpu:
             args.env_resource.append('CUDA_VISIBLE_DEVICES,GPU_DEVICE_ORDINAL')
@@ -1617,8 +1687,12 @@ def main(kvsq=None):
         try:
             while driver.is_alive():
                 if taskProcess and taskProcess.r:
-                    logger.warn('Task generator failed; forcing shutdown')
+                    logger.error('Task generator failed; forcing shutdown')
                     sys.exit(taskProcess.r)
+                if subContext and subContext.poll():
+                    #TODO: Add a flag to control this behavior?
+                    logger.error('Context exited; forcing shutdown')
+                    sys.exit(subContext.returncode)
                 driver.join(PulseTime)
                 kvs.put('.controller', ('driver heart beat', None))
         except Exception as e:
