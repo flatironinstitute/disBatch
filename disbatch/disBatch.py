@@ -414,7 +414,7 @@ class SSHContext(BatchContext):
             self.cpusPerTask = 1
 
         if args.tasksPerNode != -1:
-            self.tasksPerNode = args.taskPerNode
+            self.tasksPerNode = args.tasksPerNode
         else:
             self.tasksPerNode = None
 
