@@ -5,9 +5,9 @@ from ast import literal_eval
 from collections import defaultdict as DD
 
 try:
-    from queue import Queue, Empty
+    from queue import Queue
 except ImportError:
-    from Queue import Queue, Empty
+    from Queue import Queue
 from threading import Thread
 
 # During the course of a disBatch run, we are going to kick off a
@@ -292,7 +292,7 @@ class SlurmContext(BatchContext):
             self.cpusPerTask = args.cpusPerTask
             cores_per_cylinder = [args.cpusPerTask]*len(nodes)
             if scpt:
-                self.for_log.append((f'Argument cpusPerTask is set to {self.cpusPerTask}, ingoring SLURM_CPUS_PER_TASK ({scpt})', logging.WARNING))
+                self.for_log.append((f'Argument cpusPerTask is set to {self.cpusPerTask}, ignoring SLURM_CPUS_PER_TASK ({scpt})', logging.WARNING))
         else:
             self.cpusPerTask = int(scpt) if scpt else 1
 
@@ -301,7 +301,7 @@ class SlurmContext(BatchContext):
         if args.tasksPerNode != -1:
             self.tasksPerNode = args.tasksPerNode
             if sntpn:
-                self.for_log.append((f'Argument tasksPerNode is set to {self.tasksPerNode}, ingoring SLURM_NTASKS_PER_NODE ({sntpn})', logging.WARNING))
+                self.for_log.append((f'Argument tasksPerNode is set to {self.tasksPerNode}, ignoring SLURM_NTASKS_PER_NODE ({sntpn})', logging.WARNING))
         elif sntpn:
             self.tasksPerNode = int(sntpn)
 
