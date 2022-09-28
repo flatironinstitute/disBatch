@@ -5,9 +5,9 @@ from ast import literal_eval
 from collections import defaultdict as DD
 
 try:
-    from queue import Queue, Empty
+    from queue import Queue
 except ImportError:
-    from Queue import Queue, Empty
+    from Queue import Queue
 from threading import Thread
 
 # During the course of a disBatch run, we are going to kick off a
@@ -292,7 +292,7 @@ class SlurmContext(BatchContext):
             self.cpusPerTask = args.cpusPerTask
             cores_per_cylinder = [args.cpusPerTask]*len(nodes)
             if scpt:
-                self.for_log.append((f'Argument cpusPerTask is set to {self.cpusPerTask}, ingoring SLURM_CPUS_PER_TASK ({scpt})', logging.WARNING))
+                self.for_log.append((f'Argument cpusPerTask is set to {self.cpusPerTask}, ignoring SLURM_CPUS_PER_TASK ({scpt})', logging.WARNING))
         else:
             self.cpusPerTask = int(scpt) if scpt else 1
 
@@ -301,7 +301,7 @@ class SlurmContext(BatchContext):
         if args.tasksPerNode != -1:
             self.tasksPerNode = args.tasksPerNode
             if sntpn:
-                self.for_log.append((f'Argument tasksPerNode is set to {self.tasksPerNode}, ingoring SLURM_NTASKS_PER_NODE ({sntpn})', logging.WARNING))
+                self.for_log.append((f'Argument tasksPerNode is set to {self.tasksPerNode}, ignoring SLURM_NTASKS_PER_NODE ({sntpn})', logging.WARNING))
         elif sntpn:
             self.tasksPerNode = int(sntpn)
 
@@ -320,7 +320,7 @@ class SlurmContext(BatchContext):
                 cylinders = [min(stpn, int(jcpn//self.cpusPerTask)) for stpn, jcpn in zip(self.stpnl, jcpnl)]
                 self.for_log.append((f'Tasks per node: {self.stpnl} -> {cylinders}, using {self.cpusPerTask} cores per task.', logging.INFO))
         if cores_per_cylinder is None:
-            cores_per_cylinder = [jcpn//c for jcpn, c in zip(jcpnl, cylinders)]
+            cores_per_cylinder = [jcpn/c if c else jcpn for jcpn, c in zip(jcpnl, cylinders)]
         
         # We need to keep SLURM from binding resources, but provide a
         # hook to allow user to alter srun options.
@@ -393,7 +393,7 @@ class SSHContext(BatchContext):
         nodelist = args.ssh_node if args.ssh_node else os.getenv('DISBATCH_SSH_NODELIST')
         contextLabel = args.label if args.label else 'SSH%d'%rank
 
-        core_count, nodes = [], []
+        core_count, node_set, nodes = [], set(), []
         if type(nodelist) is not str: nodelist = ','.join(nodelist)
         for p in nodelist.split(','):
             p = p.strip()
@@ -403,9 +403,16 @@ class SSHContext(BatchContext):
                 e = int(e)
             except ValueError:
                 raise ValueError('SSH nodelist items must be HOST:CORECOUNT')
+            
             if n == 'localhost': n = myHostname
-            nodes.append(n)
-            core_count.append(e)
+            if n in node_set:
+                nx = nodes.index(n)
+                self.for_log.append((f'Repeated {n} so summing cores {core_count[nx]} + {e}', logging.WARN))
+                core_count[nx] += e
+            else:
+                node_set.add(n)
+                nodes.append(n)
+                core_count.append(e)
         self.for_log.append((f'nodes: {nodes}, cores: {core_count}', logging.INFO))
 
         if args.cpusPerTask != -1.0:
@@ -414,7 +421,7 @@ class SSHContext(BatchContext):
             self.cpusPerTask = 1
 
         if args.tasksPerNode != -1:
-            self.tasksPerNode = args.taskPerNode
+            self.tasksPerNode = args.tasksPerNode
         else:
             self.tasksPerNode = None
 
@@ -423,7 +430,7 @@ class SSHContext(BatchContext):
         else:
             cylinders = [int(cc//self.cpusPerTask) for cc in core_count]
             self.for_log.append((f'Tasks per node: {cylinders}, using {self.cpusPerTask} cores per task.', logging.INFO))
-        cores_per_cylinder = [cc//max(1, c) for cc, c in zip(core_count, cylinders)]
+        cores_per_cylinder = [cc/c if c else cc for cc, c in zip(core_count, cylinders)]
         super(SSHContext, self).__init__('SSH', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel)
 
     def launchNode(self, n):
@@ -1386,7 +1393,7 @@ def contextArgs(argp):
     argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', default=[], help=argparse.SUPPRESS) #'Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)'
     argp.add_argument('--fill', action='store_true', help='Try to use extra cores if allocated cores exceeds requested cores.')
     argp.add_argument('-g', '--gpu', action='store_true', help='Use assigned GPU resources')
-    argp.add_argument('--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job); equivalent to -k ''.")
+    argp.add_argument('--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job).")
     argp.add_argument('-l', '--label', type=str, metavar='COMMAND', help="Label for this context. Should be unique.")
     argp.add_argument('--retire-cmd', type=str, metavar='COMMAND', help='Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".')
     argp.add_argument('-s', '--ssh-node', type=str, action='append', metavar='HOST:CORECOUNT', help="Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts; equivalent to setting DISBATCH_SSH_NODELIST)")
@@ -1506,7 +1513,7 @@ def main(kvsq=None):
         logger.info('Env: %r', os.environ)
         # Log any messages generated by the context constructor.
         for m, ll in getattr(context, 'for_log', []): 
-            logger.log(ll, m)
+            logger.log(ll, '(Delayed from __init__): '+m)
         nogo = [x for x, c in enumerate(context.cylinders) if c == 0]
         if nogo:
             logger.warning('At least one engine lacks enough cylinders to run tasks (%r).'%([context.nodes[x] for x in nogo]))
