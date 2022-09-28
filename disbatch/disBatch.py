@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import argparse, copy, json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
 from ast import literal_eval
 from collections import defaultdict as DD

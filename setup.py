@@ -6,4 +6,5 @@ setuptools.setup(name='disbatch', version='2.1',
     long_description=open("Readme.md").read(),
     packages=setuptools.find_packages(),
     package_data={'disbatch': ['dbMon.py', 'dbUtil.sh']},
-    scripts=['disBatch', 'disBatch.py'])
+    scripts=['disBatch'],
+    )
