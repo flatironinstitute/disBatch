@@ -9,5 +9,5 @@ elif [[ $1 == '--engine' ]]
 then
     exec {DisBatchPython} -c 'from disbatch import disBatch ; disBatch.main()' "$@"
 else
-    exec {DisBatchPython} -c 'from disbatch import disBatch ; disBatch.main()' --context {DbUtilPath:} "$@" < /dev/null &> {uniqueId:s}_${{BASHPID}}_context_launch.log
+    exec {DisBatchPython} -c 'from disbatch import disBatch ; disBatch.main()' --context {DbUtilPath:} "$@" < /dev/null 1> {uniqueId:s}_${{BASHPID}}_context_launch.log
 fi
