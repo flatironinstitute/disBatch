@@ -213,9 +213,16 @@ class BatchContext:
             logger.info('Retiring node "%s" with command %s', node, str(self.retireCmd))
             env = self.retireEnv(node, ret)
             try:
-                SUB.check_call(self.retireCmd, close_fds=True, shell=True, env=env)
+                capture = SUB.run(self.retireCmd, close_fds=True, shell=True, env=env,
+                                  check=True, capture_output=True)
             except Exception as e:
                 logger.warning('Retirement planning needs improvement: %s', repr(e))
+                capture = e
+            finally:
+                if capture.stdout:
+                    logger.info('Retirement stdout: "%s"', capture.stdout.decode('utf-8'))
+                if capture.stderr:
+                    logger.info('Retirement stderr: "%s"', capture.stderr.decode('utf-8'))
         else:
             logger.info('Retiring node "%s" (no-op)', node)
 
