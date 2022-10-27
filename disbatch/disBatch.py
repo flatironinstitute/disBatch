@@ -214,7 +214,7 @@ class BatchContext:
             env = self.retireEnv(node, ret)
             try:
                 capture = SUB.run(self.retireCmd, close_fds=True, shell=True, env=env,
-                                  check=True, capture_output=True)
+                                  check=True, stdout=SUB.PIPE, stderr=SUB.PIPE)
             except Exception as e:
                 logger.warning('Retirement planning needs improvement: %s', repr(e))
                 capture = e
