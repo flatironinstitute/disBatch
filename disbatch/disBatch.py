@@ -313,7 +313,7 @@ class SlurmContext(BatchContext):
         if args.tasksPerNode != -1:
             self.tasksPerNode = args.tasksPerNode
             if sntpn:
-                self.for_log.append((f'Argument tasksPerNode is set to {self.tasksPerNode}, ignoring SLURM_NTASKS_PER_NODE ({sntpn})', self.INFO))
+                self.for_log.append((f'Argument tasksPerNode is set to {self.tasksPerNode}, ignoring SLURM_NTASKS_PER_NODE ({sntpn})', logging.INFO))
                 if self.tasksPerNode != sntpn:
                     self.for_log.append((f'disBatch argument tasksPerNode ({self.tasksPerNode}) conflicts with SLURM_NTASKS_PER_NODE ({sntpn}). Using disBatch value.', self.USERWARNING))
         elif sntpn:
