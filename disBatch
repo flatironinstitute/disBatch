@@ -5,7 +5,7 @@ try:
 except Exception as e:
     import os, sys
     pp = os.environ.get('PYTHONPATH', '<Not Set>')
-    print(f'Unable to import disBatch. Check:\n\tPYTHONPATH {pp!r}. '
+    print(f'Unable to import disBatch. Check:\n\tPYTHONPATH {pp!r}.\n'
            'Original exception follows.', file=sys.stderr)
     raise e
 
