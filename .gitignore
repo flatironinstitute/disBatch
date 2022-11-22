@@ -5,3 +5,6 @@
 /exampleTaskFiles/slurm*resize.*sh
 /exampleTaskFiles/dbTestOutputDir
 /tmp
+/tests/test_*/disbatch-test.*
+__pycache__/
+*.egg-info/
