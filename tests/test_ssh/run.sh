@@ -12,7 +12,7 @@ disBatch -s localhost:2 Tasks
 [[ -f A.txt && -f B.txt && -f C.txt ]]
 success=$?
 
-cd -
+cd - > /dev/null
 
 if [[ $success -eq 0 ]]; then
     echo "SSH test passed."
