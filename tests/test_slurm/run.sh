@@ -12,10 +12,13 @@ salloc -n 2 disBatch Tasks
 [[ -f A.txt && -f B.txt && -f C.txt ]]
 success=$?
 
+cd -
+
 if [[ $success -eq 0 ]]; then
     echo "Slurm test passed."
+    rm -rf $workdir
 else
-    echo "Slurm test failed!"
+    echo "Slurm test failed! Output is in $workdir"
 fi
 
 exit $success

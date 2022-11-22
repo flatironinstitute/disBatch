@@ -12,10 +12,13 @@ disBatch -s localhost:2 Tasks
 [[ -f A.txt && -f B.txt && -f C.txt ]]
 success=$?
 
+cd -
+
 if [[ $success -eq 0 ]]; then
     echo "SSH test passed."
+    rm -rf $workdir
 else
-    echo "SSH test failed!"
+    echo "SSH test failed! Output is in $workdir"
 fi
 
 exit $success
