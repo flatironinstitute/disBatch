@@ -1,6 +1,8 @@
 Distributed processing of a batch of tasks.
 ===========================================
 
+[![Tests](https://github.com/flatironinstitute/disBatch/actions/workflows/tests.yaml/badge.svg)](https://github.com/flatironinstitute/disBatch/actions/workflows/tests.yaml)
+
 ## TL;DR
 
 Create a file `Tasks`:
