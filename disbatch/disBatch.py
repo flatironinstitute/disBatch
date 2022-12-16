@@ -1,6 +1,7 @@
 import argparse, copy, json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
 from ast import literal_eval
 from collections import defaultdict as DD
+from functools import partial
 import warnings
 
 try:
@@ -482,6 +483,20 @@ class TaskInfo:
         return '\t'.join([str(x) for x in [self.taskId, self.taskStreamIndex, self.taskRepIndex, self.kind, repr(self.taskCmd)]])
 
 class TaskReport:
+    header =  'ROE[ PSZ]\tTaskID\tLineNum\tRepeatIndex\tNode\tPID\tReturnCode\tElapsed\tStart\tFinish\tBytesOfLeakedOutput\tOutputSnippet\tBytesOfLeakedError\tErrorSnippet\tCommand'
+    fields = ['Flags', 'TaskId', 'TaskStreamIndex', 'TaskRepIndex', 'Host', 'PID', 'ReturnCode', 'Elapsed', 'Start', 'End', 'OutBytes', 'OutData', 'ErrBytes', 'ErrData', 'TaskCmd']
+    # For the moment, parsing a task report boils down to splitting on
+    # a fixed number of tabs. Keep the task command last to avoid
+    # issues with embedded tabs. This makes for cleaner display too.
+    assert fields[-1] == 'TaskCmd'
+
+    field2index = dict([(f, x) for x, f in enumerate(fields)])
+    num_fields = len(fields)
+
+    @staticmethod
+    def find_field(ff, f):
+        return ff[TaskReport.field2index[f]]
+    
     def __init__(self, *args, **kwargs):
         if len(args) == 1 and len(kwargs) == 0 and type(args[0]) == str:
             # In effect this undoes __str__, so this must be kept in sync with __str__.
@@ -489,20 +504,22 @@ class TaskReport:
                 if args[0] == TaskReport.header:
                     self.taskInfo = None
                 else:
-                    ff = args[0].split('\t', 14)
+                    fx = partial(TaskReport.find_field, args[0].split('\t', TaskReport.num_fields-1))
                     kind = 'N'
-                    if ff[0][3] in 'PSZ':
-                        kind = ff[0][3]
-                    elif ff[0][0] not in ' R':
-                        kind = ff[0][0]
-                    ti = TaskInfo(int(ff[1]), int(ff[2]), int(ff[3]), literal_eval(ff[14]), '', kind=kind)
-                    self.do_init(ti, ff[4], int(ff[5]), int(ff[6]), float(ff[8]), float(ff[9]), int(ff[10]), ff[11], int(ff[12]), ff[13])
+                    flags = fx('Flags')
+                    if flags[3] in 'PSZ':
+                        kind = flags[3]
+                    elif flags[0] not in ' R':
+                        kind = flags[0]
+                    ti = TaskInfo(int(fx('TaskId')), int(fx('TaskStreamIndex')), int(fx('TaskRepIndex')), literal_eval(fx('TaskCmd')), '', kind=kind)
+                    self.do_init(ti, fx('Host'), int(fx('PID')), int(fx('ReturnCode')), float(fx('Start')), float(fx('End')),
+                                 int(fx('OutBytes')), literal_eval(fx('OutData')), int(fx('ErrBytes')), literal_eval(fx('ErrData')))
             except Exception:
                 logger.exception('Task reporting')
                 self.taskInfo = None
         else:
             self.do_init(*args, **kwargs)
-
+                                  
     def do_init(self, taskInfo, host=myHostname, pid=myPid, returncode=0, start=0, end=0, outbytes=0, outdata='', errbytes=0, errdata=''):
         self.taskInfo = taskInfo
         self.host, self.pid, self.returncode, self.start, self.end, self.outbytes, self.outdata, self.errbytes, self.errdata = host, pid, returncode, start, end, outbytes, outdata, errbytes, errdata
@@ -517,11 +534,9 @@ class TaskReport:
         else:
             return self.taskInfo.kind + '    '
 
-    header =  'ROE[ PSZ]\tTaskID\tLineNum\tRepeatIndex\tNode\tPID\tReturnCode\tElapsed\tStart\tFinish\tBytesOfLeakedOutput\tOutputSnippet\tBytesOfLeakedError\tErrorSnippet\tCommand'
-    fields = ['Flags', 'TaskId', 'TaskStreamIndex', 'TaskRepIndex', 'Host', 'PID', 'ReturnCode', 'Elapsed', 'Start', 'End', 'OutBytes', 'OutData', 'ErrBytes', 'ErrData', 'TaskCmd']
     def reportDict(self):
         ti = self.taskInfo
-        rd =  dict(zip(TaskReport.fields, [self.flags(), ti.taskId, ti.taskStreamIndex, ti.taskRepIndex, self.host, self.pid, self.returncode, '%.3f'%(self.end - self.start), '%.3f'%self.start, '%.3f'%self.end, self.outbytes, repr(self.outdata), self.errbytes, repr(self.errdata), ti.taskCmd]))
+        rd =  dict(zip(TaskReport.fields, [self.flags(), ti.taskId, ti.taskStreamIndex, ti.taskRepIndex, self.host, self.pid, self.returncode, '%.3f'%(self.end - self.start), '%.3f'%self.start, '%.3f'%self.end, self.outbytes, repr(self.outdata), self.errbytes, repr(self.errdata), repr(ti.taskCmd)]))
         return rd
 
     def __str__(self):
@@ -1074,7 +1089,7 @@ class Driver(Thread):
                     # one per key
                     if self.trackResults:
                         logging.debug('Tracking result key: %r, value: %r', self.trackResults%tinfo.taskId, report)
-                        self.kvs.put(self.trackResults%tinfo.taskId, json.dumps(tReport.reportDict()), False)
+                        self.kvs.put(self.trackResults%tinfo.taskId, json.dumps(tReport.reportDict()), b'JSON')
                     if self.db_info.args.mailTo and self.finished%self.db_info.args.mailFreq == 0:
                         self.sendNotification()
             elif msg == 'task heart beat':
