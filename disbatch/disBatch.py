@@ -5,9 +5,9 @@ from functools import partial
 import warnings
 
 try:
-    from queue import Queue
+    from queue import Empty, Queue
 except ImportError:
-    from Queue import Queue
+    from Queue import Empty, Queue
 from threading import Thread
 
 # During the course of a disBatch run, we are going to kick off a
@@ -198,21 +198,25 @@ class BatchContext:
         '''Launch an engine for a single node.  Should return a subprocess handle (unless launch itself is overridden).'''
         raise NotImplementedError('%s.launchNode is not implemented' % type(self))
 
-    def retireEnv(self, node, ret):
-        '''Generate an environment for running the retirement command for a given node.'''
+    def retireEnv(self, nodeList, retList):
+        '''Generate an environment for running the retirement command for a given list of nodes.'''
         env = os.environ.copy()
-        env['NODE'] = node
-        env['RETCODE'] = str(ret)
+        env['NODES'] = ','.join(nodeList)
+        env['RETCODES'] = ','.join([str(rc) for rc in retList])
         env['ACTIVE'] = ','.join(self.engines.keys())
         env['RETIRED'] = ','.join(set(self.nodes).difference(self.engines))
         return env
 
-    def retireNode(self, node, ret):
-        '''Called when a node has exited.  May be overridden to release resources.'''
-        if ret: self.error = True
+    def retireNodeList(self, nodeList, retList):
+        '''Called when one or mode nodes has exited.  May be overridden to release resources.'''
+        for ret in retList:
+            if ret:
+                self.error = True
+                break
+
         if self.retireCmd:
-            logger.info('Retiring node "%s" with command %s', node, str(self.retireCmd))
-            env = self.retireEnv(node, ret)
+            env = self.retireEnv(nodeList, retList)
+            logger.info('Retiring "%s" with command %s, env %s', nodeList, str(self.retireCmd), [(v, env.get(v, '<NOT SET>')) for v in ['DRIVER_NODE', 'NODES', 'RETCODES', 'ACTIVE', 'RETIRED']])
             try:
                 capture = SUB.run(self.retireCmd, close_fds=True, shell=True, env=env,
                                   check=True, stdout=SUB.PIPE, stderr=SUB.PIPE)
@@ -225,7 +229,10 @@ class BatchContext:
                 if capture.stderr:
                     logger.info('Retirement stderr: "%s"', capture.stderr.decode('utf-8'))
         else:
-            logger.info('Retiring node "%s" (no-op)', node)
+            logger.info('Retiring "%s" (no-op)', nodeList)
+
+    def retireNode(self, node, ret):
+        self.retireNodeList([node], [ret])
 
     def finish(self):
         '''Check that all engines completed successfully and return True on success.'''
@@ -278,6 +285,15 @@ class SlurmContext(BatchContext):
 # SLURM_NPROCS=12
 # SLURM_JOB_ID=1568029
 
+    ThrottleTime = 10 # To avoid spamming SLURM, send retirement requests at a minimum interval of ThrottleTime seconds.
+
+    # Cannot pickle the throttle stuff.
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        del state['throttleq']
+        del state['throttle_thread']
+        return state
+        
     def __init__(self, dbInfo, rank, args):
         # Note: the context is used to set the log file name, so
         # logging isn't available now. Keep a list of log messages to
@@ -356,7 +372,10 @@ class SlurmContext(BatchContext):
         super(SlurmContext, self).__init__('SLURM', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel)
         self.driverNode = None
         self.retireCmd = "scontrol update JobId=\"$SLURM_JOBID\" NodeList=\"${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE\""
-
+        self.throttleq = Queue()
+        self.throttle_thread = Thread(target=self.__retirementThrottle__, name="throttle", daemon=True)
+        self.throttle_thread.start()
+        
     def launchNode(self, n):
         lfp = '%s_%s_%s_engine_wrap.log'%(self.dbInfo.uniqueId, self.label, n)
         # To convince SLURM to give us the right gres, request the right number of tasks.
@@ -371,16 +390,38 @@ class SlurmContext(BatchContext):
         logging.info('launch cmd: %s', repr(cmd))
         return SUB.Popen(cmd, stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
 
-    def retireEnv(self, node, ret):
-        env = super(SlurmContext, self).retireEnv(node, ret)
+    def __retirementThrottle__(self):
+        nodeList, retList = [], []
+        while True:
+            try: 
+                node, ret = self.throttleq.get(timeout=self.ThrottleTime)
+                logging.info(f'Throttle: {node}, {ret}.')
+                nodeList.append(node)
+                retList.append(ret) 
+                self.throttleq.task_done()
+            except Empty:
+                logging.info(f'Throttle releasing: {nodeList}, {retList}.')
+                if nodeList: # Since the queue signaled empty, it has
+                             # been at least ThrottleTime since the
+                             # last node was added.
+                    super(SlurmContext, self).retireNodeList(nodeList, retList)
+                    nodeList, retList = [], []
+            
+    def retireEnv(self, nodeList, retList):
+        env = super(SlurmContext, self).retireEnv(nodeList, retList)
         if self.driverNode:
             env['DRIVER_NODE'] = self.driverNode
         return env
 
     def retireNode(self, node, ret):
+        logging.info(f'Retiring {node} ({ret}).')
+        # If this is the node on which the context manager is running, driverNode will be set.
+        # The driverNode is never retired; it is always included in scontrol update "NodeList=...".
         if compHostnames(node, myHostname):
             self.driverNode = node
-        super(SlurmContext, self).retireNode(node, ret)
+        self.throttleq.put((node, ret))
+        self.throttleq.join() # For thread safety, wait for an ack.
+        logging.info('Throttle has acked.')
 
     def setNode(self, node=None):
         super(SlurmContext, self).setNode(node or os.getenv('SLURMD_NODENAME'))
