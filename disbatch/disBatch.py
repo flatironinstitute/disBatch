@@ -1,4 +1,4 @@
-import argparse, copy, json, logging, os, random, re, signal, socket, subprocess as SUB, sys, time
+import argparse, copy, json, logging, os, pickle, random, re, signal, socket, subprocess as SUB, sys, time, traceback
 from ast import literal_eval
 from collections import defaultdict as DD
 from functools import partial
@@ -60,6 +60,15 @@ warnings.formatwarning = lambda msg, cat, *args, **kwargs: f'{cat.__name__}: {ms
 def compHostnames(h0, h1):
     return h0.split('.', 1)[0] == h1.split('.', 1)[0]
 
+def waitForIt(fn, mode, loops=60):
+    for x in range(loops):
+        try:
+            return open(fn, mode)
+        except FileNotFoundError:
+            time.sleep(.5)
+    else:
+        raise(Exception(f'Gave up waiting for {fn} after {loops} attempts.'))
+    
 def waitTimeout(sub, timeout, interval=1):
     r = sub.poll()
     while r is None and timeout > 0:
@@ -174,6 +183,13 @@ class BatchContext:
     def __str__(self):
         return 'Context type: %s\nLabel: %s\nNodes: %r\nCylinders: %r\nCores per cylinder: %r\n'%(self.sysid, self.label, self.nodes, self.cylinders, self.cores_per_cylinder)
 
+    def finish(self):
+        '''Check that all engines completed successfully and return True on success.'''
+        for n, e in self.engines.items():
+            r = killPatiently(e, 'engine ' + n)
+            if r: self.error = True # also handled by retireNode
+        return not self.error
+
     def launch(self, kvs):
         '''Launch the engine processes on all the nodes by calling launchNode for each.'''
         kvs.put(self.kvsKey, self)
@@ -185,6 +201,10 @@ class BatchContext:
             else:
                 logging.info(f'Skipping launch for {n}, no cylinders available.')
                 
+    def launchNode(self, node):
+        '''Launch an engine for a single node.  Should return a subprocess handle (unless launch itself is overridden).'''
+        raise NotImplementedError('%s.launchNode is not implemented' % type(self))
+
     def poll(self):
         '''Check if any engines have stopped.'''
         for n, e in list(self.engines.items()):
@@ -193,10 +213,6 @@ class BatchContext:
                 logger.info('Engine %s exited: %d', n, r)
                 del self.engines[n]
                 self.retireNode(n, r)
-
-    def launchNode(self, node):
-        '''Launch an engine for a single node.  Should return a subprocess handle (unless launch itself is overridden).'''
-        raise NotImplementedError('%s.launchNode is not implemented' % type(self))
 
     def retireEnv(self, nodeList, retList):
         '''Generate an environment for running the retirement command for a given list of nodes.'''
@@ -234,13 +250,14 @@ class BatchContext:
     def retireNode(self, node, ret):
         self.retireNodeList([node], [ret])
 
-    def finish(self):
-        '''Check that all engines completed successfully and return True on success.'''
-        for n, e in self.engines.items():
-            r = killPatiently(e, 'engine ' + n)
-            if r: self.error = True # also handled by retireNode
-        return not self.error
+    def run_task(self, target_rank, task_info, env):
+        # Default implementation. May be overriden to implement a context-specific method.
+        return SUB.Popen(['/bin/bash', '-c', task_info.taskCmd], env=env, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
 
+    def poll_task(self, p):
+        # Default implementation. May be overriden to implement a context-specific method.
+        return p.poll()
+    
     def setNode(self, node=None):
         '''Try to determine the hostname of this engine from the pov of the launcher.'''
         # This is just a fallback. Implementations should try to determine node as appropriate.
@@ -343,9 +360,12 @@ class SlurmContext(BatchContext):
             cylinders = [self.tasksPerNode] * len(nodes)
         else:
             if args.fill:
-                self.for_log.append(('Fill requested, ignoring SLURM_TASKS_PER_NODE.', logging.WARNING))
-                cylinders = [int(jcpn//self.cpusPerTask) for jcpn in jcpnl]
-                self.for_log.append((f'Cores per node: {jcpnl} /({self.cpusPerTask} cores per task) -> {cylinders}', logging.INFO))
+                if 'CUDA_VISIBLE_DEVICES' in os.environ or 'GPU_DEVICE_ORDINAL' in os.environ:
+                    self.for_log.append('Fill requested, but GPUs detected. Ignoring request.')
+                else:
+                    self.for_log.append(('Fill requested, ignoring SLURM_TASKS_PER_NODE.', logging.WARNING))
+                    cylinders = [int(jcpn//self.cpusPerTask) for jcpn in jcpnl]
+                    self.for_log.append((f'Cores per node: {jcpnl} /({self.cpusPerTask} cores per task) -> {cylinders}', logging.INFO))
             else:
                 # Follow SLURM_TASKS_PER_NODE, but honor cpusPerTask
                 cylinders = [min(stpn, int(jcpn//self.cpusPerTask)) for stpn, jcpn in zip(self.stpnl, jcpnl)]
@@ -353,20 +373,17 @@ class SlurmContext(BatchContext):
         if cores_per_cylinder is None:
             cores_per_cylinder = [jcpn/c if c else jcpn for jcpn, c in zip(jcpnl, cylinders)]
         
-        # We need to keep SLURM from binding resources, but provide a
-        # hook to allow user to alter srun options.
+        # Provide a hook to allow the user to alter srun options.
         opt_file = os.environ.get('DISBATCH_SLURM_SRUN_OPTIONS_FILE', None)
         if opt_file:
             self.for_log.append(('Taking srun options from "%s".'%opt_file, logging.INFO))
             opts = open(opt_file).read().split('\n')
-        else:
-            opts = ['SLURM_CPU_BIND=none', 'SLURM_GPU_BIND=none']
-        self.for_log.append(('Adding srun options:', logging.INFO))
-        for l in opts:
-            if l:
-                self.for_log.append(('    '+l, logging.INFO))
-                name, value = l.split('=', 1)
-                os.environ[name] = value
+            self.for_log.append(('Adding srun options:', logging.INFO))
+            for l in opts:
+                if l:
+                    self.for_log.append(('    '+l, logging.INFO))
+                    name, value = l.split('=', 1)
+                    os.environ[name] = value
 
         contextLabel = args.label if args.label else 'J%s'%jobid
         super(SlurmContext, self).__init__('SLURM', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel)
@@ -375,6 +392,84 @@ class SlurmContext(BatchContext):
         self.throttleq = Queue()
         self.throttle_thread = Thread(target=self.__retirementThrottle__, name="throttle", daemon=True)
         self.throttle_thread.start()
+        
+    def engine_start(tag):
+        # For a SLURM context, we use srun to start up independent
+        # task servers. This ensures they get the resources SLURM
+        # intends each task to have. Each engine cylinder has an
+        # associated task server that executes tasks on its behalf
+        # using the resources assigned by SLURM.
+
+        # Each cylinder communicates with its task server using a
+        # collection of named pipes to send tasks to and get per-task
+        # stdout, stderr pipe names and returns codes from the server.
+        # The cylinder runs a simple proxy that uses the stdout and
+        # stderr pipes to provide appropriate connection points for
+        # Popen stdout and stderr.
+        
+        to_server_template, from_server_template = f'/tmp/{tag}_to_task_server_%d', f'/tmp/{tag}_from_task_server_%d'
+
+        slurm_local_rank = int(os.environ['SLURM_LOCALID'])
+        ranks = int(os.environ['SLURM_NTASKS'])
+        if slurm_local_rank == 0:
+            # Fork and return control to what will become the engine.
+            if os.fork() > 0:
+                incoming_pipes, outgoing_pipes = [], []
+                for r in range(ranks):
+                    incoming_pipes.append(waitForIt(from_server_template%r, 'rb'))
+                    outgoing_pipes.append(open(to_server_template%r, 'wb'))
+                # This code runs at start up, before there is an
+                # context object. Return this state as an opaque
+                # object, that will be used to update the context
+                # object when we finnaly have one.
+                return (incoming_pipes, outgoing_pipes)
+            
+        to_server, from_server = to_server_template%slurm_local_rank, from_server_template%slurm_local_rank
+
+        os.mkfifo(to_server, 0o600)
+        os.mkfifo(from_server, 0o600)
+
+        # Ordering matters here. 
+        outgoing = open(from_server, 'wb')
+        incoming = waitForIt(to_server, 'rb')
+        os.unlink(from_server)
+        os.unlink(to_server)
+        
+        while True:
+            # Receive task info from the cylinder.
+            (seq, cmd, env) = pickle.load(incoming)
+            if seq is None: break
+
+            # Set up stdout and stderr pipes for this task. The cylinder will delete these pipes.
+            sh_err, sh_out = f'/tmp/{tag}_{slurm_local_rank}_{seq}_err', f'/tmp/{tag}_{slurm_local_rank}_{seq}_out'
+            os.mkfifo(sh_err, 0o600)
+            os.mkfifo(sh_out, 0o600)
+            # Send the pipe names back to the cylinder.
+            pickle.dump((sh_err, sh_out), outgoing)
+            outgoing.flush()
+            p = SUB.Popen(['/bin/bash', '-c', cmd], env=env, stdin=None, stdout=open(sh_out, 'wb'), stderr=open(sh_err, 'wb'))
+            r = p.wait()
+            # Send the pid and return code.
+            pickle.dump((p.pid, r), outgoing)
+            outgoing.flush()
+
+        incoming.close()
+        outgoing.close()
+        sys.exit(0)
+        
+    def engine_state(self, opaque):
+        # Process state that was created by engine_start before we had
+        # a context object. Note this name must be the name of the
+        # engine start method + '_return'
+        self.incoming_pipes, self.outgoing_pipes = opaque
+        
+    def engine_stop(self):
+        # Process state that was created by engine_start before we had
+        # a context object. Note this name must be the name of the
+        # engine start method + '_return'
+        for p in self.outgoing_pipes:
+            pickle.dump((None, None, None), p)
+            p.flush()
         
     def launchNode(self, n):
         lfp = '%s_%s_%s_engine_wrap.log'%(self.dbInfo.uniqueId, self.label, n)
@@ -385,8 +480,9 @@ class SlurmContext(BatchContext):
             #TODO: Ponder *always* using STPNL.
             logging.warning(f'To keep SLURM happy, running "-n {self.stpnl[nx]}", instead of {tasks}.')
             tasks = self.stpnl[nx]
-        # To allow the engine to do its thing correctly, only run it for the 0th local task.
-        cmd = ['srun', '-N', '1', '-n', str(tasks), '-w', n, 'bash', '-c', f'if [[ $SLURM_LOCALID == 0 ]] ; then {DbUtilPath} --engine -n {n} {self.kvsKey} ; else {{ sleep 3 ; echo "pruned $SLURM_LOCALID" ; }} ; fi']
+        # srun the appropriate number of task servers for this node. 0-rank will fork off the engine proper.
+        # The logic for this is in SlurmContext.engine_start.
+        cmd = ['srun', '-N', '1', '-n', str(tasks), '-w', n, 'bash', '-c', f'{DbUtilPath} --engine -n {n} --method SlurmContext.engine {self.kvsKey} --tag slurm_context_engine_{int(10e7*random.random())}']
         logging.info('launch cmd: %s', repr(cmd))
         return SUB.Popen(cmd, stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
 
@@ -400,10 +496,10 @@ class SlurmContext(BatchContext):
                 retList.append(ret) 
                 self.throttleq.task_done()
             except Empty:
-                logging.info(f'Throttle releasing: {nodeList}, {retList}.')
                 if nodeList: # Since the queue signaled empty, it has
                              # been at least ThrottleTime since the
                              # last node was added.
+                    logging.info(f'Throttle releasing: {nodeList}, {retList}.')
                     super(SlurmContext, self).retireNodeList(nodeList, retList)
                     nodeList, retList = [], []
             
@@ -423,6 +519,28 @@ class SlurmContext(BatchContext):
         self.throttleq.join() # For thread safety, wait for an ack.
         logging.info('Throttle has acked.')
 
+    def run_task(self, target_cylinder, task_info, env):
+        incoming, outgoing = self.incoming_pipes[target_cylinder], self.outgoing_pipes[target_cylinder]
+        pickle.dump((task_info.taskId, task_info.taskCmd, env), outgoing)
+        outgoing.flush()
+        sh_err, sh_out = pickle.load(incoming)
+        p = SUB.Popen(['/bin/bash', '-c', f'cat < {sh_out} & cat < {sh_err} >&2'], stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE)
+        # TODO: How evil is this? Should we create a subclass of Popen objects?
+        p.slurm_context_incoming, p.slurm_context_outoging = incoming, outgoing
+        p.sh_out, p.sh_err = sh_out, sh_err
+        return p
+
+    def poll_task(self, p):
+        r = p.poll()
+        if r is not None:
+            remote_pid, remote_rc = pickle.load(p.slurm_context_incoming)
+            os.unlink(p.sh_err)
+            os.unlink(p.sh_out)
+            p.pid = remote_pid
+            return remote_rc
+        else:
+            return None
+        
     def setNode(self, node=None):
         super(SlurmContext, self).setNode(node or os.getenv('SLURMD_NODENAME'))
 
@@ -1355,20 +1473,20 @@ class EngineBlock(Thread):
                 logger.info('Cylinder %d executing %s.', self.cylinderRank, ti)
                 t0 = time.time()
                 try:
-                    self.taskProc = SUB.Popen(['/bin/bash', '-c', ti.taskCmd], env=self.localEnv, stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE, preexec_fn=os.setsid, close_fds=True)
-                    pid = self.taskProc.pid
+                    self.taskProc = self.context.run_task(self.cylinderRank, ti, self.localEnv)
                     obp = OutputCollector(self.taskProc.stdout, 40, 40)
                     ebp = OutputCollector(self.taskProc.stderr, 40, 40)
                     ct = 0.0
                     while True:
                         # Popen.wait with timeout is resource intensive, so let's roll our own.
-                        r = self.taskProc.poll()
+                        r = self.context.poll_task(self.taskProc)
                         if r is not None: break
                         time.sleep(.1)
                         ct += .1
                         if ct >= PulseTime:
                             self.kvs.put('.controller', ('task heart beat', (self.engineRank, -1 if self.cylinderRank == -1 else ti.taskId)))
                             ct = 0.0
+                    pid = self.taskProc.pid
                     self.taskProc = None
                     t1 = time.time()
 
@@ -1378,7 +1496,7 @@ class EngineBlock(Thread):
                 except Exception as e:
                     self.taskProc = None
                     t1 = time.time()
-                    estr = 'Exception during task execution: ' + str(e)
+                    estr = 'Exception during task execution: ' + str(e) + traceback.format_exc()
                     tr = TaskReport(ti, self.context.node, -1, getattr(e, 'errno', 200), t0, t1, 0, '', len(estr), estr)
 
                 self.kvs.put('.controller', ('task done', (tr, self.engineRank, self.cylinderRank, self.fetchTask.keyTemp)))
@@ -1462,7 +1580,7 @@ def contextArgs(argp):
     argp.add_argument('-c', '--cpusPerTask', metavar='N', default=-1.0, type=float, help='Number of cores used per task; may be fractional (default: 1).')
     argp.add_argument('-E', '--env-resource', metavar='VAR', action='append', default=[], help=argparse.SUPPRESS) #'Assign comma-delimited resources specified in environment VAR across tasks (count should match -t)'
     argp.add_argument('--fill', action='store_true', help='Try to use extra cores if allocated cores exceeds requested cores.')
-    argp.add_argument('-g', '--gpu', action='store_true', help='Use assigned GPU resources')
+    argp.add_argument('-g', '--gpu', action='store_true', help='Use assigned GPU resources [DEPRECATED]')
     argp.add_argument('--no-retire', dest='retire_cmd', action='store_const', const='', help="Don't retire nodes from the batch system (e.g., if running as part of a larger job).")
     argp.add_argument('-l', '--label', type=str, metavar='COMMAND', help="Label for this context. Should be unique.")
     argp.add_argument('--retire-cmd', type=str, metavar='COMMAND', help='Shell command to run to retire a node (environment includes $NODE being retired, remaining $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--ssh-node".')
@@ -1479,19 +1597,28 @@ def main(kvsq=None):
     if len(sys.argv) > 1 and sys.argv[1] == '--engine':
         argp = argparse.ArgumentParser(description='Task execution engine.')
         argp.add_argument('--engine', action='store_true', help='Run in execution engine mode.')
+        argp.add_argument('--method', type=str, help='Context specific start up.')
+        argp.add_argument('--tag', type=str, help='Random indentifier shared by sibling task servers and their engine.')
         argp.add_argument('-n', '--node', type=str, help='Name of this engine node.')
         argp.add_argument('kvsKey', help='Key for my context.')
         args = argp.parse_args()
+
+        if args.method:
+            method_state = eval(args.method+'_start')(args.tag) # opaque object that will be used to update context instance state.
+        
         # Stagger start randomly to throttle kvs connections
         time.sleep(random.random()*5.0)
         kvsserver = os.environ['DISBATCH_KVSSTCP_HOST']
         kvs = kvsstcp.KVSClient(kvsserver)
-        dbInfo = kvs.view('.db info')
+        context = kvs.view(args.kvsKey)
+        if args.method:
+            context.__getattribute__(args.method.split('.', 1)[-1]+'_state')(method_state)
+
         rank = register(kvs, 'engine')
         if -1 == rank:
             print('Run done, engine not registering.', file=sys.stderr)
             sys.exit(0)
-        context = kvs.view(args.kvsKey)
+        dbInfo = kvs.view('.db info')
         try:
             os.chdir(dbInfo.wd)
         except Exception as e:
@@ -1531,6 +1658,10 @@ def main(kvsq=None):
             logger.exception('EngineBlock during join.')
         finally:
             shutdown()
+
+        if args.method:
+            context.__getattribute__(args.method.split('.', 1)[-1]+'_stop')()
+
         kvs.close()
         logger.info('Remaining processes:\n' + SUB.check_output(['ps', 'fuhx', '--cols', '1000']).decode('utf-8', 'ignore'))
         sys.exit(0)
@@ -1595,7 +1726,7 @@ def main(kvsq=None):
             sys.exit(1)
 
         if args.gpu:
-            args.env_resource.append('CUDA_VISIBLE_DEVICES,GPU_DEVICE_ORDINAL')
+            print('-g/--gpu is deprecated. It is no longer needed and will be ignored.', file=sys.stderr)
         context.envres = ','.join(args.env_resource).split(',') if args.env_resource else []
 
         if args.retire_cmd is not None:
