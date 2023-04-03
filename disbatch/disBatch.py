@@ -476,13 +476,11 @@ class SlurmContext(BatchContext):
         # To convince SLURM to give us the right gres, request the right number of tasks.
         nx = self.nodes.index(n)
         tasks = self.cylinders[nx]
-        if self.stpnl[nx] < tasks:
-            #TODO: Ponder *always* using STPNL.
-            logging.warning(f'To keep SLURM happy, running "-n {self.stpnl[nx]}", instead of {tasks}.')
-            tasks = self.stpnl[nx]
+        if self.stpnl[nx] != tasks:
+            logging.warning(f'SLURM believes tasks should be {self.stpnl[nx]}, attempting to run {tasks}.')
         # srun the appropriate number of task servers for this node. 0-rank will fork off the engine proper.
         # The logic for this is in SlurmContext.engine_start.
-        cmd = ['srun', '-N', '1', '-n', str(tasks), '-w', n, 'bash', '-c', f'{DbUtilPath} --engine -n {n} --method SlurmContext.engine {self.kvsKey} --tag slurm_context_engine_{int(10e7*random.random())}']
+        cmd = ['srun', '-N', '1', '-n', str(tasks), '-c', '%d'%self.cores_per_cylinder[nx], '-w', n, 'bash', '-c', f'{DbUtilPath} --engine -n {n} --method SlurmContext.engine {self.kvsKey} --tag slurm_context_engine_{int(10e7*random.random())}']
         logging.info('launch cmd: %s', repr(cmd))
         return SUB.Popen(cmd, stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
 
@@ -525,6 +523,10 @@ class SlurmContext(BatchContext):
         outgoing.flush()
         sh_err, sh_out = pickle.load(incoming)
         p = SUB.Popen(['/bin/bash', '-c', f'cat < {sh_out} & cat < {sh_err} >&2'], stdin=None, stdout=SUB.PIPE, stderr=SUB.PIPE)
+        # Avoid the temptation to neaten things up by unlinking the
+        # out and err pipes now---process start up is asynchronous so
+        # there could be a race.
+        
         # TODO: How evil is this? Should we create a subclass of Popen objects?
         p.slurm_context_incoming, p.slurm_context_outoging = incoming, outgoing
         p.sh_out, p.sh_err = sh_out, sh_err
