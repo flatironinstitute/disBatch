@@ -334,9 +334,9 @@ class SlurmContext(BatchContext):
         scpt = os.environ.get('SLURM_CPUS_PER_TASK')
         if args.cpusPerTask != -1.0:
             self.cpusPerTask = args.cpusPerTask
-            cores_per_cylinder = [args.cpusPerTask]*len(nodes)
+            cores_per_cylinder = [int(args.cpusPerTask)]*len(nodes)
             if scpt:
-                if self.cpusPerTask != scpt:
+                if self.cpusPerTask != int(scpt):
                     self.for_log.append((f'disBatch argument cpusPerTask ({self.cpusPerTask}) conflicts with SLURM_CPUS_PER_TASK ({scpt}). Using disBatch value.', self.USERWARNING))
         else:
             self.cpusPerTask = int(scpt) if scpt else 1
@@ -347,7 +347,7 @@ class SlurmContext(BatchContext):
             self.tasksPerNode = args.tasksPerNode
             if sntpn:
                 self.for_log.append((f'Argument tasksPerNode is set to {self.tasksPerNode}, ignoring SLURM_NTASKS_PER_NODE ({sntpn})', logging.INFO))
-                if self.tasksPerNode != sntpn:
+                if self.tasksPerNode != int(sntpn):
                     self.for_log.append((f'disBatch argument tasksPerNode ({self.tasksPerNode}) conflicts with SLURM_NTASKS_PER_NODE ({sntpn}). Using disBatch value.', self.USERWARNING))
         elif sntpn:
             self.tasksPerNode = int(sntpn)
@@ -482,7 +482,8 @@ class SlurmContext(BatchContext):
             logging.warning(f'SLURM believes tasks should be {self.stpnl[nx]}, attempting to run {tasks}.')
         # srun the appropriate number of task servers for this node. 0-rank will fork off the engine proper.
         # The logic for this is in SlurmContext.engine_start.
-        cmd = ['srun', '-N', '1', '-n', str(tasks), '-c', '%d'%self.cores_per_cylinder[nx], '-w', n, 'bash', '-c', f'{DbUtilPath} --engine -n {n} --method SlurmContext.engine {self.kvsKey} --tag slurm_context_engine_{int(10e7*random.random())}']
+        # SLURM_CPU_BIND is set in the environment, since the user might want to override that
+        cmd = ['srun', '-N', '1', '-n', str(tasks), '-c', str(self.cores_per_cylinder[nx]), '-w', n, 'bash', '-c', f'{DbUtilPath} --engine -n {n} --method SlurmContext.engine {self.kvsKey} --tag slurm_context_engine_{int(10e7*random.random())}']
         logging.info('launch cmd: %s', repr(cmd))
         return SUB.Popen(cmd, stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
 
@@ -608,7 +609,7 @@ class SSHContext(BatchContext):
         else:
             cylinders = [int(cc//self.cpusPerTask) for cc in core_count]
             self.for_log.append((f'Tasks per node: {cylinders}, using {self.cpusPerTask} cores per task.', logging.INFO))
-        cores_per_cylinder = [cc/c if c else cc for cc, c in zip(core_count, cylinders)]
+        cores_per_cylinder = [cc//c if c else cc for cc, c in zip(core_count, cylinders)]
         super(SSHContext, self).__init__('SSH', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel)
 
     def launchNode(self, n):
