@@ -1436,7 +1436,7 @@ class EngineBlock(Thread):
             for v, l in envres.items():
                 try:
                     self.localEnv[v] = l[0 if -1 == cylinderRank else cylinderRank] # Allow the per engine cylinder to access cylinder
-                    	                                                            # 0's resources. TODO: Ensure some sort of lock?
+                                                                                    # 0's resources. TODO: Ensure some sort of lock?
                 except IndexError:
                     # safer to set it empty than delete it for most cases
                     self.localEnv[v] = ''
