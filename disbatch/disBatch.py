@@ -336,7 +336,6 @@ class SlurmContext(BatchContext):
             self.cpusPerTask = args.cpusPerTask
             cores_per_cylinder = [args.cpusPerTask]*len(nodes)
             if scpt:
-                self.for_log.append((f'Argument cpusPerTask is set to {self.cpusPerTask}, ignoring SLURM_CPUS_PER_TASK ({scpt})', logging.INFO))
                 if self.cpusPerTask != scpt:
                     self.for_log.append((f'disBatch argument cpusPerTask ({self.cpusPerTask}) conflicts with SLURM_CPUS_PER_TASK ({scpt}). Using disBatch value.', self.USERWARNING))
         else:
@@ -359,13 +358,16 @@ class SlurmContext(BatchContext):
         if self.tasksPerNode:
             cylinders = [self.tasksPerNode] * len(nodes)
         else:
+            do_fill = False
             if args.fill:
                 if 'CUDA_VISIBLE_DEVICES' in os.environ or 'GPU_DEVICE_ORDINAL' in os.environ:
-                    self.for_log.append('Fill requested, but GPUs detected. Ignoring request.')
+                    self.for_log.append(('Fill requested, but GPUs detected. Ignoring request.', logging.WARNING))
                 else:
-                    self.for_log.append(('Fill requested, ignoring SLURM_TASKS_PER_NODE.', logging.WARNING))
-                    cylinders = [int(jcpn//self.cpusPerTask) for jcpn in jcpnl]
-                    self.for_log.append((f'Cores per node: {jcpnl} /({self.cpusPerTask} cores per task) -> {cylinders}', logging.INFO))
+                    do_fill = True
+            if do_fill:
+                self.for_log.append(('Fill requested, ignoring SLURM_TASKS_PER_NODE.', logging.WARNING))
+                cylinders = [int(jcpn//self.cpusPerTask) for jcpn in jcpnl]
+                self.for_log.append((f'Cores per node: {jcpnl} /({self.cpusPerTask} cores per task) -> {cylinders}', logging.INFO))
             else:
                 # Follow SLURM_TASKS_PER_NODE, but honor cpusPerTask
                 cylinders = [min(stpn, int(jcpn//self.cpusPerTask)) for stpn, jcpn in zip(self.stpnl, jcpnl)]
