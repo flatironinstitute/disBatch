@@ -373,13 +373,17 @@ class SlurmContext(BatchContext):
                 cylinders = [min(stpn, int(jcpn//self.cpusPerTask)) for stpn, jcpn in zip(self.stpnl, jcpnl)]
                 self.for_log.append((f'Tasks per node: {self.stpnl} -> {cylinders}, using {self.cpusPerTask} cores per task.', logging.INFO))
         if cores_per_cylinder is None:
-            cores_per_cylinder = [jcpn/c if c else jcpn for jcpn, c in zip(jcpnl, cylinders)]
+            cores_per_cylinder = [jcpn//c if c else jcpn for jcpn, c in zip(jcpnl, cylinders)]
         
         # Provide a hook to allow the user to alter srun options.
         opt_file = os.environ.get('DISBATCH_SLURM_SRUN_OPTIONS_FILE', None)
+        opts = []
         if opt_file:
             self.for_log.append(('Taking srun options from "%s".'%opt_file, logging.INFO))
             opts = open(opt_file).read().split('\n')
+        else:
+            opts = ['SLURM_CPU_BIND=' + os.getenv('SLURM_CPU_BIND', 'cores')]
+        if opts:
             self.for_log.append(('Adding srun options:', logging.INFO))
             for l in opts:
                 if l:
