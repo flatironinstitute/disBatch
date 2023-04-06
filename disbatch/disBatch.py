@@ -129,7 +129,7 @@ class DisBatcher(object):
             self.db_thread = None
 
         self.donetask = tasksname + ' done!'
-        self.resultkey = tasksname + ' result %d'
+        self.resultkey = tasksname + ' result'
         self.taskkey = tasksname + ' task'
 
         self.kvs = kvsstcp.KVSClient(kvsserver)
@@ -159,11 +159,19 @@ returning a dictionary from task id to status report, itself a
 dictionary in json format.'''
         tid2status= {}
         for tid in taskIds:
-            if tid not in self.tid2status:
-                self.tid2status[tid] = json.loads(self.kvs.get(self.resultkey%tid, False).decode('utf-8')) # If encoding is False, we just get raw utf-8 bytes.
+            # Gather results until we find the one we are looking for.
+            while tid not in self.tid2status:
+                self.wait_one_task()
             tid2status[tid] = self.tid2status[tid]
         return tid2status
 
+    def wait_one_task(self):
+        '''Wait for a task (any task) to complete.'''
+        some_tid = int(self.kvs.get(f'{self.resultkey} done tasks', False))
+        status = json.loads(self.kvs.get(f'{self.resultkey} {some_tid}', False).decode('utf-8')) # If encoding is False, we just get raw utf-8 bytes.
+        self.tid2status[some_tid] = status
+        return status
+        
 class DisBatchInfo:
     def __init__(self, args, name, uniqueId, wd):
         self.args, self.name, self.uniqueId, self.wd = args, name, uniqueId, wd
@@ -1256,8 +1264,12 @@ class Driver(Thread):
                     # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than
                     # one per key
                     if self.trackResults:
-                        logging.debug('Tracking result key: %r, value: %r', self.trackResults%tinfo.taskId, report)
-                        self.kvs.put(self.trackResults%tinfo.taskId, json.dumps(tReport.reportDict()), b'JSON')
+                        logging.debug('Tracking result key: %r, value: %r', self.trackResults, report)
+                        # Maintain two data structures in KVS:
+                        #    self.trackResults + <task id>: a table that maps from a finished task id to a json encoding of task information including return info
+                        #    self.trackResults + ' done tasks': a set of task ids that have finished
+                        self.kvs.put(self.trackResults + f' {tinfo.taskId}'.encode('ascii'), json.dumps(tReport.reportDict()), b'JSON')
+                        self.kvs.put(self.trackResults + b' done tasks', str(tinfo.taskId), False)
                     if self.db_info.args.mailTo and self.finished%self.db_info.args.mailFreq == 0:
                         self.sendNotification()
             elif msg == 'task heart beat':
