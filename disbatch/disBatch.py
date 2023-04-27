@@ -43,12 +43,12 @@ myHostname = socket.gethostname()
 myPid = os.getpid()
 
 # Note that even though these are case insensitive, only lines that start with upper-case '#DISBATCH' prefixes are tested
-dbbarrier   = re.compile(r'^#DISBATCH BARRIER(?:(?: )(CHECK))?(?:(?: )(.*)$)?')
-dbcomment   = re.compile(r'^\s*(#|$)')
-dbprefix    = re.compile(r'^#DISBATCH PREFIX (.*)$', re.I)
-dbrepeat    = re.compile(r'^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>.+))?\s*$', re.I)
-dbsuffix    = re.compile(r'^#DISBATCH SUFFIX (.*)$', re.I)
-dbperengine = re.compile(r'^#DISBATCH PERENGINE (START|STOP) (.*)$', re.I) 
+dbbarrier   = re.compile(rb'^#DISBATCH BARRIER(?:(?: )(CHECK))?(?:(?: )(.*)$)?')
+dbcomment   = re.compile(rb'^\s*(#|$)')
+dbprefix    = re.compile(rb'^#DISBATCH PREFIX (.*)$', re.I)
+dbrepeat    = re.compile(rb'^#DISBATCH REPEAT\s+(?P<repeat>[0-9]+)(?:\s+start\s+(?P<start>[0-9]+))?(?:\s+step\s+(?P<step>[0-9]+))?(?: (?P<command>.+))?\s*$', re.I)
+dbsuffix    = re.compile(rb'^#DISBATCH SUFFIX (.*)$', re.I)
+dbperengine = re.compile(rb'^#DISBATCH PERENGINE (START|STOP) (.*)$', re.I) 
 
 # Heart beat info.
 PulseTime = 30
@@ -656,7 +656,7 @@ class TaskInfo:
     def __ne__(self, other): return not self == other
 
     def __str__(self):
-        return '\t'.join([str(x) for x in [self.taskId, self.taskStreamIndex, self.taskRepIndex, self.kind, repr(self.taskCmd)]])
+        return '\t'.join([str(x) for x in [self.taskId, self.taskStreamIndex, self.taskRepIndex, self.kind, self.taskCmd.decode('utf-8', 'replace')]])
 
 class TaskReport:
     header =  'ROE[ PSZ]\tTaskID\tLineNum\tRepeatIndex\tNode\tPID\tReturnCode\tElapsed\tStart\tFinish\tBytesOfLeakedOutput\tOutputSnippet\tBytesOfLeakedError\tErrorSnippet\tCommand'
@@ -687,7 +687,12 @@ class TaskReport:
                         kind = flags[3]
                     elif flags[0] not in ' R':
                         kind = flags[0]
-                    ti = TaskInfo(int(fx('TaskId')), int(fx('TaskStreamIndex')), int(fx('TaskRepIndex')), literal_eval(fx('TaskCmd')), '', kind=kind)
+                    tc = fx('TaskCmd')
+                    if tc.startswith("b'"):
+                        tc = liter_eval(tc)
+                    else:
+                        tc = tc.encode('utf-8')
+                    ti = TaskInfo(int(fx('TaskId')), int(fx('TaskStreamIndex')), int(fx('TaskRepIndex')), tc, '', kind=kind)
                     self.do_init(ti, fx('Host'), int(fx('PID')), int(fx('ReturnCode')), float(fx('Start')), float(fx('End')),
                                  int(fx('OutBytes')), literal_eval(fx('OutData')), int(fx('ErrBytes')), literal_eval(fx('ErrData')))
             except Exception:
@@ -712,18 +717,27 @@ class TaskReport:
 
     def reportDict(self):
         ti = self.taskInfo
-        rd =  dict(zip(TaskReport.fields, [self.flags(), ti.taskId, ti.taskStreamIndex, ti.taskRepIndex, self.host, self.pid, self.returncode, '%.3f'%(self.end - self.start), '%.3f'%self.start, '%.3f'%self.end, self.outbytes, repr(self.outdata), self.errbytes, repr(self.errdata), repr(ti.taskCmd)]))
+        rd =  dict(zip(TaskReport.fields, [self.flags(), ti.taskId, ti.taskStreamIndex, ti.taskRepIndex, self.host, self.pid, self.returncode, (self.end - self.start), self.start, self.end, self.outbytes, self.outdata, self.errbytes, self.errdata, ti.taskCmd]))
         return rd
 
     def __str__(self):
         rd = self.reportDict()
+        for format, fn in [('%.3f', 'Elapsed'), ('%.3f', 'Start'), ('%.3f', 'End'), ('%r', 'OutData'), ('%r', 'ErrData')]:
+            rd[fn] = format%rd[fn]
+        try:
+            # The status file is UTF-8. If we can interpret the
+            # TaskCmd bytes as a UTF-8 string, do that, otherwise
+            # report the bytes str() representation.
+            rd['TaskCmd'] = rd['TaskCmd'].decode('utf-8')
+        except UnicodeDecodeError:
+            pass
         return '\t'.join([str(rd[f]) for f in TaskReport.fields])
 
 def parseStatusFiles(*files):
     status = dict()
     for f in files:
         try:
-            with open(f, 'r') as s:
+            with open(f, 'r', encoding='utf-8') as s:
                 for l in s:
                     tr = TaskReport(l[:-1])
                     ti = tr.taskInfo
@@ -762,7 +776,7 @@ class KVSTaskSource:
         if t == self.donetask:
             self.kvs.close()
             raise StopIteration
-        return t.decode('utf8') #TODO: Think about this a bit more?
+        return t
 
     def done(self):
         kvs = self.kvs.clone()
@@ -796,11 +810,11 @@ def taskGenerator(tasks):
     taskCounter = 0 # next taskId
     peCounters = {'START': 0, 'STOP': 0}
     perEngineAllowed = True
-    prefix = suffix = ''
+    prefix = suffix = b''
     
-    def peStopTasks():
+    def peEndListTasks():
         for when in ['START', 'STOP']:
-            yield TaskInfo(peCounters[when], tsx, -1, '#ENDLIST', '.per engine %s %d'%(when, peCounters[when]), kind='P')
+            yield TaskInfo(peCounters[when], tsx, -1, b'#ENDLIST', '.per engine %s %d'%(when, peCounters[when]), kind='P')
 
     OK = True
     while OK:
@@ -821,7 +835,7 @@ def taskGenerator(tasks):
         # but this shouldn't be a problem.  (Alternatively could increment tsx
         # inside this loop instead.)
         for t in t.splitlines():
-            if not t.startswith('#DISBATCH') and dbcomment.match(t):
+            if not t.startswith(b'#DISBATCH') and dbcomment.match(t):
                 # Comment or empty line, ignore
                 continue
 
@@ -853,7 +867,7 @@ def taskGenerator(tasks):
             if perEngineAllowed:
                 # Close out the per-engine task block.
                 perEngineAllowed = False
-                yield from peStopTasks()
+                yield from peEndListTasks()
                 
             m = dbrepeat.match(t)
             if m:
@@ -879,7 +893,7 @@ def taskGenerator(tasks):
                 taskCounter += 1
                 continue
 
-            if t.startswith('#DISBATCH '):
+            if t.startswith(b'#DISBATCH '):
                 logger.error('Unknown #DISBATCH directive: %s', t)
             else:
                 yield TaskInfo(taskCounter, tsx, -1, prefix + t + suffix, '.task')
@@ -887,7 +901,7 @@ def taskGenerator(tasks):
                 
     if perEngineAllowed:
         # Handle edge case of no tasks.
-        yield from peStopTasks()
+        yield from peEndListTasks()
 
     logger.info('Processed %d tasks.', taskCounter)
 
@@ -904,7 +918,7 @@ def statusTaskFilter(tasks, status, retry=False, force=False):
             if s and (not retry or s.skipInfo.returncode == 0):
                 # skip
                 if s != t:
-                    msg = 'Recovery status file task mismatch %s:\n' + str(s) + '\n' + str(t)
+                    msg = 'Recovery status file task mismatch %s:\n' + repr(s) + '\n' + repr(t)
                     if force:
                         logger.warning(msg, '-- proceeding anyway')
                     else:
@@ -987,7 +1001,7 @@ class Driver(Thread):
         self.engines = {}
         self.failed = 0
         self.finished = 0
-        self.statusFile = open(db_info.uniqueId + '_status.txt', 'w+')
+        self.statusFile = open(db_info.uniqueId + '_status.txt', 'w+', encoding='utf-8')
         if db_info.args.status_header:
             print(TaskReport.header, file=self.statusFile)
         self.statusLastOffset = self.statusFile.tell()
@@ -1157,7 +1171,7 @@ class Driver(Thread):
             elif msg == 'no more tasks':
                 self.noMoreTasks = True
                 logger.info('No more tasks: %d accepted', o)
-                self.barriers.append(TaskReport(TaskInfo(o, -1, -1, None, None, kind='D'), start=time.time()))
+                self.barriers.append(TaskReport(TaskInfo(o, -1, -1, b'#NO MORE TASKS BARRIER', None, kind='D'), start=time.time()))
                 # If no tasks where actually processed, we won't
                 # notice we are now done until the next heart beat, so
                 # send one now to speed things along.
@@ -1192,7 +1206,7 @@ class Driver(Thread):
                 tinfo = o
                 if tinfo.kind == 'P':
                     logger.info('Posting per engine task "%s" %s', tinfo.taskKey, tinfo)
-                    if tinfo.taskCmd == '#ENDLIST':
+                    if tinfo.taskCmd == b'#ENDLIST':
                         self.kvs.put(tinfo.taskKey, ('stop', None))
                     else:
                         self.kvs.put(tinfo.taskKey, ('task', tinfo))
@@ -1221,16 +1235,15 @@ class Driver(Thread):
                     tinfo = tReport.taskInfo
                     if tinfo.taskId in hbFails:
                         tinfo.kind = 'Z'
-                        report = str(tReport)
-                        logger.info('Zombie task done: %s', report)
-                        self.recordResult(report)
+                        logger.info('Zombie task done: %s', tReport)
+                        self.recordResult(tReport)
                         zombie = True
 
                 if not zombie:
-                    rc, report = tReport.returncode, str(tReport)
+                    rc = tReport.returncode
 
                     assert tinfo.kind in 'NPS'
-                    self.recordResult(report)
+                    self.recordResult(tReport)
 
                     if tinfo.kind != 'P':
                         # Track non-per-engine task completion.
@@ -1264,11 +1277,13 @@ class Driver(Thread):
                     # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than
                     # one per key
                     if self.trackResults:
-                        logging.debug('Tracking result key: %r, value: %r', self.trackResults, report)
+                        logging.debug('Tracking result key: %r, value: %s', self.trackResults, tReport)
                         # Maintain two data structures in KVS:
                         #    self.trackResults + <task id>: a table that maps from a finished task id to a json encoding of task information including return info
                         #    self.trackResults + ' done tasks': a set of task ids that have finished
-                        self.kvs.put(self.trackResults + f' {tinfo.taskId}'.encode('ascii'), json.dumps(tReport.reportDict()), b'JSON')
+                        rd = tReport.reportDict()
+                        rd['TaskCmd'] = rd['TaskCmd'].decode('utf-8', 'replace')
+                        self.kvs.put(self.trackResults + f' {tinfo.taskId}'.encode('utf-8'), json.dumps(rd), b'JSON')
                         self.kvs.put(self.trackResults + b' done tasks', str(tinfo.taskId), False)
                     if self.db_info.args.mailTo and self.finished%self.db_info.args.mailFreq == 0:
                         self.sendNotification()
@@ -1410,13 +1425,10 @@ class OutputCollector(Thread):
         except OSError:
             pass
 
-    def __str__(self):
+    def data(self):
         s = self.dataStart
         if self.dataEnd:
             s += b'...' + self.dataEnd
-        if type(s) is not str:
-            # for python3... would be better to keep raw bytes
-            s = s.decode('utf-8', 'ignore')
         return s
 
 # Once a context knows the nodes that it will be adding to a disBatch
@@ -1513,7 +1525,7 @@ class EngineBlock(Thread):
 
                     obp.stop()
                     ebp.stop()
-                    tr = TaskReport(ti, self.context.node, pid, r, t0, t1, obp.bytes, str(obp), ebp.bytes, str(ebp))
+                    tr = TaskReport(ti, self.context.node, pid, r, t0, t1, obp.bytes, obp.data().decode('utf-8', 'replace'), ebp.bytes, ebp.data().decode('utf-8', 'replace'))
                 except Exception as e:
                     self.taskProc = None
                     t1 = time.time()
@@ -1778,7 +1790,7 @@ def main(kvsq=None):
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, metavar='COMMAND', help='Tasks will come from the command specified via the KVS server (passed in the environment).')
         source.add_argument('--taskserver', nargs='?', default=False, metavar='HOST:PORT', help='Tasks will come from the KVS server.')
-        source.add_argument('taskfile', nargs='?', default=None, type=argparse.FileType('r', 1), help='File with tasks, one task per line ("-" for stdin)') #TODO: Change "-" remark?
+        source.add_argument('taskfile', nargs='?', default=None, type=argparse.FileType('rb', 1), help='File with tasks, one task per line ("-" for stdin)') #TODO: Change "-" remark?
         commonContextArgs = contextArgs(argp)
         args = argp.parse_args()
 
@@ -1876,7 +1888,7 @@ def main(kvsq=None):
                     taskProcess = TaskProcess(taskSource, args.taskcommand, shell=True, env=kvsenv, close_fds=True)
                 taskSource.waitForSignIn()
                 resultKey = taskSource.resultkey
-                logger.info('Task source name: '+taskSource.name.decode('utf8')) #TODO: Think about the decoding a bit more?
+                logger.info('Task source name: '+taskSource.name.decode('utf-8')) #TODO: Think about the decoding a bit more?
                 
         tasks = taskGenerator(taskSource)
 
