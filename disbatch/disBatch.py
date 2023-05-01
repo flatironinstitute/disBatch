@@ -1250,7 +1250,7 @@ class Driver(Thread):
                         # This is used to implement barriers.
                         finishedTasks[tinfo.taskId] = True
 
-                    if not zombie and tinfo.kind == 'N':
+                    if tinfo.kind == 'N':
                         outstanding.pop(tinfo.taskId)
 
                     # TODO: Count per engine?
