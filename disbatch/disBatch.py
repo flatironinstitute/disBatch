@@ -1790,7 +1790,7 @@ def main(kvsq=None):
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, metavar='COMMAND', help='Tasks will come from the command specified via the KVS server (passed in the environment).')
         source.add_argument('--taskserver', nargs='?', default=False, metavar='HOST:PORT', help='Tasks will come from the KVS server.')
-        source.add_argument('taskfile', nargs='?', default=None, type=argparse.FileType('rb', 1), help='File with tasks, one task per line ("-" for stdin)') #TODO: Change "-" remark?
+        source.add_argument('taskfile', nargs='?', default=None, type=argparse.FileType('rb'), help='File with tasks, one task per line ("-" for stdin)') #TODO: Change "-" remark?
         commonContextArgs = contextArgs(argp)
         args = argp.parse_args()
 
