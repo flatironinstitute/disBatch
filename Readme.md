@@ -265,7 +265,7 @@ While running this command, the follow environment variables will be set: `NODE`
 
 The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, `GPU_DEVICE_ORDINAL`) provided on each node and divides the resources between the running tasks.  For example, with SLURM, if you want to run 12 tasks concurrently, each using 3 CPUs and 1 GPU (that is, 12*3 CPUs and 12 GPUs total), you can do:
 
-    sbatch -n 12 -c 3 --gpus-per-tasks=1 -p gpu disBatch -g TaskFile
+    sbatch -n 12 -c 3 --gpus-per-task=1 -p gpu disBatch -g TaskFile
 
 `-S` Startup only mode. In this mode, `disBatch` starts up the task management system and then waits for execution resources to be added.
 <a id='user-content-startup'>At startup</a>, `disBatch` always generates a script `<Prefix>_dbUtil.sh`, where `<Prefix>` refers to the `-p` option or default, see above. We'll call this simply `dbUtils.sh` here,
