@@ -1910,7 +1910,7 @@ def main(kvsq=None):
 
         DbUtilPath = '%s_dbUtil.sh'%uniqueId
         fd = os.open(DbUtilPath, os.O_CREAT|os.O_TRUNC|os.O_WRONLY, 0o700)
-        os.write(fd, open(DisBatchRoot+'/disbatch/dbUtil.sh', 'r').read().format(DisBatchPython=DisBatchPython, DisBatchRoot=DisBatchRoot, DbUtilPath=DbUtilPath, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
+        os.write(fd, open(DisBatchRoot+'/disbatchc/dbUtil.sh', 'r').read().format(DisBatchPython=DisBatchPython, DisBatchRoot=DisBatchRoot, DbUtilPath=DbUtilPath, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
         os.close(fd)
 
         if not args.startup_only:
