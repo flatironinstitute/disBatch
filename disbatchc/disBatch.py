@@ -877,7 +877,7 @@ def taskGenerator(tasks):
                 g = m.group('step')
                 if g: step = int(g)
                 logger.info('Processing repeat: %d %d %d', repeats, rx, step)
-                cmd = prefix + (m.group('command') or '') + suffix
+                cmd = prefix + (m.group('command') or b'') + suffix
                 while repeats > 0:
                     yield TaskInfo(taskCounter, tsx, rx, cmd, '.task')
                     taskCounter += 1
