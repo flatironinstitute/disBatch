@@ -1,4 +1,4 @@
 [submodule "kvsstcp"]
-	path = disbatch/kvsstcp
+	path = disbatchc/kvsstcp
 	url = https://github.com/flatironinstitute/kvsstcp
 	branch = master

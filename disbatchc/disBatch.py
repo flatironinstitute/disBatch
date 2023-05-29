@@ -34,7 +34,7 @@ from threading import Thread
 DisBatchPython = sys.executable
 DbUtilPath = None # This is a global that will be set once the disBatch starts.
 
-from disbatch import kvsstcp
+from disbatchc import kvsstcp
 
 # Trim off "disbatch/kvsstcp/__init__.py"
 DisBatchRoot = os.path.sep.join(kvsstcp.__file__.split(os.path.sep)[:-3])

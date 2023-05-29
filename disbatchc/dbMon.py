@@ -2,7 +2,7 @@
 
 import curses, json, os, sys, time
 
-from disbatch.kvsstcp import KVSClient
+from disbatchc.kvsstcp import KVSClient
 from queue import Queue
 from threading import Thread
 
