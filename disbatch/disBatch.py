@@ -1786,6 +1786,7 @@ def main(kvsq=None):
         argp.add_argument('-R', '--retry', action='store_true', help='With -r, also retry any tasks which failed in previous runs (non-zero return).')
         argp.add_argument('-S', '--startup-only', action='store_true', help='Startup only the disBatch server (and KVS server if appropriate). Use "dbUtil..." script to add execution contexts. Incompatible with "--ssh-node".') #TODO: Add addDBExecContext file name override?
         argp.add_argument('--status-header', action='store_true', help="Add header line to status file.")
+        argp.add_argument('--use-address', default=None, metavar='HOST:PORT', help='Specify hostname and port to use for this run.')
         argp.add_argument('-w', '--web', action='store_true', help='Enable web interface.')
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument('--taskcommand', default=None, metavar='COMMAND', help='Tasks will come from the command specified via the KVS server (passed in the environment).')
@@ -1846,13 +1847,20 @@ def main(kvsq=None):
 
         if args.kvsserver is True:
             # start our own
-            kvsst = kvsstcp.KVSServerThread(socket.gethostname(), 0)
+            if args.use_address:
+                host, port = args.use_address.split(':')
+                port = int(port)
+            else:
+                host, port = socket.gethostname(), 0
+            kvsst = kvsstcp.KVSServerThread(host, port)
             kvsserver = '%s:%d'%kvsst.cinfo
             kvsinfotxt = uniqueId + '_kvsinfo.txt'
             with open(kvsinfotxt, 'w') as kvsi:
                 kvsi.write(kvsserver)
             kvsenv = kvsst.env()
         else:
+            if args.use_address:
+                logger.warning(f'--use-hostname={args.use_address} will be ignored. disBatch is not starting a KVS server.')
             # use one given (possibly via environment)
             kvsst = None
             kvsserver = args.kvsserver
