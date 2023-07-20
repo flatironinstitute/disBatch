@@ -5,7 +5,7 @@ Distributed processing of a batch of tasks.
 
 ## TL;DR
 
-Create a file `Tasks`:
+Create a file `Tasks` with a list of commands you want to run:
 
     myprog arg0 &> myprog_0.log
     myprog arg1 &> myprog_1.log
@@ -16,7 +16,7 @@ Then run:
 
     disBatch -s localhost:5 Tasks
 
-to execute all of the invocations in `Tasks`. `disBatch` will start the first five running concurrently on your local machine. When one finishes, the next will be started until all are done.
+to execute all of the command invocations in `Tasks`. `disBatch` will start the first five running concurrently on your local machine. When one finishes, the next will be started until all are done.
 
 Or run:
 
@@ -123,7 +123,7 @@ While disBatch is a python3 application, it can run tasks from any language envi
 
 The `_status.txt` file contains tab-delimited lines of the form:
 
-    314	315	-1	worker032	8016	0	10.0486528873	1458660919.78	1458660929.83	0	""	0	""	'cd /path/to/workdir ; myprog -a 3 -b 1 -c 4 > task_3_1_4.log 2>&1'
+    314	315	-1	worker032	8016	0	10.0486528873	1458660919.78	1458660929.83	0	""	0	""	cd /path/to/workdir ; myprog -a 3 -b 1 -c 4 > task_3_1_4.log 2>&1
 
 These fields are:
 
@@ -180,8 +180,8 @@ disBatch refers to a collection of execution resources as a *context* and the re
 ~~~~
 usage: disBatch [-h] [-e] [--force-resume] [--kvsserver [HOST:PORT]]
                 [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-p PATH]
-                [-r STATUSFILE] [-R] [-S] [--status-header] [-w]
-                [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
+                [-r STATUSFILE] [-R] [-S] [--status-header] [--use-address HOST:PORT]
+                [-w] [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
                 [-C TASK_LIMIT] [-c N] [--fill] [-g] [--no-retire]
                 [-l COMMAND] [--retire-cmd COMMAND] [-s HOST:COUNT] [-t N]
                 [taskfile]
@@ -218,6 +218,8 @@ optional arguments:
                         appropriate). Use "dbUtil..." script to add execution
                         contexts. Incompatible with "--ssh-node".
   --status-header       Add header line to status file.
+  --use-address HOST:PORT
+                        Specify hostname and port to use for this run.
   -w, --web             Enable web interface.
   --taskcommand COMMAND
                         Tasks will come from the command specified via the KVS
@@ -298,6 +300,8 @@ the login node of a cluster, or on your personal workstation (assuming it has th
 
 
 `-r` uses the status file of a previous run to determine what tasks to run during this disBatch invocation. Only those tasks that haven't yet run (or with `-R`, those that haven't run or did but returned a non-0 exit code) are run this time. By default, the numeric task identifier and the text of the command are used to determine if a current task is the same as one found in the status file. `--force-resume` restricts the comparison to just the numeric identifier.
+
+`--use-address HOST:PORT` can be used if disBatch is not able to determine the correct hostname for the machine it is running on (or you need to override what was detected). This is often the case when running on a personal laptop without a "real" network configuration. In this case `--use-address=localhost:0` will generally be sufficient.
 
 `--kvsserver`, `--taskcommand`, and `--taskserver` implement advanced functionality (placing disBatch in an existing shared key store context and allowing for a programmatic rather than textual task interface). Contact the authors for more details.
 
