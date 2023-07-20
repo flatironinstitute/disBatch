@@ -849,6 +849,7 @@ def taskGenerator(tasks):
                     OK = False
                     break
                 when, cmd = m.groups()
+                when = when.decode('ascii')
                 cmd = prefix + cmd + suffix
                 yield TaskInfo(peCounters[when], tsx, -1, cmd, '.per engine %s %d'%(when, peCounters[when]), kind='P')
                 peCounters[when] += 1
