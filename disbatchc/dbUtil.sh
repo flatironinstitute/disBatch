@@ -7,7 +7,7 @@ then
     exec {DisBatchPython} {DisBatchRoot:s}/disbatchc/dbMon.py {uniqueId:s}
 elif [[ $1 == '--engine' ]]
 then
-    exec {DisBatchPython} -c 'from disbatchc import disBatch ; disBatch.main()' "$@"
+    exec {DisBatchPython} {DisBatchRoot:s}/disBatch "$@"
 else
-    exec {DisBatchPython} -c 'from disbatchc import disBatch ; disBatch.main()' --context {DbUtilPath:} "$@" < /dev/null 1> {uniqueId:s}_${{BASHPID-$$}}_context_launch.log
+    exec {DisBatchPython} {DisBatchRoot:s}/disBatch --context {DbUtilPath:} "$@" < /dev/null 1> {uniqueId:s}_${{BASHPID-$$}}_context_launch.log
 fi
