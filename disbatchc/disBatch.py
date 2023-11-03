@@ -390,7 +390,7 @@ class SlurmContext(BatchContext):
             self.for_log.append(('Taking srun options from "%s".'%opt_file, logging.INFO))
             opts = open(opt_file).read().split('\n')
         else:
-            opts = ['SLURM_CPU_BIND=' + os.getenv('SLURM_CPU_BIND', 'cores')]
+            opts = ['SLURM_CPU_BIND=' + os.getenv('SLURM_CPU_BIND', 'cores'), 'SLURM_MPI_TYPE=none']
         if opts:
             self.for_log.append(('Adding srun options:', logging.INFO))
             for l in opts:
@@ -1596,7 +1596,7 @@ class EngineBlock(Thread):
     def joinWithHB(self, thr):
         while True:
             thr.join(timeout=PulseTime)
-            if not thr.isAlive(): break
+            if not thr.is_alive(): break
             # We are still running, collect and transmit heart beat data.
             hbs = []
             while True:
