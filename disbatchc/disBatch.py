@@ -1501,6 +1501,8 @@ class EngineBlock(Thread):
                     break
 
                 self.localEnv['DISBATCH_STREAM_INDEX'], self.localEnv['DISBATCH_REPEAT_INDEX'], self.localEnv['DISBATCH_TASKID'] = str(ti.taskStreamIndex), str(ti.taskRepIndex), str(ti.taskId)
+                self.localEnv['DISBATCH_STREAM_INDEX_ZP'], self.localEnv['DISBATCH_REPEAT_INDEX_ZP'], self.localEnv['DISBATCH_TASKID_ZP'] = '%06d'%ti.taskStreamIndex, '%06d'%ti.taskRepIndex, '%06d'%ti.taskId
+
                 logger.info('Cylinder %d executing %s.', self.cylinderRank, ti)
                 t0 = time.time()
                 try:
