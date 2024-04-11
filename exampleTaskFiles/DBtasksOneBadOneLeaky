@@ -47,8 +47,9 @@
 # empty repeat
 #DISBATCH REPEAT 0 start 1
 
+# use zero padding for env variables in file name.
 #DISBATCH BARRIER
-#DISBATCH SUFFIX ( echo "${DISBATCH_REPEAT_INDEX} running on" $(hostname) ; date ; sleep 10 ; date ; ) &> ${DISBATCH_NAMETASKS}_task_${DISBATCH_TASKID}_rx_${DISBATCH_REPEAT_INDEX}.log
+#DISBATCH SUFFIX ( echo "${DISBATCH_REPEAT_INDEX} running on" $(hostname) ; echo "Zero-padded stream index: ${DISBATCH_STREAM_INDEX_ZP}" ; date ; sleep 10 ; date ; ) &> ${DISBATCH_NAMETASKS}_task_${DISBATCH_TASKID_ZP}_rx_${DISBATCH_REPEAT_INDEX_ZP}.log
 #DISBATCH REPEAT 7 start 40
 
 # fail two in repeat
