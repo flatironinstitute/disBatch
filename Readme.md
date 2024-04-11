@@ -388,7 +388,7 @@ only the value that the repeat index will have in
 the environment for each of the repeat task instances. So, returning to our earlier example, the task file
 could be:
 
-    #DISBATCH PREFIX  ( cd /path/to/workdir ; a=$((DISBATCH_REPEAT_INDEX/100)) b=$(((DISBATCH_REPEAT_INDEX%100)/10 )) c=$((DISBATCH_REPEAT_INDEX%10)) ; myprog -a $a -b $b -c $c ) &> task_${a}_${b}_${c}.log
+    #DISBATCH PREFIX a=$((DISBATCH_REPEAT_INDEX/100)) b=$(((DISBATCH_REPEAT_INDEX%100)/10 )) c=$((DISBATCH_REPEAT_INDEX%10) ; ( cd /path/to/workdir ; source SetupEnv ) ; myprog -a $a -b $b -c $c ) &> task_${a}_${b}_${c}.log
     #DISBATCH REPEAT 1000
 
 This is not a model of clarity, but it does illustrate that the repeat constuct can be relatively powerful. Many users may find it more convenient to use the tool of their choice to generate a text file with 1000 invocations explictly written out.
