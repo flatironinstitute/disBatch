@@ -89,7 +89,15 @@ The task file would then contain:
     ./RunMyprog.sh 9_9_8 -a 9 -b 9 -c 8
     ./RunMyprog.sh 9_9_9 -a 9 -b 9 -c 9
 
-See [\#DISBATCH directives](#user-content-disbatch-directives) for ways to simplify task lines.
+See [\#DISBATCH directives](#user-content-disbatch-directives) for ways to simplify task lines. DisBatch also sets some environment variables that can be used in your commands as arguments or to generate task-specifc file names:
+
+* `DISBATCH_JOBID`: A name disBatch creates that should be unique to the job
+* `DISBATCH_NAMETASKS`: The basename of the task file
+* `DISBATCH_REPEAT_INDEX`: See the repeat construct in [\#DISBATCH directives](#user-content-disbatch-directives)
+* `DISBATCH_STREAM_INDEX`: The 1-based line number of the line from the task file that generated the task
+" `DISBATCH_TASKID`: 0-based sequential counter value that uniquely identifies each task
+
+Appending `_ZP` to any of the last three will produce a 0-padded value (to six places). If these variables are used to create file names, 0-padding will result in files names that sort correctly.
 
 Once you have created the task file, running disBatch is straightforward. For example, working with a cluster managed by SLURM,
 all that needs to be done is to submit a job like the following:
@@ -322,13 +330,13 @@ directory `13`, say, might hold all the files for tasks 13000 to
 ### PREFIX and SUFFIX
 
 In order to simplify task files, disBatch supports a couple of
-directives to specify common task prefix strings and suffix strings. It
-also provides environment variables to identify various aspects of the
+directives to specify common task prefix strings and suffix strings. As noted above, it
+also sets environment variables to identify various aspects of the
 submission. Here's an example
 
     # Note there is a space at the end of the next line.
     #DISBATCH PREFIX ( cd /path/to/workdir ; source SetupEnv ; 
-    #DISBATCH SUFFIX  ) &> ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID}.log
+    #DISBATCH SUFFIX  ) &> ${DISBATCH_NAMETASKS}_${DISBATCH_JOBID}_${DISBATCH_TASKID_ZP}.log
 
 These are textually prepended and appended, respectively, to the text of
 each subsequent task line. If the suffix includes redirection and a task is a proper command sequence (a series of
