@@ -1,0 +1,20 @@
+[project]
+name = "disbatch"
+version = "3.0.0"  # TODO dynamic
+description = "Dynamically distribute a list of tasks over a pool of compute resources"
+readme = "Readme.md"
+authors = [
+    { name = "Nick Carriero" },
+    { name = "Lehman Garrison", email = "lgarrison@flatironinstitute.org" },
+]
+requires-python = ">=3.9"
+dependencies = []
+license = { file = "LICENSE" }
+
+[project.scripts]
+disBatch = "disbatch:main"
+disbatch = "disbatch:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
