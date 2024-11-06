@@ -1,7 +1,8 @@
 #!/bin/env python3
 
 import sys
-from disbatchc import disBatch
+
+from disbatch import disBatch
 
 # This test script requires at least one argument: the number of tasks to run.
 # The rest, if any, are arguments that will be passed to disBatch:

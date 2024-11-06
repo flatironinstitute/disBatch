@@ -1,0 +1,9 @@
+/build/
+/dist/
+*.pyc
+*.o
+/kvsLoop
+/kvsTestWIc
+/kvsTestWIf
+/kvsTestf
+/.stack-work
