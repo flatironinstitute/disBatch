@@ -3,12 +3,12 @@ from ast import literal_eval
 from collections import defaultdict as DD
 from functools import partial
 import warnings
+import importlib.resources
 
-try:
-    from queue import Empty, Queue
-except ImportError:
-    from Queue import Empty, Queue
+from queue import Empty, Queue
 from threading import Thread
+
+from . import kvsstcp
 
 # During the course of a disBatch run, we are going to kick off a
 # number of subprocesses running this script. We have to ensure that
@@ -33,8 +33,6 @@ from threading import Thread
 
 DisBatchPython = sys.executable
 DbUtilPath = None # This is a global that will be set once the disBatch starts.
-
-from . import kvsstcp
 
 # Trim off "disbatch/kvsstcp/__init__.py"
 DisBatchRoot = os.path.sep.join(kvsstcp.__file__.split(os.path.sep)[:-3])
