@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import curses, json, os, sys, time
+import curses, json, os, sys, time, socket
 
 from disbatch.kvsstcp import KVSClient
 from queue import Queue
@@ -143,6 +143,7 @@ def display(S, kvsc, inq):
     tooSmall = curses.LINES < MinLines or curses.COLS < MinCols
     displayLines = curses.LINES - (HeaderLength+FooterLength)
 
+    engines = None  # TODO: we may be relying on this being populated before it's referenced below
     localEngineStatus = {}
 
     contentCursor, contentFirst, done = 0, 0, False
