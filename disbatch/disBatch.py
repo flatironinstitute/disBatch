@@ -684,7 +684,7 @@ class TaskReport:
                         kind = flags[0]
                     tc = fx('TaskCmd')
                     if tc.startswith("b'"):
-                        tc = liter_eval(tc)
+                        tc = literal_eval(tc)
                     else:
                         tc = tc.encode('utf-8')
                     ti = TaskInfo(int(fx('TaskId')), int(fx('TaskStreamIndex')), int(fx('TaskRepIndex')), tc, '', kind=kind)
