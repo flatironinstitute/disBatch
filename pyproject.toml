@@ -18,3 +18,11 @@ disbatch = "disbatch:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.ruff.format]
+quote-style = "single"
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0.1",
+]
