@@ -33,9 +33,6 @@ from . import kvsstcp
 
 DisBatchPython = sys.executable
 DbUtilPath = None # This is a global that will be set once the disBatch starts.
-
-# Trim off "disbatch/kvsstcp/__init__.py"
-DisBatchRoot = os.path.sep.join(kvsstcp.__file__.split(os.path.sep)[:-3])
     
 myHostname = socket.gethostname()
 myPid = os.getpid()
@@ -1928,10 +1925,9 @@ def main(kvsq=None):
             wskvsmu.main(kvsserver, urlfile=open(urlfile, 'w'), monitorspec=':gpvw')
 
         DbUtilPath = '%s_dbUtil.sh'%uniqueId
-        fd = os.open(DbUtilPath, os.O_CREAT|os.O_TRUNC|os.O_WRONLY, 0o700)
-        # TODO: package resources
-        os.write(fd, open(DisBatchRoot+'/disbatch/dbUtil.template.sh', 'r').read().format(DisBatchPython=DisBatchPython, DisBatchRoot=DisBatchRoot, DbUtilPath=DbUtilPath, kvsserver=kvsserver, uniqueId=uniqueId).encode('ascii'))
-        os.close(fd)
+        dbutil_template =  importlib.resources.files('disbatch').joinpath('dbUtil.template.sh').read_text()
+        with open(DbUtilPath, 'w', opener=partial(os.open, mode=0o700)) as fd:
+            fd.write(dbutil_template.format(DisBatchPython=DisBatchPython, DbUtilPath=DbUtilPath, kvsserver=kvsserver, uniqueId=uniqueId))
 
         if not args.startup_only:
             # Is there a cleaner way to do this?
