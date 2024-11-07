@@ -12,21 +12,22 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
         with:
-          submodules: 'recursive'
+          version: "0.4.30"
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v4
-
         with:
           python-version: ${{ matrix.python-version }}
-      
-      - name: Install dependencies
+
+      - name: Install the project
         run: |
-          python -m pip install -U pip
-          pip install -v .
+          uv sync --all-extras --dev
           
       - name: Run local-mode (ssh) test
-        working-directory: tests/test_ssh/
+        working-directory: ./tests/test_ssh
         run: |
-          bash run.sh
+          uv run ./run.sh
