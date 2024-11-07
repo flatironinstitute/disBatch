@@ -1,6 +1,6 @@
 name: Dist
 
-on: [push, release]  # TODO: change to just release
+on: [release]
 
 jobs:
   build:
@@ -30,7 +30,7 @@ jobs:
         cd tests/test_ssh
         ./run.sh
 
-    - name: Test wheels
+    - name: Test sdist
       run: |
         uv venv --no-project testsdist
         . testsdist/bin/activate
