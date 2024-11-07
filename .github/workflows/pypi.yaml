@@ -1,0 +1,67 @@
+name: Dist
+
+on: [push, release]  # TODO: change to just release
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "0.4.30"
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version-file: ".python-version"
+
+    - name: Build
+      run: uv build
+
+    - name: Test wheels
+      run: |
+        uv venv --no-project testwhl
+        . testwhl/bin/activate
+        uv pip install dist/*.whl
+        cd tests/test_ssh
+        ./run.sh
+
+    - name: Test wheels
+      run: |
+        uv venv --no-project testsdist
+        . testsdist/bin/activate
+        uv pip install dist/*.tar.gz
+        cd tests/test_ssh
+        ./run.sh
+
+    - name: Upload dist artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: dists
+        path: dist/*
+
+  upload:
+    name: Upload
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+    - name: Install uv
+      uses: astral-sh/setup-uv@v3
+      with:
+        version: "0.4.30"
+
+    - name: Download dist artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: dists
+        path: dist
+    
+    - name: Publish
+      run: uv publish

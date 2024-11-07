@@ -1,6 +1,6 @@
 [project]
 name = "disbatch"
-version = "3.0.0"  # TODO dynamic
+version = "3.0.0rc1"  # TODO dynamic
 description = "Dynamically distribute a list of tasks over a pool of compute resources"
 readme = "Readme.md"
 authors = [
