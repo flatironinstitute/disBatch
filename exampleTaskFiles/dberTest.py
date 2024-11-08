@@ -11,7 +11,7 @@ from disbatch import disBatch
 #
 #      dberTest.py 15 -s localhost:5
 #
-#  - If testing via a SLURM submission, disBatch will auto detect
+#  - If testing via a Slurm submission, disBatch will auto detect
 #    that, so no additional arguments are needed
 #
 NumTasks = int(sys.argv[1])

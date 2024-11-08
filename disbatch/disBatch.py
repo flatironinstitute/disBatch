@@ -326,7 +326,7 @@ def nl2flat(nl):
 
 
 class SlurmContext(BatchContext):
-    # Example SLURM environment
+    # Example Slurm environment
     # $ salloc -c 5 -n 10 --ntasks-per-node=3 -p scc -t 0-1
     # SLURM_CPUS_PER_TASK=5                                    ;; set if -c is specified
     # SLURM_TASKS_PER_NODE=3(x4)
@@ -344,9 +344,7 @@ class SlurmContext(BatchContext):
     # SLURM_NPROCS=12
     # SLURM_JOB_ID=1568029
 
-    ThrottleTime = (
-        10  # To avoid spamming SLURM, send retirement requests at a minimum interval of ThrottleTime seconds.
-    )
+    ThrottleTime = 10  # To avoid spamming Slurm, send retirement requests at a minimum interval of ThrottleTime seconds.
 
     # Cannot pickle the throttle stuff.
     def __getstate__(self):
@@ -460,7 +458,7 @@ class SlurmContext(BatchContext):
 
         contextLabel = args.label if args.label else 'J%s' % jobid
         super(SlurmContext, self).__init__(
-            'SLURM', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel
+            'Slurm', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel
         )
         self.driverNode = None
         self.retireCmd = 'scontrol update JobId="$SLURM_JOBID" NodeList="${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE"'
@@ -469,11 +467,11 @@ class SlurmContext(BatchContext):
         self.throttle_thread.start()
 
     def engine_start(tag):
-        # For a SLURM context, we use srun to start up independent
-        # task servers. This ensures they get the resources SLURM
+        # For a Slurm context, we use srun to start up independent
+        # task servers. This ensures they get the resources Slurm
         # intends each task to have. Each engine cylinder has an
         # associated task server that executes tasks on its behalf
-        # using the resources assigned by SLURM.
+        # using the resources assigned by Slurm.
 
         # Each cylinder communicates with its task server using a
         # collection of named pipes to send tasks to and get per-task
@@ -551,11 +549,11 @@ class SlurmContext(BatchContext):
 
     def launchNode(self, n):
         lfp = '%s_%s_%s_engine_wrap.log' % (self.dbInfo.uniqueId, self.label, n)
-        # To convince SLURM to give us the right gres, request the right number of tasks.
+        # To convince Slurm to give us the right gres, request the right number of tasks.
         nx = self.nodes.index(n)
         tasks = self.cylinders[nx]
         if self.stpnl[nx] != tasks:
-            logging.warning(f'SLURM believes tasks should be {self.stpnl[nx]}, attempting to run {tasks}.')
+            logging.warning(f'Slurm believes tasks should be {self.stpnl[nx]}, attempting to run {tasks}.')
         # srun the appropriate number of task servers for this node. 0-rank will fork off the engine proper.
         # The logic for this is in SlurmContext.engine_start.
         # SLURM_CPU_BIND is set in the environment, since the user might want to override that
