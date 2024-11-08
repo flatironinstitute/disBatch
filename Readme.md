@@ -1,51 +1,57 @@
+# disBatch
+
 Distributed processing of a batch of tasks.
-===========================================
 
 [![Tests](https://github.com/flatironinstitute/disBatch/actions/workflows/tests.yaml/badge.svg)](https://github.com/flatironinstitute/disBatch/actions/workflows/tests.yaml)
 
-## TL;DR
+## Quickstart
 
-Create a file `Tasks` with a list of commands you want to run:
+Install with pip:
+
+    pip install disbatch
+
+Create a file `Tasks` with a list of commands you want to run. These should be Bash commands like one would run on the command line:
 
     myprog arg0 &> myprog_0.log
     myprog arg1 &> myprog_1.log
     ...
     myprog argN &> myprog_N.log
 
-Then run:
+Then, to run 5 tasks at a time in parallel on your local machine, run:
 
     disBatch -s localhost:5 Tasks
 
-to execute all of the command invocations in `Tasks`. `disBatch` will start the first five running concurrently on your local machine. When one finishes, the next will be started until all are done.
+`disBatch` will start the first five running concurrently. When one finishes, the next will be started until all are done.
 
-Or run:
+Or, to distribute this work on a Slurm cluster, run:
 
     sbatch -n 5 disBatch Tasks
 
-to execute the tasks using computational resources allocated via SLURM. (Of course, you may need to provide additional SLURM arguments to specify a partition, time limit, etc, and see the [discussion](#user-content-installation) about PYTHONPATH.)
+You may need to provide additional arguments specific to your cluster to specify a partition, time limit, etc.
   
 ## Overview
 
 One common usage pattern for distributed computing involves processing a
 long list of commands (aka *tasks*):
 
-    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 0 -b 0 -c 0 ) &> task_0_0_0.log
-    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 0 -b 0 -c 1 ) &> task_0_0_1.log
+    myprog -a 0 -b 0 -c 0
+    myprog -a 0 -b 0 -c 1
     ...
-    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 9 -b 9 -c 8 ) &> task_9_9_8.log
-    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 9 -b 9 -c 9 ) &> task_9_9_9.log
+    myprog -a 9 -b 9 -c 9
 
+This represents a file with 1000 lines; the `...` is just a stand-in and wouldn't literally be in the task file.
 
-
-One could do this by submitting 1,000 separate jobs to a cluster computer, but that may
+One could run this by submitting 1,000 separate jobs to a cluster, but that may
 present problems for the queuing system and can behave badly if the
 system is configured to handle jobs in a simple first come, first serve
-fashion.
+fashion.  For short tasks, the job launch overhead may dominate the runtime, too.
 
-Another alternative is to use a resource management system's native
-support for job arrays, but this often requires massaging the commands
-to reflect syntax specific to a particular system's implementation of
-job arrays.
+One could simplify this by using, e.g., Slurm job arrays, but each job in a job
+array is an independent Slurm job, so this suffers from the same per-job overheads
+as if you submitted 1000 independent jobs. Furthermore, if nodes are being allocated
+exclusively (i.e. the nodes that are allocated to your job are not shared by other jobs),
+then the job array approach can hugely underutilize the compute resources unless each
+task is using a full node's worth of resources.
 
 And what if you don't have a cluster available, but do have a collection of networked computers? Or you just want to make use of multiple cores on your own computer?
 
@@ -58,17 +64,45 @@ portable way, as well as to provide the sort of metadata that can be
 helpful for debugging and reissuing failed tasks.
 
 It can take as input a file, each of whose lines is a task in the form of a
-command sequence. For example, the file could consists of the 1000 commands listed above. It launches the tasks one
+Bash command. For example, the file could consists of the 1000 commands listed above. It launches the tasks one
 after the other until all specified execution resources are in use. Then as one
 executing task exits, the next task in the file is launched. This repeats until all
 the lines in the file have been processed.
 
-Each task is run in a new shell. If you want to manipulate the execution environment of a task, add the appropriate operations to the command sequence&mdash;`source SetupEnv` in the
-above is one example. For another, if you just need to set an environment variable, each task line would look something like:
+Each task is run in a new shell; i.e. all lines are independent of one another. 
+
+Here's a more complicated example, demonstrating controlling the execution environment and capturing the output of the tasks:
+
+    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 0 -b 0 -c 0 ) &> task_0_0_0.log
+    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 0 -b 0 -c 1 ) &> task_0_0_1.log
+    ...
+    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 9 -b 9 -c 8 ) &> task_9_9_8.log
+    ( cd /path/to/workdir ; source SetupEnv ; myprog -a 9 -b 9 -c 9 ) &> task_9_9_9.log
+
+Each line uses standard Bash syntax. Let's break it down:
+
+1. the `( ... ) &> task_0_0_0.log` captures all output (stdout and stderr) from any command in the parentheses and writes it to `task_0_0_0.log`;
+2. `cd /path/to/workdir` changes the working directory;
+3. `source SetupEnv` executes a script called `SetupEnv`, which could contain commands like `export PATH=...` or `module load ...` to set up the environment;
+4. `myprog -a 0 -b 0 -c 0` is the command you want to run.
+
+The semicolons between the last 3 statements are Bash syntax to run a series of commands on the same line.
+
+You can simplify this kind of task file with the `#DISBATCH PREFIX` and `#DISBATCH SUFFIX` directives. See the [#DISBATCH directives](#disbatch-directives) section for full details, but here's how that could look:
+
+    #DISBATCH PREFIX ( cd /path/to/workdir ; source SetupEnv ; myprog 
+    #DISBATCH SUFFIX ) &> task_${DISBATCH_TASKID}.log
+    -a 0 -b 0 -c 0
+    -a 0 -b 0 -c 1
+    ...
+    -a 9 -b 9 -c 9
+
+
+Note that for a simple environment setup, you don't need a `source SetupEnv`. You can just set an environment variable directly in the task line, as you can in Bash:
 
     export LD_LIBRARY_PATH=/d0/d1/d2:$LD_LIBRARY_PATH ; rest ; of ; command ; sequence
     
-Or, for more complex set ups, command sequences and input/output redirection requirements, you could place everything in a small shell script with appropriate arguments for the parts that vary from task to task, say `RunMyprog.sh`:
+For more complex set ups, command sequences and input/output redirection requirements, you could place everything in a small shell script with appropriate arguments for the parts that vary from task to task, say `RunMyprog.sh`:
 
     #!/bin/bash
     
@@ -89,7 +123,7 @@ The task file would then contain:
     ./RunMyprog.sh 9_9_8 -a 9 -b 9 -c 8
     ./RunMyprog.sh 9_9_9 -a 9 -b 9 -c 9
 
-See [\#DISBATCH directives](#user-content-disbatch-directives) for ways to simplify task lines. DisBatch also sets some environment variables that can be used in your commands as arguments or to generate task-specifc file names:
+See [#DISBATCH directives](#user-content-disbatch-directives) for more ways to simplify task lines. disBatch also sets some environment variables that can be used in your commands as arguments or to generate task-specifc file names:
 
 * `DISBATCH_JOBID`: A name disBatch creates that should be unique to the job
 * `DISBATCH_NAMETASKS`: The basename of the task file
@@ -99,14 +133,14 @@ See [\#DISBATCH directives](#user-content-disbatch-directives) for ways to simpl
 
 Appending `_ZP` to any of the last three will produce a 0-padded value (to six places). If these variables are used to create file names, 0-padding will result in files names that sort correctly.
 
-Once you have created the task file, running disBatch is straightforward. For example, working with a cluster managed by SLURM,
+Once you have created the task file, running disBatch is straightforward. For example, working with a cluster managed by Slurm,
 all that needs to be done is to submit a job like the following:
 
     sbatch -n 20 -c 4 disBatch TaskFileName
 
 This particular invocation will allocate sufficient resources to process
 20 tasks at a time, each of which needs 4 cores.
-disBatch will use environment variables initialized by SLURM to determine the execution resources to use for the run.
+disBatch will use environment variables initialized by Slurm to determine the execution resources to use for the run.
 This invocation assumes an appropriately installed disBatch is in your PATH, see [installation](#user-content-installation) for details.
 
 disBatch also allows the pool of execution resources to be increased or decreased during the course of a run:
@@ -117,7 +151,7 @@ will add enough resources to run 10 more tasks concurrently. `TaskFileName_dbUtl
 
 Various log files will be created as the run unfolds:
 
-* `TaskFileName_*_status.txt`: status of every task (details below). `*` elides a unique identifier disBatch creates to distinguish one run from another
+* `TaskFileName_*_status.txt`: status of every task (details below). `*` elides a unique identifier disBatch creates to distinguish one run from another. This is the most important output file and we recommend checking it after every run.
 * `TaskFileName_*_[context|driver|engine].log`:
   The disBatch driver log file contains details mostly of interest in case of a
   problem with disBatch itself. (The driver log file name can be changed with `-l`). It can generally be ignored by end
@@ -125,11 +159,14 @@ Various log files will be created as the run unfolds:
   wrong&mdash;it will aid debugging). The `*_[context|engine].log` files contain similar information for the disBatch components that manage execution resources.
 * `disBatch_*_kvsinfo.txt`: TCP address of invoked KVS server if any (for additional advanced status monitoring)
 
-While disBatch is a python3 application, it can run tasks from any language environment&mdash;anything you can run from a shell, can be run as a task.
+> [!TIP]
+> The `*_status.txt` file is the most important disBatch output file and we recommend checking it after every run.
+
+While disBatch is a Python 3 application, it can run tasks from any language environment&mdash;anything you can run from a shell can be run as a task.
 
 ### Status file
 
-The `_status.txt` file contains tab-delimited lines of the form:
+The status file is the most important disBatch output file and we recommend checking it after every run. The filename is `TaskFileName_*_status.txt`. It contains tab-delimited lines of the form:
 
     314	315	-1	worker032	8016	0	10.0486528873	1458660919.78	1458660929.83	0	""	0	""	cd /path/to/workdir ; myprog -a 3 -b 1 -c 4 > task_3_1_4.log 2>&1
 
@@ -147,8 +184,8 @@ These fields are:
   1. PID: `8016` is the PID of the bash shell used to run the task.
   1. Exit code: `0` is the exit code returned.
   1. Elapsed time: `10.0486528873` (seconds),
-  1. Start time:`1458660919.78` (epoch based),
-  1. Finish time: `1458660929.83` (epoch based).
+  1. Start time:`1458660919.78` (Unix epoch based),
+  1. Finish time: `1458660929.83` (Unix epoch based).
   1. Bytes of *leaked* output (not redirected to a file),
   1. Output snippet (up to 80 bytes consisting of the prefix and suffix of the output),
   1. Bytes of leaked error output,
@@ -158,17 +195,83 @@ These fields are:
 
 ## Installation
 
-**Users of Flatiron resources: disBatch is available via the module system. You do not need to clone this repo to use it.**
+**Users of Flatiron clusters: disBatch is available via the module system. You can run `module load disBatch` instead of installing it.**
 
-disBatch requires the `kvsstcp` package, which should be installed in python's path, or placed in this directory.
-You can simply clone this git repository with `--recursive` (or run `git submodule update --init` if you've already cloned it) to get both.
-No additional installation steps are required, but you can use `pip` to add it to a particular python installation.
+There are several ways to get disBatch:
 
-You can run `disBatch` directly from the top level directory of the git clone, but depending on your execution environment (e.g., when using SLURM), the ability of disBatch to determine the location of itself and kvsstcp may be disrupted. To avoid such problems, set the environment variable `PYTHONPATH` to include the path of the git clone (the directory containing this "Readme.md" file) or install with pip and invoke `disBatch` from that installation in your SLURM submission.
+  1. installation with pip;
+  1. direct invocation with pipx or uvx;
+  1. cloning the repo.
+
+Most users can install via pip. Direct invocation with uvx may be of particular interest for users on systems without a modern Python, as uvx will bootstrap Python for you.
+  
+### Installation with pip
+You can use pip to install disbatch just like a normal Python package:
+
+  1. from PyPI: `pip install disbatch`
+  2. from GitHub: `pip install git+https://github.com/flatironinstitute/disBatch.git`
+
+These should be run in a venv. Installing with `pip install --user disbatch` may work instead, but as a general practice is discouraged.
+
+After installation, disBatch will be available via the `disbatch` and `disBatch` executables on the `PATH` so long as the venv is activated. Likewise, disBatch can be run as a module with `python -m disbatch`.
+
+<details>
+<summary>Click here for a complete example using pip and venv</summary>
+
+You'll need a modern Python to install disBatch this way. We recommend the uvx installation method below if you don't have one, as uv will boostrap Python for you.
+
+```
+python -m venv venv
+. venv/bin/activate
+pip install disbatch
+disbatch TaskFile
+```
+</details>
+
+### Direct invocation with pipx or uvx
+
+[pipx](https://pipx.pypa.io/stable/) and [uvx](https://docs.astral.sh/uv/guides/tools/) are two tools that will create an isolated venv, download and install disbatch into that venv, and run it all in a single command:
+
+  1. `pipx disbatch TaskFile`
+  1. `uvx disbatch TaskFile`
+
+pipx already requires a somewhat modern Python, so for disbatch's purposes it just saves you the step of creating and activating a venv and installing disBatch.
+
+uvx, on the other hand, will download a modern Python for you if you don't have one available locally. It requires [installing uv](https://docs.astral.sh/uv/getting-started/installation/), which is a statically-linked executable.
+
+Here's a complete example of running disbatch on a system without modern Python:
+
+```
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+uvx disbatch TaskFile
+```
+
+Afterwards, disbatch will always be available as `uvx disbatch`.
+
+For Slurm users, note that the above will install disbatch into the user's default cache directory. If this directory is not visible to all nodes on the cluster, then disbatch jobs will fail. One can specify a different cache directory with `uvx --cache-dir=...`, but the simplest fix is to do a `tool install`:
+
+```
+uv tool install disbatch
+sbatch disbatch TaskFile
+```
+
+This places `disbatch` on the `PATH` in a persistent location; no need to use `uvx` anymore.
+
+
+### Cloning the repo
+Users or developers who want to work on the code should clone the repo then do an editable install into a venv:
+
+```
+git clone https://github.com/flatironinstitute/disBatch.git
+pip install -e ./disBatch
+```
+
+Setting `PYTHONPATH` may also work, but as a general practice is discouraged. If you don't have a modern Python available, [uv](https://docs.astral.sh/uv/getting-started/installation/) can bootstrap one for you.
 
 ## Execution Environments
 disBatch is designed to support a variety of execution environments, from your own desktop, to a local collection of workstations, to large clusters managed by job schedulers.
-It currently supports SLURM and can be executed from `sbatch`, but it is architected to make it simple to add support for other resource managers.
+It currently supports Slurm and can be executed from `sbatch`, but it is architected to make it simple to add support for other resource managers.
 
 You can also run directly on one or more machines by setting an environment variable:
 
@@ -182,16 +285,18 @@ This allows execution directly on your `localhost` and via ssh for remote hosts 
 In this example, disBatch is told it can use seven CPUs on your local host and three on `otherhost`. Assuming the default mapping of one task to one CPU applies in this example, seven tasks could be in progress at any given time on `localhost`, and three on `otherhost`. Note that `localhost` is an actual name you can use to refer to the machine on which you are currently working. `otherhost` is fictious. 
 Hosts used via ssh must be set up to allow ssh to work without a password and must share the working directory for the disBatch run.
 
-disBatch refers to a collection of execution resources as a *context* and the resources proper as *engines*. So the SLURM example `sbatch -n 20 -c 4`, run on a cluster with 16-core nodes, might create one context with five engines (one each for five 16-core nodes, capable of running four concurrent 4-core tasks each), while the SSH example creates one context with two engines (capable of running seven and three concurrent tasks, respectively).
+disBatch refers to a collection of execution resources as a *context* and the resources proper as *engines*. So the Slurm example `sbatch -n 20 -c 4`, run on a cluster with 16-core nodes, might create one context with five engines (one each for five 16-core nodes, capable of running four concurrent 4-core tasks each), while the SSH example creates one context with two engines (capable of running seven and three concurrent tasks, respectively).
 
 ## Invocation
-~~~~
-usage: disBatch [-h] [-e] [--force-resume] [--kvsserver [HOST:PORT]]
-                [--logfile FILE] [--mailFreq N] [--mailTo ADDR] [-p PATH]
-                [-r STATUSFILE] [-R] [-S] [--status-header] [--use-address HOST:PORT]
-                [-w] [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
-                [-C TASK_LIMIT] [-c N] [--fill] [-g] [--no-retire]
-                [-l COMMAND] [--retire-cmd COMMAND] [-s HOST:COUNT] [-t N]
+```
+usage: disbatch [-h] [-e] [--force-resume] [--kvsserver [HOST:PORT]]
+                [--logfile FILE]
+                [--loglevel {CRITICAL,ERROR,WARNING,INFO,DEBUG}] [--mailFreq N]
+                [--mailTo ADDR] [-p PATH] [-r STATUSFILE] [-R] [-S]
+                [--status-header] [--use-address HOST:PORT] [-w]
+                [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
+                [-C TASK_LIMIT] [-c N] [--fill] [-g] [--no-retire] [-l COMMAND]
+                [--retire-cmd COMMAND] [-s HOST:CORECOUNT] [-t N]
                 [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
@@ -199,24 +304,25 @@ Use batch resources to process a file of tasks, one task per line.
 positional arguments:
   taskfile              File with tasks, one task per line ("-" for stdin)
 
-optional arguments:
+options:
   -h, --help            show this help message and exit
-  -e, --exit-code       When any task fails, exit with non-zero status
-                        (default: only if disBatch itself fails)
+  -e, --exit-code       When any task fails, exit with non-zero status (default:
+                        only if disBatch itself fails)
   --force-resume        With -r, proceed even if task commands/lines are
                         different.
   --kvsserver [HOST:PORT]
                         Use a running KVS server.
   --logfile FILE        Log file.
+  --loglevel {CRITICAL,ERROR,WARNING,INFO,DEBUG}
+                        Logging level (default: INFO).
   --mailFreq N          Send email every N task completions (default: 1). "--
                         mailTo" must be given.
   --mailTo ADDR         Mail address for task completion notification(s).
   -p PATH, --prefix PATH
                         Path for log, dbUtil, and status files (default: ".").
-                        If ends with non-directory component, use as prefix
-                        for these files names (default:
-			  <Taskfile>_disBatch_<YYYYMMDDhhmmss>_<Random>
-			).
+                        If ends with non-directory component, use as prefix for
+                        these files names (default:
+                        <Taskfile>_disBatch_<YYYYMMDDhhmmss>_<Random>).
   -r STATUSFILE, --resume-from STATUSFILE
                         Read the status file from a previous run and skip any
                         completed tasks (may be specified multiple times).
@@ -234,7 +340,6 @@ optional arguments:
                         server (passed in the environment).
   --taskserver [HOST:PORT]
                         Tasks will come from the KVS server.
-context specific arguments:
   -C TASK_LIMIT, --context-task-limit TASK_LIMIT
                         Shutdown after running COUNT tasks (0 => no limit).
   -c N, --cpusPerTask N
@@ -242,23 +347,23 @@ context specific arguments:
                         (default: 1).
   --fill                Try to use extra cores if allocated cores exceeds
                         requested cores.
-  -g, --gpu             Use assigned GPU resources
+  -g, --gpu             Use assigned GPU resources [DEPRECATED]
   --no-retire           Don't retire nodes from the batch system (e.g., if
-                        running as part of a larger job); equivalent to -k ''.
+                        running as part of a larger job).
   -l COMMAND, --label COMMAND
                         Label for this context. Should be unique.
   --retire-cmd COMMAND  Shell command to run to retire a node (environment
                         includes $NODE being retired, remaining $ACTIVE node
                         list, $RETIRED node list; default based on batch
                         system). Incompatible with "--ssh-node".
-  -s HOST:COUNT, --ssh-node HOST:COUNT
-                        Run tasks over SSH on the given nodes (can be
-                        specified multiple times for additional hosts;
-                        equivalent to setting DISBATCH_SSH_NODELIST)
+  -s HOST:CORECOUNT, --ssh-node HOST:CORECOUNT
+                        Run tasks over SSH on the given nodes (can be specified
+                        multiple times for additional hosts; equivalent to
+                        setting DISBATCH_SSH_NODELIST)
   -t N, --tasksPerNode N
                         Maximum concurrently executing tasks per node (up to
                         cores/cpusPerTask).
-~~~~
+```
 
 The options for mail will only work if your computing environment permits processes to access mail via SMTP.
 
@@ -273,20 +378,16 @@ which will tell slurm to release any nodes no longer being used.
 You can set this to run a different command, or nothing at all.
 While running this command, the follow environment variables will be set: `NODE` (the node that is no longer needed), `ACTIVE` (a comma-delimited list of nodes that are still active), `RETIRED` (a comma-delimited list of nodes that are no longer active, including `$NODE`), and possibly `DRIVER_NODE` (the node still running the main disBatch script, if it's not in `ACTIVE`).
 
-The `-g` argument parses the CUDA environment varables (`CUDA_VISIBLE_DEVICES`, `GPU_DEVICE_ORDINAL`) provided on each node and divides the resources between the running tasks.  For example, with SLURM, if you want to run 12 tasks concurrently, each using 3 CPUs and 1 GPU (that is, 12*3 CPUs and 12 GPUs total), you can do:
-
-    sbatch -n 12 -c 3 --gpus-per-task=1 -p gpu disBatch -g TaskFile
-
 `-S` Startup only mode. In this mode, `disBatch` starts up the task management system and then waits for execution resources to be added.
 <a id='user-content-startup'>At startup</a>, `disBatch` always generates a script `<Prefix>_dbUtil.sh`, where `<Prefix>` refers to the `-p` option or default, see above. We'll call this simply `dbUtils.sh` here,
 but remember to include `<Prefix>_` in actual use. You can add execution resources by doing one or more of the following multiple times:
 1. Submit `dbUtils.sh` as a job, e.g.:
 
-    sbatch -n 40 dbUtil.sh
+    `sbatch -n 40 dbUtil.sh`
 
 2. Use ssh, e.g.:
 
-    ./dbUtil.sh -s localhost:4,friendlyNeighbor:5
+    `./dbUtil.sh -s localhost:4,friendlyNeighbor:5`
 
 Each of these creates an execution context, which contains one of more execution engines (if using, for example, 8-core nodes, then five for the first; two in the second).
 An engine can run one or more tasks currently. In the first example, each of the five engines will run up to eight tasks concurrently, while in the
@@ -325,7 +426,7 @@ that the files can be divided into smaller groups. Intermediate
 directory `13`, say, might hold all the files for tasks 13000 to
 13999.
 
-## \#DISBATCH directives
+## #DISBATCH directives
 
 ### PREFIX and SUFFIX
 
@@ -383,17 +484,20 @@ will exit once this barrier is met.
 
 For those problems that are easily handled via a job-array-like approach:
 
-     #DISBATCH REPEAT 5 start 100 step 50 [command]
+    #DISBATCH REPEAT 5 myprog file${DISBATCH_REPEAT_INDEX}
 
 will expand into five tasks, each with the environment variable
-`DISBATCH_REPEAT_INDEX` set to one of 100, 150, 200, 250, or 300.
-The tasks will consist of the concatenation of the prefix, command (if provided),
-and the suffix currently in effect. `start` defaults to 0, `step`
-to 1. Note: the semantics here differ somewhat from many range
-constructs, the number immediately following `REPEAT` sets the
-number of tasks that will be executed; the next two numbers affect
-only the value that the repeat index will have in
-the environment for each of the repeat task instances. So, returning to our earlier example, the task file
+`DISBATCH_REPEAT_INDEX` set to one of 0, 1, 2, 3 or 4.
+
+The starting index and step size can also be changed:
+
+    #DISBATCH REPEAT 5 start 100 step 50 myprog file${DISBATCH_REPEAT_INDEX}
+
+This will result in indices 100, 150, 200, 250, and 300. `start` defaults
+to 0, and `step` to 1.
+
+The command is actually optional; one might want to omit the command
+if a prefix and/or suffix are in place. Returning to our earlier example, the task file
 could be:
 
     #DISBATCH PREFIX a=$((DISBATCH_REPEAT_INDEX/100)) b=$(((DISBATCH_REPEAT_INDEX%100)/10 )) c=$((DISBATCH_REPEAT_INDEX%10) ; ( cd /path/to/workdir ; source SetupEnv ; myprog -a $a -b $b -c $c ) &> task_${a}_${b}_${c}.log
@@ -422,7 +526,7 @@ The "DisBatcher" class (defined in `disbatch/disBatch.py`) illustrates how to in
 
 ## License
 
-Copyright 2017 Simons Foundation
+Copyright 2024 Simons Foundation
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
