@@ -20,6 +20,8 @@ https://github.com/flatironinstitute/disBatch/pull/32
 - Set up linting and formatting
 - The executable can be invoked as `disbatch` or `disBatch`
 - Refreshed the readme
+- Added `disbatch --version` and `disbatch.__version__`
+- Added MacOS test
 
 ### Changes
 - `kvsstcp` submodule is now vendored
