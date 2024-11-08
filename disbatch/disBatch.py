@@ -22,29 +22,9 @@ from threading import Thread
 
 from . import kvsstcp
 
-# During the course of a disBatch run, we are going to kick off a
-# number of subprocesses running this script. We have to ensure that
-# those subprocesses have the right environment to find the disbatch
-# module. There are four common execution scenarios:
-#
-#   {Direct, SLURM} invocation of {git checkout, pip install}
-#
-# The direct cases should just work since the invocation script is
-# located in the right position relative to the module.
-#
-# For SLURM, we have to jump through some hoops to deal with SLURM's
-# policy of copying the submission script to a SLURM specific
-# location, breaking the relationship with the location of the
-# module. In the git checkout case, the user needs to set PYTHONPATH
-# to include the path to the "disbatch" subdir of the repo
-# checkout. In the pip install case, we can leverage the fact that pip
-# replaces the #! interpreter with the path to the python used to do
-# the install. The disbatch module will be in this python's path, so
-# the first process will find this, and we can learn the location for
-# use by subsequent processes.
-
-DisBatchPython = sys.executable
-DbUtilPath = None  # This is a global that will be set once the disBatch starts.
+# This is a global that will be set once the disBatch starts.
+# It refers to the per-job dbUtil.sh script that is filled in with the connection info.
+DbUtilPath = None
 
 myHostname = socket.gethostname()
 myPid = os.getpid()
@@ -80,7 +60,7 @@ def waitForIt(fn, mode, loops=60):
         except FileNotFoundError:
             time.sleep(0.5)
     else:
-        raise (Exception(f'Gave up waiting for {fn} after {loops} attempts.'))
+        raise Exception(f'Gave up waiting for {fn} after {loops} attempts.')
 
 
 def waitTimeout(sub, timeout, interval=1):
@@ -2412,6 +2392,12 @@ def main(kvsq=None):
 
         DbUtilPath = '%s_dbUtil.sh' % uniqueId
         dbutil_template = importlib.resources.files('disbatch').joinpath('dbUtil.template.sh').read_text()
+
+        # As a convenience to the user, we would like them to be able to run dbUtil.sh
+        # during their job to track the status even if disBatch isn't in their environment.
+        # To facilitate that, we use the Python executable that disBatch was invoked with.
+        DisBatchPython = sys.executable
+
         with open(DbUtilPath, 'w', opener=partial(os.open, mode=0o700)) as fd:
             fd.write(
                 dbutil_template.format(
