@@ -1962,7 +1962,7 @@ class EngineBlock(Thread):
 
 
 # Common arguments for normal with context and context only invocations.
-def contextArgs(argp):
+def contextArgs(argp: argparse.ArgumentParser):
     argp.add_argument(
         '-C',
         '--context-task-limit',
@@ -1985,7 +1985,7 @@ def contextArgs(argp):
     argp.add_argument(
         '--fill', action='store_true', help='Try to use extra cores if allocated cores exceeds requested cores.'
     )
-    argp.add_argument('-g', '--gpu', action='store_true', help='Use assigned GPU resources [DEPRECATED]')
+    argp.add_argument('-g', '--gpu', action='store_true', help=argparse.SUPPRESS)  # deprecated
     argp.add_argument(
         '--no-retire',
         dest='retire_cmd',
