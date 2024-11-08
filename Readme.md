@@ -123,11 +123,11 @@ The task file would then contain:
     ./RunMyprog.sh 9_9_8 -a 9 -b 9 -c 8
     ./RunMyprog.sh 9_9_9 -a 9 -b 9 -c 9
 
-See [#DISBATCH directives](#user-content-disbatch-directives) for more ways to simplify task lines. disBatch also sets some environment variables that can be used in your commands as arguments or to generate task-specifc file names:
+See [#DISBATCH directives](#disbatch-directives) for more ways to simplify task lines. disBatch also sets some environment variables that can be used in your commands as arguments or to generate task-specifc file names:
 
 * `DISBATCH_JOBID`: A name disBatch creates that should be unique to the job
 * `DISBATCH_NAMETASKS`: The basename of the task file
-* `DISBATCH_REPEAT_INDEX`: See the repeat construct in [\#DISBATCH directives](#user-content-disbatch-directives)
+* `DISBATCH_REPEAT_INDEX`: See the repeat construct in [\#DISBATCH directives](#disbatch-directives)
 * `DISBATCH_STREAM_INDEX`: The 1-based line number of the line from the task file that generated the task
 " `DISBATCH_TASKID`: 0-based sequential counter value that uniquely identifies each task
 
@@ -141,7 +141,7 @@ all that needs to be done is to submit a job like the following:
 This particular invocation will allocate sufficient resources to process
 20 tasks at a time, each of which needs 4 cores.
 disBatch will use environment variables initialized by Slurm to determine the execution resources to use for the run.
-This invocation assumes an appropriately installed disBatch is in your PATH, see [installation](#user-content-installation) for details.
+This invocation assumes an appropriately installed disBatch is in your PATH, see [installation](#installation) for details.
 
 disBatch also allows the pool of execution resources to be increased or decreased during the course of a run:
 
@@ -176,7 +176,7 @@ These fields are:
      Each program/task should be invoked in such a way that standard error
      and standard output end up in appropriate files. If that is not the case
      `E` or `O` flags will be raised. `R` indicates that the task
-     returned a non-zero exit code. `B` indicates a [barrier](#user-content-disbatch-directives). `S` indicates the job was skipped (this may happen during "resume" runs).
+     returned a non-zero exit code. `B` indicates a [barrier](#disbatch-directives). `S` indicates the job was skipped (this may happen during "resume" runs).
   1. Task ID: The `314` is the 0-based index of the task (starting from the beginning of the task file, incremented for each task, including repeats).
   1. Line number: The `315` is the 1-based line from the task file. Blank lines, comments, directives and repeats may cause this to drift considerably from the value of Task ID.
   1. Repeat index: The `-1` is the repeat index (as in this example, `-1` indicates this task was not part of a repeat directive).
@@ -190,7 +190,7 @@ These fields are:
   1. Output snippet (up to 80 bytes consisting of the prefix and suffix of the output),
   1. Bytes of leaked error output,
   1. Error snippet,
-  1. Command: `cd ...` is the text of the task (repeated from the task file, but subject to modification by [directives](#user-content-disbatch-directives)).
+  1. Command: `cd ...` is the text of the task (repeated from the task file, but subject to modification by [directives](#disbatch-directives)).
 
 
 ## Installation
@@ -237,7 +237,7 @@ disbatch TaskFile
 
 pipx already requires a somewhat modern Python, so for disbatch's purposes it just saves you the step of creating and activating a venv and installing disBatch.
 
-uvx, on the other hand, will download a modern Python for you if you don't have one available locally. It requires [installing uv](https://docs.astral.sh/uv/getting-started/installation/), which is a statically-linked executable.
+uvx, on the other hand, will download a modern Python for you if you don't have one available locally. It requires [installing uv](https://docs.astral.sh/uv/getting-started/installation/), which is straightforward and portable.
 
 Here's a complete example of running disbatch on a system without modern Python:
 
@@ -379,7 +379,7 @@ You can set this to run a different command, or nothing at all.
 While running this command, the follow environment variables will be set: `NODE` (the node that is no longer needed), `ACTIVE` (a comma-delimited list of nodes that are still active), `RETIRED` (a comma-delimited list of nodes that are no longer active, including `$NODE`), and possibly `DRIVER_NODE` (the node still running the main disBatch script, if it's not in `ACTIVE`).
 
 `-S` Startup only mode. In this mode, `disBatch` starts up the task management system and then waits for execution resources to be added.
-<a id='user-content-startup'>At startup</a>, `disBatch` always generates a script `<Prefix>_dbUtil.sh`, where `<Prefix>` refers to the `-p` option or default, see above. We'll call this simply `dbUtils.sh` here,
+<span id='user-content-startup'>At startup</span>, `disBatch` always generates a script `<Prefix>_dbUtil.sh`, where `<Prefix>` refers to the `-p` option or default, see above. We'll call this simply `dbUtils.sh` here,
 but remember to include `<Prefix>_` in actual use. You can add execution resources by doing one or more of the following multiple times:
 1. Submit `dbUtils.sh` as a job, e.g.:
 
