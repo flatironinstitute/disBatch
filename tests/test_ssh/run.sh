@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/bin/bash
 
 workdir=$(mktemp -d -p ./ disbatch-test.XXXX)
 cp Tasks $workdir
