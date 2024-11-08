@@ -12,7 +12,7 @@ wheels = [
 
 [[package]]
 name = "disbatch"
-version = "3.0.0rc1"
+version = "2.7.dev17+g406b65a.d20241108"
 source = { editable = "." }
 
 [package.dev-dependencies]

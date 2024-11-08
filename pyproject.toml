@@ -31,6 +31,9 @@ select = ["E4", "E7", "E9", "F", "I"]
 [tool.hatch.version]
 source = "vcs"
 
+[tool.hatch.build.hooks.vcs]
+version-file = "disbatch/_version.py"
+
 [dependency-groups]
 dev = [
     "pre-commit>=4.0.1",

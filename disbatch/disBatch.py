@@ -2267,8 +2267,17 @@ def main(kvsq=None):
             type=argparse.FileType('rb'),
             help='File with tasks, one task per line ("-" for stdin)',
         )  # TODO: Change "-" remark?
+        source.add_argument(
+            '--version', action='store_true', help='Print the version and exit'
+        )
         commonContextArgs = contextArgs(argp)
         args = argp.parse_args()
+
+        if args.version:
+            from . import __version__
+
+            print(__version__)
+            sys.exit(0)
 
         if args.mailFreq and not args.mailTo:
             argp.print_help()

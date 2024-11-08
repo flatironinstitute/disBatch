@@ -8,3 +8,4 @@
 /tests/test_*/disbatch-test.*
 __pycache__/
 *.egg-info/
+/disbatch/_version.py
