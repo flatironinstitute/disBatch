@@ -19,7 +19,7 @@ The reference python implementation should work with any stock python 2.7 or abo
 
 "kvsLoop.c" and "kvsTestf.f" are example codes for C and FORTRAN. "Makefile" can be used to build these.
 
-"kvsBatchWrapper.sh" is a short script to invoke a program that uses KVS via a SLURM sbatch submission, e.g.:
+"kvsBatchWrapper.sh" is a short script to invoke a program that uses KVS via a Slurm sbatch submission, e.g.:
 
 	sbatch -N 2 --ntasks-per-node=28 --exclusive kvsBatchWrapper.sh ./kvsTestf
 
