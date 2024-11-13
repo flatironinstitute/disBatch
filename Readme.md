@@ -10,12 +10,14 @@ Install with pip:
 
     pip install disbatch
 
-Create a file `Tasks` with a list of commands you want to run. These should be Bash commands like one would run on the command line:
+Create a file called `Tasks` with a list of commands you want to run. These should be Bash commands as one would run on the command line:
 
     myprog arg0 &> myprog_0.log
     myprog arg1 &> myprog_1.log
     ...
     myprog argN &> myprog_N.log
+
+This file can have as many tasks (lines) as you like.  The `...` is just a stand-in and wouldn't literally be in the task file.
 
 Then, to run 5 tasks at a time in parallel on your local machine, run:
 
@@ -38,8 +40,6 @@ long list of commands (aka *tasks*):
     myprog -a 0 -b 0 -c 1
     ...
     myprog -a 9 -b 9 -c 9
-
-This represents a file with 1000 lines; the `...` is just a stand-in and wouldn't literally be in the task file.
 
 One could run this by submitting 1,000 separate jobs to a cluster, but that may
 present problems for the queuing system and can behave badly if the
