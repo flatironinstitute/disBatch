@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-from __future__ import print_function
 
 import errno
 import os
@@ -12,7 +11,7 @@ from pickle import loads as PLS
 from .kvscommon import AsciiLenChars, AsciiLenFormat, recvall
 
 
-class KVSClient(object):
+class KVSClient:
     """KVS convenience wrapper that includes pickling by default."""
 
     def __init__(self, host=None, port=None, retry=0):
@@ -51,7 +50,7 @@ class KVSClient(object):
             return
         try:
             self._real_socket().close()
-        except socket.error:
+        except OSError:
             pass
         self.socket = None
 
@@ -85,7 +84,7 @@ class KVSClient(object):
         def __getattr__(self, attr):
             """Disallow any other operations on a waiting socket."""
             raise Exception(
-                "Previous %s timed out: you must retreive the previously requested '%s' value first." % self.op
+                "Previous {} timed out: you must retreive the previously requested '{}' value first.".format(*self.op)
             )
 
     def _real_socket(self):
@@ -118,7 +117,7 @@ class KVSClient(object):
             except socket.timeout:
                 self.socket = self.SocketWaiting(self.socket, (op, k))
                 return
-            except socket.error as e:
+            except OSError as e:
                 if e.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
                     self.socket = self.SocketWaiting(self.socket, (op, k))
                     return
@@ -127,7 +126,7 @@ class KVSClient(object):
             finally:
                 self._real_socket().settimeout(None)
             if not c:
-                raise socket.error('Connection closed')
+                raise OSError('Connection closed')
             coding = c + recvall(self.socket, 3)
         v = self._recvValue(encoding is True and coding == b'PYPK')
         return v if isinstance(encoding, bool) else (coding, v)
@@ -143,11 +142,11 @@ class KVSClient(object):
                 self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
                 self.socket.connect(self.addr)
                 return
-            except socket.error as msg:
+            except OSError as msg:
                 self._close()
                 if rep >= retry:
                     raise
-                print('kvs socket error: %s, retrying' % msg, file=sys.stderr)
+                print(f'kvs socket error: {msg}, retrying', file=sys.stderr)
             # exponential backoff
             time.sleep(2**rep)
             rep += 1
@@ -159,9 +158,9 @@ class KVSClient(object):
         try:
             self.socket.sendall(b'clos')
             self.socket.shutdown(socket.SHUT_RDWR)
-        except socket.error as e:
+        except OSError as e:
             # this is the client --- cannot assume logging is available.
-            print('Ignoring exception during client close: "%s"' % e, file=sys.stderr)
+            print(f'Ignoring exception during client close: "{e}"', file=sys.stderr)
         self._close()
 
     def dump(self):
@@ -217,7 +216,7 @@ class KVSClient(object):
                     encoding = repr(encoding)
                 encoding = bytes(encoding, 'utf-8')
             if len(encoding) != 4:
-                raise TypeError('Invalid encoding: %s' % encoding)
+                raise TypeError(f'Invalid encoding: {encoding}')
 
         self.socket.sendall(b'put_')
         self._sendLenAndBytes(key)
