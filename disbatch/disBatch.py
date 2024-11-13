@@ -184,16 +184,14 @@ class BatchContext:
     def __init__(self, sysid, dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel=None):
         if contextLabel is None:
             contextLabel = 'context%05d' % rank
-        (
-            self.sysid,
-            self.dbInfo,
-            self.rank,
-            self.nodes,
-            self.cylinders,
-            self.cores_per_cylinder,
-            self.args,
-            self.label,
-        ) = sysid, dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel
+        self.sysid = sysid
+        self.dbInfo = dbInfo
+        self.rank = rank
+        self.nodes = nodes
+        self.cylinders = cylinders
+        self.cores_per_cylinder = cores_per_cylinder
+        self.args = args
+        self.label = contextLabel
 
         self.error = False  # engine errors (non-zero return values)
         self.kvsKey = '.context_%d' % rank
@@ -857,17 +855,15 @@ class TaskReport:
         errdata='',
     ):
         self.taskInfo = taskInfo
-        (
-            self.host,
-            self.pid,
-            self.returncode,
-            self.start,
-            self.end,
-            self.outbytes,
-            self.outdata,
-            self.errbytes,
-            self.errdata,
-        ) = host, pid, returncode, start, end, outbytes, outdata, errbytes, errdata
+        self.host = host
+        self.pid = pid
+        self.returncode = returncode
+        self.start = start
+        self.end = end
+        self.outbytes = outbytes
+        self.outdata = outdata
+        self.errbytes = errbytes
+        self.errdata = errdata
         self.engineReport = None  # This will be filled in by EngineBlock.
 
     def flags(self):
@@ -1768,16 +1764,12 @@ class EngineBlock(Thread):
                     self.shuttingDown = True
                     break
 
-                (
-                    self.localEnv['DISBATCH_STREAM_INDEX'],
-                    self.localEnv['DISBATCH_REPEAT_INDEX'],
-                    self.localEnv['DISBATCH_TASKID'],
-                ) = str(ti.taskStreamIndex), str(ti.taskRepIndex), str(ti.taskId)
-                (
-                    self.localEnv['DISBATCH_STREAM_INDEX_ZP'],
-                    self.localEnv['DISBATCH_REPEAT_INDEX_ZP'],
-                    self.localEnv['DISBATCH_TASKID_ZP'],
-                ) = '%06d' % ti.taskStreamIndex, '%06d' % ti.taskRepIndex, '%06d' % ti.taskId
+                self.localEnv['DISBATCH_STREAM_INDEX'] = str(ti.taskStreamIndex)
+                self.localEnv['DISBATCH_REPEAT_INDEX'] = str(ti.taskRepIndex)
+                self.localEnv['DISBATCH_TASKID'] = str(ti.taskId)
+                self.localEnv['DISBATCH_STREAM_INDEX_ZP'] = '%06d' % ti.taskStreamIndex
+                self.localEnv['DISBATCH_REPEAT_INDEX_ZP'] = '%06d' % ti.taskRepIndex
+                self.localEnv['DISBATCH_TASKID_ZP'] = '%06d' % ti.taskId
 
                 logger.info('Cylinder %d executing %s.', self.cylinderRank, ti)
                 t0 = time.time()
