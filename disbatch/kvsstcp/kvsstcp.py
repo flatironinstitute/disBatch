@@ -1,31 +1,25 @@
 #!/usr/bin/env python
-from collections import defaultdict as DD
-try:
-    from cPickle import dumps as PDS
-except ImportError:
-    from pickle import dumps as PDS
-from functools import partial
 import errno
-import gc
 import logging
 import os
 import resource
 import select
 import socket
-import sys
 import threading
+from collections import defaultdict as DD
+from functools import partial
+from pickle import dumps as PDS
 
-try:
-    from .kvscommon import *
-except:
-    from kvscommon import *
+from .kvscommon import AsciiLenChars, AsciiLenFormat
 
 logger = logging.getLogger('kvs')
 
 # There are some cyclic references in in asyncio, handlers, waiters, etc., so I'm re-enabling this:
-#gc.disable()
+# gc.disable()
 
-_DISCONNECTED = frozenset((errno.ECONNRESET, errno.ENOTCONN, errno.ESHUTDOWN, errno.ECONNABORTED, errno.EPIPE, errno.EBADF))
+_DISCONNECTED = frozenset(
+    (errno.ECONNRESET, errno.ENOTCONN, errno.ESHUTDOWN, errno.ECONNABORTED, errno.EPIPE, errno.EBADF)
+)
 _BUFSIZ = 8192
 
 # Concepts:
@@ -49,8 +43,10 @@ _BUFSIZ = 8192
 #
 # This approach has the very important benefit that it is single threaded.
 
+
 class Handler(object):
-    '''Based on asyncore, but with a simpler, stricter per-thread interface that allows better performance.'''
+    """Based on asyncore, but with a simpler, stricter per-thread interface that allows better performance."""
+
     def __init__(self):
         self.disps = dict()
         self.current = None
@@ -79,7 +75,8 @@ class Handler(object):
 
     def writable(self, disp):
         "Equivalent to setting mask | OUT, but safe to be called from other (non-current) handlers."
-        if disp.mask & self.OUT: return
+        if disp.mask & self.OUT:
+            return
         disp.mask |= self.OUT
         # write can be called from other threads
         if self.current is not disp:
@@ -87,6 +84,7 @@ class Handler(object):
 
     def close(self):
         self.running = False
+
 
 class PollHandler(Handler):
     def __init__(self):
@@ -107,7 +105,7 @@ class PollHandler(Handler):
 
     def poll(self):
         ev = self.poller.poll()
-        for (f, e) in ev:
+        for f, e in ev:
             d = self.current = self.disps[f]
             oldm = d.mask
             if e & self.EOF:
@@ -124,6 +122,7 @@ class PollHandler(Handler):
     def stop(self, disp):
         Handler.close(self)
 
+
 class EPollHandler(PollHandler):
     def __init__(self):
         self.IN, self.OUT, self.EOF = select.EPOLLIN, select.EPOLLOUT, select.EPOLLHUP
@@ -133,6 +132,7 @@ class EPollHandler(PollHandler):
     def close(self):
         self.poller.close()
         Handler.close(self)
+
 
 class KQueueHandler(Handler):
     def __init__(self):
@@ -162,7 +162,8 @@ class KQueueHandler(Handler):
                 c.append(select.kevent(disp.fd, select.KQ_FILTER_WRITE, select.KQ_EV_ADD))
         elif disp.curmask & self.OUT:
             c.append(select.kevent(disp.fd, select.KQ_FILTER_WRITE, select.KQ_EV_DELETE))
-        if c: self.kqueue.control(c, 0)
+        if c:
+            self.kqueue.control(c, 0)
         disp.curmask = disp.mask
 
     def poll(self):
@@ -180,7 +181,8 @@ class KQueueHandler(Handler):
             elif e.filter == select.KQ_FILTER_WRITE:
                 d.handle_write()
             self.current = None
-            if self.running: self.modify(d)
+            if self.running:
+                self.modify(d)
 
     def close(self):
         self.kqueue.close()
@@ -188,6 +190,7 @@ class KQueueHandler(Handler):
 
     def stop(self, disp):
         self.close()
+
 
 class Dispatcher(object):
     def __init__(self, sock, handler, mask=0):
@@ -263,14 +266,17 @@ class Dispatcher(object):
             self.mask |= self.handler.IN
             self.sock.shutdown(socket.SHUT_RDWR)
         except socket.error as e:
-            if e.errno not in _DISCONNECTED: raise
+            if e.errno not in _DISCONNECTED:
+                raise
 
     def handle_close(self):
         self.close()
 
+
 class StreamDispatcher(Dispatcher):
-    '''Based on asyncore.dispatcher_with_send, works with EventHandler.
-    Also allows input of known-size blocks.'''
+    """Based on asyncore.dispatcher_with_send, works with EventHandler.
+    Also allows input of known-size blocks."""
+
     def __init__(self, sock, handler):
         super(StreamDispatcher, self).__init__(sock, handler)
         self.out_buf = []
@@ -289,7 +295,8 @@ class StreamDispatcher(Dispatcher):
             buf = self.out_buf[0]
             r = self.send(buf[:1048576])
             if r < len(buf):
-                if r: self.out_buf[0] = buf[r:]
+                if r:
+                    self.out_buf[0] = buf[r:]
                 return
             self.out_buf.pop(0)
         self.mask &= ~self.handler.OUT
@@ -298,14 +305,14 @@ class StreamDispatcher(Dispatcher):
         self.read_size = size
         if size > len(self.in_buf):
             buf = memoryview(bytearray(max(size, _BUFSIZ)))
-            buf[:self.in_off] = self.in_buf[:self.in_off]
+            buf[: self.in_off] = self.in_buf[: self.in_off]
             self.in_buf = buf
         self.read_handler = f
         self.mask |= self.handler.IN
 
     def handle_read(self):
         if self.in_off < len(self.in_buf):
-            self.in_off += self.recv_into(self.in_buf[self.in_off:])
+            self.in_off += self.recv_into(self.in_buf[self.in_off :])
         while True:
             handler = self.read_handler
             z = self.read_size
@@ -317,6 +324,7 @@ class StreamDispatcher(Dispatcher):
             self.read_handler = None
             self.mask &= ~self.handler.IN
             handler(i)
+
 
 class KVSRequestDispatcher(StreamDispatcher):
     def __init__(self, pair, server, handler):
@@ -349,16 +357,17 @@ class KVSRequestDispatcher(StreamDispatcher):
 
     def next_lendata(self, handler):
         # wait for variable-length data prefixed by AsciiLenFormat
-        def handle_len(l):
-            l = l.tobytes()
+        def handle_len(L):
+            L = L.tobytes()
             try:
-                n = int(l)
+                n = int(L)
             except ValueError:
                 n = -1
             if n < 0:
-                self.error("invalid data len: '%s'" % l)
+                self.error("invalid data len: '%s'" % L)
                 return
             self.next_read(n, handler)
+
         self.next_read(AsciiLenChars, handle_len)
 
     def handle_op(self, op):
@@ -379,13 +388,12 @@ class KVSRequestDispatcher(StreamDispatcher):
 
     def handle_opkey(self, op, key):
         key = key.tobytes()
-        #DEBUGOFF            logger.debug('(%s) %s key "%s"', whoAmI, reqtxt, key)
+        # DEBUGOFF            logger.debug('(%s) %s key "%s"', whoAmI, reqtxt, key)
         if b'mkey' == op:
             self.next_lendata(partial(self.handle_mkey, key))
         elif b'put_' == op:
-            self.next_read(4, lambda encoding:
-                self.next_lendata(partial(self.handle_put, key, encoding)))
-        else: # 'get_' or 'view'
+            self.next_read(4, lambda encoding: self.next_lendata(partial(self.handle_put, key, encoding)))
+        else:  # 'get_' or 'view'
             # Cancel waiting for any previous get/view operation (since client wouldn't be able to distinguish the async response)
             self.cancel_waiter()
             self.waiter = KVSWaiter(op, key, self.handle_got)
@@ -394,13 +402,13 @@ class KVSRequestDispatcher(StreamDispatcher):
             self.next_op()
 
     def handle_mkey(self, key, val):
-        #DEBUGOFF                logger.debug('(%s) val: %s', whoAmI, repr(val))
+        # DEBUGOFF                logger.debug('(%s) val: %s', whoAmI, repr(val))
         self.server.kvs.monkey(key, val)
         self.next_op()
 
     def handle_put(self, key, encoding, val):
         # TODO: bytearray val?
-        #DEBUGOFF                logger.debug('(%s) val: %s', whoAmI, repr(val))
+        # DEBUGOFF                logger.debug('(%s) val: %s', whoAmI, repr(val))
         self.server.kvs.put(key, (encoding, val))
         self.next_op()
 
@@ -409,16 +417,19 @@ class KVSRequestDispatcher(StreamDispatcher):
         self.write(encoding, AsciiLenFormat(len(val)), val)
         self.waiter = None
 
+
 class KVSWaiter:
     def __init__(self, op, key, handler):
-        if op == b'get_': op = b'get'
+        if op == b'get_':
+            op = b'get'
         self.op = op
         self.delete = op == b'get'
         self.key = key
         self.handler = handler
 
+
 class KVS(object):
-    '''Get/Put/View implements a client-server key value store. If no
+    """Get/Put/View implements a client-server key value store. If no
     value is associated with a given key, clients will block on get or
     view until a value is available. Multiple values may be associated
     with any given key.
@@ -426,12 +437,12 @@ class KVS(object):
     This is, by design, a very simple, lightweight service that only
     depends on standard Python modules.
 
-    '''
- 
+    """
+
     def __init__(self, getIndex=0, viewIndex=-1):
-        self.getIndex, self.viewIndex = getIndex, viewIndex #TODO: Add sanity checks?
-        self.key2mon = DD(lambda:DD(set)) # Maps a normal key to keys that monitor it.
-        self.monkeys = set()              # List of monitor keys.
+        self.getIndex, self.viewIndex = getIndex, viewIndex  # TODO: Add sanity checks?
+        self.key2mon = DD(lambda: DD(set))  # Maps a normal key to keys that monitor it.
+        self.monkeys = set()  # List of monitor keys.
         # store and waiters are mutually exclusive, and could be kept in the same place
         self.store = DD(list)
         self.waiters = DD(list)
@@ -440,45 +451,65 @@ class KVS(object):
 
     def _doMonkeys(self, op, k):
         # Don't monitor operations on monitor keys.
-        if k in self.monkeys: return
-        #DEBUGOFF        logger.debug('doMonkeys: %s %s %s', op, k, repr(self.key2mon[True][op] | self.key2mon[k][op]))
+        if k in self.monkeys:
+            return
+        # DEBUGOFF        logger.debug('doMonkeys: %s %s %s', op, k, repr(self.key2mon[True][op] | self.key2mon[k][op]))
         for p in (True, k):
             for mk in self.key2mon[p][op]:
                 self.put(mk, (b'ASTR', repr((op, k))))
-        
+
     def dump(self):
-        '''Utility function that returns a snapshot of the KV store.'''
+        """Utility function that returns a snapshot of the KV store."""
+
         def vrep(v):
             t = v[0].tobytes()
             # Omit or truncate some values, in which cases add the original length as a third value
-            if v == b'JSON' or t == b'HTML': return (t, v[1].tobytes())
-            if t != b'ASTR': return (t, None, len(v[1]))
-            if v[1][:6].tobytes().lower() == '<html>': return (t, v[1].tobytes()) # for backwards compatibility only
-            if len(v[1]) > 50: return (t, v[1][:24].tobytes() + '...' + v[1][-23:].tobytes(), len(v[1]))
+            if v == b'JSON' or t == b'HTML':
+                return (t, v[1].tobytes())
+            if t != b'ASTR':
+                return (t, None, len(v[1]))
+            if v[1][:6].tobytes().lower() == '<html>':
+                return (t, v[1].tobytes())  # for backwards compatibility only
+            if len(v[1]) > 50:
+                return (t, v[1][:24].tobytes() + '...' + v[1][-23:].tobytes(), len(v[1]))
             return (t, v[1].tobytes())
 
-        return PDS(([self.opCounts[b'get'], self.opCounts[b'put'], self.opCounts[b'view'], self.opCounts[b'wait'], self.ac, self.rc], [(k, len(v)) for k, v in self.waiters.items() if v], [(k, len(vv), vrep(vv[-1])) for k, vv in self.store.items() if vv]))
+        return PDS(
+            (
+                [
+                    self.opCounts[b'get'],
+                    self.opCounts[b'put'],
+                    self.opCounts[b'view'],
+                    self.opCounts[b'wait'],
+                    self.ac,
+                    self.rc,
+                ],
+                [(k, len(v)) for k, v in self.waiters.items() if v],
+                [(k, len(vv), vrep(vv[-1])) for k, vv in self.store.items() if vv],
+            )
+        )
 
     def wait(self, waiter):
-        '''Atomically (remove and) return a value associated with key k. If
-        none, block.'''
-        #DEBUGOFF        logger.debug('wait: %s, %s', repr(waiter.key), repr(waiter.op))
+        """Atomically (remove and) return a value associated with key k. If
+        none, block."""
+        # DEBUGOFF        logger.debug('wait: %s, %s', repr(waiter.key), repr(waiter.op))
         self._doMonkeys(waiter.op, waiter.key)
         vv = self.store.get(waiter.key)
         if vv:
             if waiter.delete:
                 v = vv.pop(self.getIndex)
-                if not vv: self.store.pop(waiter.key)
+                if not vv:
+                    self.store.pop(waiter.key)
             else:
                 v = vv[self.viewIndex]
             self.opCounts[waiter.op] += 1
-            #DEBUGOFF                logger.debug('_gv (%s): %s => %s (%d)', waiter.op, waiter.key, repr(v[0]), len(v[1]))
+            # DEBUGOFF                logger.debug('_gv (%s): %s => %s (%d)', waiter.op, waiter.key, repr(v[0]), len(v[1]))
             waiter.handler(v)
         else:
             self.waiters[waiter.key].append(waiter)
             self.opCounts[b'wait'] += 1
             self._doMonkeys(b'wait', waiter.key)
-            #DEBUGOFF                logger.debug('(%s) %s acquiring', repr(waiter), repr(s))
+            # DEBUGOFF                logger.debug('(%s) %s acquiring', repr(waiter), repr(s))
             self.ac += 1
 
     def cancel_wait(self, waiter):
@@ -488,10 +519,11 @@ class KVS(object):
                 ww.remove(waiter)
             except ValueError:
                 pass
-            if not ww: self.waiters.pop(waiter.key)
+            if not ww:
+                self.waiters.pop(waiter.key)
 
     def monkey(self, mkey, v):
-        '''Make Mkey a monitor key. Value encodes what events to monitor and
+        """Make Mkey a monitor key. Value encodes what events to monitor and
         for which key:
 
                 Key:Events
@@ -503,56 +535,64 @@ class KVS(object):
         wait). Monitoring of any event *not* listed is turned off for
         the specified key.
 
-        '''
-        #DEBUGOFF        logger.debug('monkey: %s %s', mkey, v)
-        if b':' not in v: return #TODO: Add some sort of error handling?
+        """
+        # DEBUGOFF        logger.debug('monkey: %s %s', mkey, v)
+        if b':' not in v:
+            return  # TODO: Add some sort of error handling?
         self.monkeys.add(mkey)
         k, events = v.rsplit(b':', 1)
-        if not k: k = True
-        for e, op  in [(b'g', b'get'), (b'p', b'put'), (b'v', b'view'), (b'w', b'wait')]:
+        if not k:
+            k = True
+        for e, op in [(b'g', b'get'), (b'p', b'put'), (b'v', b'view'), (b'w', b'wait')]:
             if e in events:
                 self.key2mon[k][op].add(mkey)
             else:
-                try: self.key2mon[k][op].remove(mkey)
-                except KeyError: pass
-        #DEBUGOFF        logger.debug('monkey: %s', repr(self.key2mon))
+                try:
+                    self.key2mon[k][op].remove(mkey)
+                except KeyError:
+                    pass
+        # DEBUGOFF        logger.debug('monkey: %s', repr(self.key2mon))
 
     def put(self, k, v):
-        '''Add value v to those associated with the key k.'''
-        #DEBUGOFF        logger.debug('put: %s, %s', repr(k), repr(v))
+        """Add value v to those associated with the key k."""
+        # DEBUGOFF        logger.debug('put: %s, %s', repr(k), repr(v))
         self.opCounts[b'put'] += 1
-        ww = self.waiters.get(k) # No waiters is probably most common, so optimize for
-                                 # that. ww will be None if no waiters have been
-                                 # registered for key k.
+        ww = self.waiters.get(k)  # No waiters is probably most common, so optimize for
+        # that. ww will be None if no waiters have been
+        # registered for key k.
         consumed = False
         if ww:
             while ww:
                 waiter = ww.pop(0)
-                #DEBUGOFF                    logger.debug('%s releasing', repr(waiter))
+                # DEBUGOFF                    logger.debug('%s releasing', repr(waiter))
                 self.rc += 1
                 self.opCounts[waiter.op] += 1
                 waiter.handler(v)
                 if waiter.delete:
                     consumed = True
                     break
-            if not ww: self.waiters.pop(k)
+            if not ww:
+                self.waiters.pop(k)
 
-        if not consumed: self.store[k].append(v)
+        if not consumed:
+            self.store[k].append(v)
         self._doMonkeys(b'put', k)
+
 
 class KVSServer(threading.Thread, Dispatcher):
     def __init__(self, host=None, port=0):
-        if not host: host = socket.gethostname()
+        if not host:
+            host = socket.gethostname()
 
         self.kvs = KVS()
 
         snof, hnof = resource.getrlimit(resource.RLIMIT_NOFILE)
-        hnof = min(hnof, 1000000) # don't need unreasonably many
+        hnof = min(hnof, 1000000)  # don't need unreasonably many
         if snof < hnof:
             try:
                 resource.setrlimit(resource.RLIMIT_NOFILE, (hnof, hnof))
                 logger.info('Raised max open files from %d to %d', snof, hnof)
-            except:
+            except Exception:
                 logger.info('Failed to raise max open files from %d to %d; continuing anyway', snof, hnof)
                 pass
 
@@ -591,20 +631,38 @@ class KVSServer(threading.Thread, Dispatcher):
             super(KVSServer, self).shutdown()
             self.handler.stop(self)
 
-    def env(self, env = os.environ.copy()):
-        '''Add the KVSSTCP environment variables to the given environment.'''
+    def env(self, env=os.environ.copy()):
+        """Add the KVSSTCP environment variables to the given environment."""
         env['KVSSTCP_HOST'] = self.cinfo[0]
         env['KVSSTCP_PORT'] = str(self.cinfo[1])
         return env
 
+
 if '__main__' == __name__:
     import argparse
+
     argp = argparse.ArgumentParser(description='Start key-value storage server.')
     argp.add_argument('-H', '--host', default='', help='Host interface (default is hostname).')
     argp.add_argument('-p', '--port', type=int, default=0, help='Port (default is 0 --- let the OS choose).')
-    argp.add_argument('-a', '--addrfile', default=None,  metavar='AddressFile', type=argparse.FileType('w'), help='Write address to this file.')
-    argp.add_argument('-e', '--execcmd', default=None,  metavar='COMMAND SEQUENCE', help='Execute command with augmented environment.')
-    argp.add_argument('-l', '--logfile', default=None,  metavar='KVSSLogfile', type=argparse.FileType('w'), help='Log file for key-value storage server.')
+    argp.add_argument(
+        '-a',
+        '--addrfile',
+        default=None,
+        metavar='AddressFile',
+        type=argparse.FileType('w'),
+        help='Write address to this file.',
+    )
+    argp.add_argument(
+        '-e', '--execcmd', default=None, metavar='COMMAND SEQUENCE', help='Execute command with augmented environment.'
+    )
+    argp.add_argument(
+        '-l',
+        '--logfile',
+        default=None,
+        metavar='KVSSLogfile',
+        type=argparse.FileType('w'),
+        help='Log file for key-value storage server.',
+    )
     args = argp.parse_args()
 
     # TODO: figure out where this should really go.
@@ -615,7 +673,7 @@ if '__main__' == __name__:
     logging.basicConfig(**lconf)
 
     t = KVSServer(args.host, args.port)
-    addr = '%s:%d'%t.cinfo
+    addr = '%s:%d' % t.cinfo
     logger.info('Server running at %s.', addr)
     if args.addrfile:
         args.addrfile.write(addr)
@@ -624,6 +682,7 @@ if '__main__' == __name__:
     try:
         if args.execcmd:
             import subprocess
+
             logger.info('Launching: %r, env %r', args.execcmd, t.env())
             subprocess.check_call(args.execcmd, shell=True, env=t.env())
         else:
