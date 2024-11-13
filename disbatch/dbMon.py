@@ -3,7 +3,6 @@
 import curses
 import json
 import os
-import socket
 import sys
 import time
 from queue import Queue
@@ -33,7 +32,7 @@ curses.init_pair(6, curses.COLOR_BLACK, curses.COLOR_BLACK)
 curses.init_pair(7, curses.COLOR_WHITE, curses.COLOR_WHITE)
 curses.curs_set(False)
 
-CPCB, CPGB, CPBR, CPYB, CPRB, CPBB, CPWW = [curses.color_pair(x) for x in range(1, 8)]
+CPCB, CPGB, CPBR, CPYB, CPRB, CPBB, CPWW = (curses.color_pair(x) for x in range(1, 8))
 
 Diamond = curses.ACS_DIAMOND
 Horizontal, Vertical = curses.ACS_HLINE, curses.ACS_VLINE
@@ -290,12 +289,12 @@ def display(S, kvsc, inq):
                             r = popYNC('Stopping context {cLabel:s} ({cRank:d})'.format(**engines[target]), S, inq)
                             if r == 'Y':
                                 try:
-                                    msg = 'Asking controller to stop context %r' % cRank
+                                    msg = f'Asking controller to stop context {cRank!r}'
                                     kvsc.put('.controller', ('stop context', cRank))
                                     for rank, e in engines.items():
                                         if e['cRank'] == cRank:
                                             localEngineStatus[rank] = 'requesting shutdown'
-                                except socket.error:
+                                except OSError:
                                     pass
                         elif k == ord('E'):
                             r = popYNC(
@@ -303,10 +302,10 @@ def display(S, kvsc, inq):
                             )
                             if r == 'Y':
                                 try:
-                                    msg = 'Asking controller to stop engine  %r' % target
+                                    msg = f'Asking controller to stop engine  {target!r}'
                                     kvsc.put('.controller', ('stop engine', target))
                                     localEngineStatus[target] = 'requesting shutdown'
-                                except socket.error:
+                                except OSError:
                                     pass
             else:
                 msg = 'Got unrecognized key: %d' % k
@@ -320,7 +319,7 @@ def display(S, kvsc, inq):
         elif tag == 'stop':
             done = True
         else:
-            msg = 'Unrecognized tag: "%s",' % tag
+            msg = f'Unrecognized tag: "{tag}",'
 
 
 # (Wrapped) main.

@@ -108,7 +108,7 @@ def register(kvs, which):
     return kvs.get(key)
 
 
-class DisBatcher(object):
+class DisBatcher:
     """Encapsulates a disBatch instance."""
 
     def __init__(self, tasksname='DisBatcher', args=[], kvsserver=None):
@@ -200,13 +200,7 @@ class BatchContext:
         self.retireCmd = None
 
     def __str__(self):
-        return 'Context type: %s\nLabel: %s\nNodes: %r\nCylinders: %r\nCores per cylinder: %r\n' % (
-            self.sysid,
-            self.label,
-            self.nodes,
-            self.cylinders,
-            self.cores_per_cylinder,
-        )
+        return f'Context type: {self.sysid}\nLabel: {self.label}\nNodes: {self.nodes!r}\nCylinders: {self.cylinders!r}\nCores per cylinder: {self.cores_per_cylinder!r}\n'
 
     def finish(self):
         """Check that all engines completed successfully and return True on success."""
@@ -229,7 +223,7 @@ class BatchContext:
 
     def launchNode(self, node):
         """Launch an engine for a single node.  Should return a subprocess handle (unless launch itself is overridden)."""
-        raise NotImplementedError('%s.launchNode is not implemented' % type(self))
+        raise NotImplementedError(f'{type(self)}.launchNode is not implemented')
 
     def poll(self):
         """Check if any engines have stopped."""
@@ -265,9 +259,7 @@ class BatchContext:
                 [(v, env.get(v, '<NOT SET>')) for v in ['DRIVER_NODE', 'NODES', 'RETCODES', 'ACTIVE', 'RETIRED']],
             )
             try:
-                capture = SUB.run(
-                    self.retireCmd, close_fds=True, shell=True, env=env, check=True, stdout=SUB.PIPE, stderr=SUB.PIPE
-                )
+                capture = SUB.run(self.retireCmd, close_fds=True, shell=True, env=env, check=True, capture_output=True)
             except Exception as e:
                 logger.warning('Retirement planning needs improvement: %s', repr(e))
                 capture = e
@@ -312,7 +304,7 @@ class BatchContext:
             self.nodeId = self.nodes.index(self.node)
         except ValueError:
             # Should we instead assume 0 or carry on with none?
-            raise LookupError('Couldn\'t find nodeId for %s in "%s".' % (node or myHostname, self.nodes))
+            raise LookupError(f'Couldn\'t find nodeId for {node or myHostname} in "{self.nodes}".')
 
 
 # Convert nodelist format (slurm specific?) to an expanded list of nodes.
@@ -344,7 +336,9 @@ class SlurmContext(BatchContext):
     # SLURM_NPROCS=12
     # SLURM_JOB_ID=1568029
 
-    ThrottleTime = 10  # To avoid spamming Slurm, send retirement requests at a minimum interval of ThrottleTime seconds.
+    ThrottleTime = (
+        10  # To avoid spamming Slurm, send retirement requests at a minimum interval of ThrottleTime seconds.
+    )
 
     # Cannot pickle the throttle stuff.
     def __getstate__(self):
@@ -444,7 +438,7 @@ class SlurmContext(BatchContext):
         opt_file = os.environ.get('DISBATCH_SLURM_SRUN_OPTIONS_FILE', None)
         opts = []
         if opt_file:
-            self.for_log.append(('Taking srun options from "%s".' % opt_file, logging.INFO))
+            self.for_log.append((f'Taking srun options from "{opt_file}".', logging.INFO))
             opts = open(opt_file).read().split('\n')
         else:
             opts = ['SLURM_CPU_BIND=' + os.getenv('SLURM_CPU_BIND', 'cores'), 'SLURM_MPI_TYPE=none']
@@ -456,10 +450,8 @@ class SlurmContext(BatchContext):
                     name, value = L.split('=', 1)
                     os.environ[name] = value
 
-        contextLabel = args.label if args.label else 'J%s' % jobid
-        super(SlurmContext, self).__init__(
-            'Slurm', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel
-        )
+        contextLabel = args.label if args.label else f'J{jobid}'
+        super().__init__('Slurm', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel)
         self.driverNode = None
         self.retireCmd = 'scontrol update JobId="$SLURM_JOBID" NodeList="${DRIVER_NODE:+$DRIVER_NODE,}$ACTIVE"'
         self.throttleq = Queue()
@@ -548,7 +540,7 @@ class SlurmContext(BatchContext):
             p.flush()
 
     def launchNode(self, n):
-        lfp = '%s_%s_%s_engine_wrap.log' % (self.dbInfo.uniqueId, self.label, n)
+        lfp = f'{self.dbInfo.uniqueId}_{self.label}_{n}_engine_wrap.log'
         # To convince Slurm to give us the right gres, request the right number of tasks.
         nx = self.nodes.index(n)
         tasks = self.cylinders[nx]
@@ -588,11 +580,11 @@ class SlurmContext(BatchContext):
                     # been at least ThrottleTime since the
                     # last node was added.
                     logging.info(f'Throttle releasing: {nodeList}, {retList}.')
-                    super(SlurmContext, self).retireNodeList(nodeList, retList)
+                    super().retireNodeList(nodeList, retList)
                     nodeList, retList = [], []
 
     def retireEnv(self, nodeList, retList):
-        env = super(SlurmContext, self).retireEnv(nodeList, retList)
+        env = super().retireEnv(nodeList, retList)
         if self.driverNode:
             env['DRIVER_NODE'] = self.driverNode
         return env
@@ -636,7 +628,7 @@ class SlurmContext(BatchContext):
             return None
 
     def setNode(self, node=None):
-        super(SlurmContext, self).setNode(node or os.getenv('SLURMD_NODENAME'))
+        super().setNode(node or os.getenv('SLURMD_NODENAME'))
 
 
 # TODO:
@@ -706,14 +698,14 @@ class SSHContext(BatchContext):
                 (f'Tasks per node: {cylinders}, using {self.cpusPerTask} cores per task.', logging.INFO)
             )
         cores_per_cylinder = [cc // c if c else cc for cc, c in zip(core_count, cylinders)]
-        super(SSHContext, self).__init__('SSH', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel)
+        super().__init__('SSH', dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel)
 
     def launchNode(self, n):
         prefix = [] if compHostnames(n, myHostname) else ['ssh', n]
-        lfp = '%s_%s_%s_engine_wrap.log' % (self.dbInfo.uniqueId, self.label, n)
+        lfp = f'{self.dbInfo.uniqueId}_{self.label}_{n}_engine_wrap.log'
         cmd = prefix + [DbUtilPath, '--engine', '-n', n, self.kvsKey]
         logger.info('ssh launch comand: %r', cmd)
-        return SUB.Popen(cmd, stdin=open(os.devnull, 'r'), stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
+        return SUB.Popen(cmd, stdin=open(os.devnull), stdout=open(lfp, 'w'), stderr=SUB.STDOUT, close_fds=True)
 
 
 def probeContext(dbInfo, rank, args):
@@ -939,7 +931,7 @@ def parseStatusFiles(*files):
     status = dict()
     for f in files:
         try:
-            with open(f, 'r', encoding='utf-8') as s:
+            with open(f, encoding='utf-8') as s:
                 for L in s:
                     tr = TaskReport(L[:-1])
                     ti = tr.taskInfo
@@ -1148,7 +1140,7 @@ def statusTaskFilter(tasks, status, retry=False, force=False):
 # Main control loop that sends new tasks to the execution engines.
 class Feeder(Thread):
     def __init__(self, kvs, ageQ, tasks, slots):
-        super(Feeder, self).__init__(name='Feeder')
+        super().__init__(name='Feeder')
         self.kvs = kvs.clone()
         self.ageQ = ageQ
         self.taskGenerator = tasks
@@ -1201,7 +1193,7 @@ class Feeder(Thread):
 # Main control loop that processes completed tasks.
 class Driver(Thread):
     def __init__(self, kvs, db_info, tasks, trackResults=None):
-        super(Driver, self).__init__(name='Driver')
+        super().__init__(name='Driver')
         self.kvs = kvs.clone()
         self.db_info = db_info
         # uniqueId can have a path component. Remove that here.
@@ -1546,7 +1538,7 @@ class Driver(Thread):
                         #    self.trackResults + ' done tasks': a set of task ids that have finished
                         rd = tReport.reportDict()
                         rd['TaskCmd'] = rd['TaskCmd'].decode('utf-8', 'replace')
-                        self.kvs.put(self.trackResults + f' {tinfo.taskId}'.encode('utf-8'), json.dumps(rd), b'JSON')
+                        self.kvs.put(self.trackResults + f' {tinfo.taskId}'.encode(), json.dumps(rd), b'JSON')
                         self.kvs.put(self.trackResults + b' done tasks', str(tinfo.taskId), False)
                     if self.db_info.args.mailTo and self.finished % self.db_info.args.mailFreq == 0:
                         self.sendNotification()
@@ -1637,7 +1629,7 @@ class Driver(Thread):
 # and possibly collect the first and/or last few bytes of it
 class OutputCollector(Thread):
     def __init__(self, pipe, takeStart=0, takeEnd=0):
-        super(OutputCollector, self).__init__(name='OutputCollector')
+        super().__init__(name='OutputCollector')
         # We don't really care for python's file abstraction -- get back a real fd
         self.pipefd = os.dup(pipe.fileno())
         pipe.close()
@@ -1742,7 +1734,7 @@ class EngineBlock(Thread):
             # signal.signal(signal.SIGTERM, lambda s, f: sys.exit(1))
             try:
                 self.main()
-            except socket.error as e:
+            except OSError as e:
                 if not self.shuttingDown:
                     logger.info('Cylinder %d got socket error %r', self.cylinderRank, e)
             except Exception:
@@ -1837,7 +1829,7 @@ class EngineBlock(Thread):
                 logger.info('Cylinder %s completed: %s', self.cylinderRank, tr)
 
     def __init__(self, kvs, context, rank):
-        super(EngineBlock, self).__init__(name='EngineBlock')
+        super().__init__(name='EngineBlock')
         self.daemon = True
         self.context = context
         self.hbQueue = Queue()
@@ -2064,7 +2056,7 @@ def main(kvsq=None):
         try:
             os.chdir(dbInfo.wd)
         except Exception:
-            print('Failed to change working directory to "%s".' % dbInfo.wd, file=sys.stderr)
+            print(f'Failed to change working directory to "{dbInfo.wd}".', file=sys.stderr)
             # TODO: Fail here?
 
         context.setNode(args.node)
@@ -2097,7 +2089,7 @@ def main(kvsq=None):
 
         try:
             e.join()
-        except socket.error as r:
+        except OSError as r:
             logger.info('got socket error waiting on shutdown: %r', r)
         except Exception as e:
             logger.exception('EngineBlock during join.')
@@ -2140,7 +2132,7 @@ def main(kvsq=None):
         try:
             os.chdir(dbInfo.wd)
         except Exception:
-            print('Failed to change working directory to "%s".' % dbInfo.wd, file=sys.stderr)
+            print(f'Failed to change working directory to "{dbInfo.wd}".', file=sys.stderr)
             # TODO: Fail here?
 
         # Try to find a batch context.
@@ -2154,7 +2146,7 @@ def main(kvsq=None):
 
         logger = logging.getLogger('DisBatch Context')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': dbInfo.args.loglevel}
-        lconf['filename'] = '%s_%s.context.log' % (dbInfo.uniqueId, context.label)
+        lconf['filename'] = f'{dbInfo.uniqueId}_{context.label}.context.log'
         logging.basicConfig(**lconf)
         logging.info('%s context started on %s (%d).', context.sysid, myHostname, myPid)
         logger.info('argv: %r', sys.argv)
@@ -2267,9 +2259,7 @@ def main(kvsq=None):
             type=argparse.FileType('rb'),
             help='File with tasks, one task per line ("-" for stdin)',
         )  # TODO: Change "-" remark?
-        source.add_argument(
-            '--version', action='store_true', help='Print the version and exit'
-        )
+        source.add_argument('--version', action='store_true', help='Print the version and exit')
         commonContextArgs = contextArgs(argp)
         args = argp.parse_args()
 
@@ -2397,7 +2387,7 @@ def main(kvsq=None):
             urlfile = uniqueId + '_url'
             wskvsmu.main(kvsserver, urlfile=open(urlfile, 'w'), monitorspec=':gpvw')
 
-        DbUtilPath = '%s_dbUtil.sh' % uniqueId
+        DbUtilPath = f'{uniqueId}_dbUtil.sh'
         dbutil_template = importlib.resources.files('disbatch').joinpath('dbUtil.template.sh').read_text()
 
         # As a convenience to the user, we would like them to be able to run dbUtil.sh
@@ -2432,7 +2422,7 @@ def main(kvsq=None):
 
             subContext = SUB.Popen(
                 [DbUtilPath] + extraArgs,
-                stdin=open(os.devnull, 'r'),
+                stdin=open(os.devnull),
                 stdout=open(uniqueId + '_context_wrap.out', 'w'),
                 close_fds=True,
             )

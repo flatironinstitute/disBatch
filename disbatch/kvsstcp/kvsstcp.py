@@ -44,7 +44,7 @@ _BUFSIZ = 8192
 # This approach has the very important benefit that it is single threaded.
 
 
-class Handler(object):
+class Handler:
     """Based on asyncore, but with a simpler, stricter per-thread interface that allows better performance."""
 
     def __init__(self):
@@ -62,7 +62,7 @@ class Handler(object):
         while self.running:
             try:
                 self.poll()
-            except IOError as e:
+            except OSError as e:
                 if e.errno == errno.EINTR:
                     continue
                 raise
@@ -192,7 +192,7 @@ class KQueueHandler(Handler):
         self.close()
 
 
-class Dispatcher(object):
+class Dispatcher:
     def __init__(self, sock, handler, mask=0):
         self.sock = sock
         self.fd = sock.fileno()
@@ -208,13 +208,13 @@ class Dispatcher(object):
         self.handler.unregister(self)
         try:
             self.sock.close()
-        except socket.error:
+        except OSError:
             pass
 
     def accept(self):
         try:
             return self.sock.accept()
-        except socket.error as e:
+        except OSError as e:
             if e.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
                 return
             if e.errno in _DISCONNECTED or e.errno == errno.EINVAL:
@@ -225,7 +225,7 @@ class Dispatcher(object):
     def send(self, data):
         try:
             return self.sock.send(data)
-        except socket.error as e:
+        except OSError as e:
             if e.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
                 return 0
             if e.errno in _DISCONNECTED:
@@ -239,7 +239,7 @@ class Dispatcher(object):
             if not data:
                 self.handle_close()
             return data
-        except socket.error as e:
+        except OSError as e:
             if e.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
                 return b''
             if e.errno in _DISCONNECTED:
@@ -253,7 +253,7 @@ class Dispatcher(object):
             if n == 0:
                 self.handle_close()
             return n
-        except socket.error as e:
+        except OSError as e:
             if e.errno in (errno.EWOULDBLOCK, errno.EAGAIN):
                 return b''
             if e.errno in _DISCONNECTED:
@@ -265,7 +265,7 @@ class Dispatcher(object):
         try:
             self.mask |= self.handler.IN
             self.sock.shutdown(socket.SHUT_RDWR)
-        except socket.error as e:
+        except OSError as e:
             if e.errno not in _DISCONNECTED:
                 raise
 
@@ -278,7 +278,7 @@ class StreamDispatcher(Dispatcher):
     Also allows input of known-size blocks."""
 
     def __init__(self, sock, handler):
-        super(StreamDispatcher, self).__init__(sock, handler)
+        super().__init__(sock, handler)
         self.out_buf = []
         self.in_buf = memoryview(bytearray(_BUFSIZ))
         self.in_off = 0
@@ -333,7 +333,7 @@ class KVSRequestDispatcher(StreamDispatcher):
         # Keep track of any currently waiting get:
         self.waiter = None
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        super(KVSRequestDispatcher, self).__init__(sock, handler)
+        super().__init__(sock, handler)
         logger.info('Accepted connect from %r', self.addr)
         self.next_op()
         self.open()
@@ -344,7 +344,7 @@ class KVSRequestDispatcher(StreamDispatcher):
         self.close()
 
     def error(self, msg):
-        logger.error('Error from %r: %s' % (self.addr, msg))
+        logger.error(f'Error from {self.addr!r}: {msg}')
         self.close()
 
     def cancel_waiter(self):
@@ -364,7 +364,7 @@ class KVSRequestDispatcher(StreamDispatcher):
             except ValueError:
                 n = -1
             if n < 0:
-                self.error("invalid data len: '%s'" % L)
+                self.error(f"invalid data len: '{L}'")
                 return
             self.next_read(n, handler)
 
@@ -384,7 +384,7 @@ class KVSRequestDispatcher(StreamDispatcher):
         elif op in [b'get_', b'mkey', b'put_', b'view']:
             self.next_lendata(partial(self.handle_opkey, op))
         else:
-            self.error("Unknown op: '%r'" % op)
+            self.error(f"Unknown op: '{op!r}'")
 
     def handle_opkey(self, op, key):
         key = key.tobytes()
@@ -428,7 +428,7 @@ class KVSWaiter:
         self.handler = handler
 
 
-class KVS(object):
+class KVS:
     """Get/Put/View implements a client-server key value store. If no
     value is associated with a given key, clients will block on get or
     view until a value is available. Multiple values may be associated
@@ -628,7 +628,7 @@ class KVSServer(threading.Thread, Dispatcher):
 
     def shutdown(self):
         if self.handler.running:
-            super(KVSServer, self).shutdown()
+            super().shutdown()
             self.handler.stop(self)
 
     def env(self, env=os.environ.copy()):
