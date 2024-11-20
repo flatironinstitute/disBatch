@@ -18,14 +18,18 @@ salloc -n 2 disBatch Tasks
 # Check that all 3 tasks ran,
 # which means A.txt, B.txt, and C.txt exist
 [[ -f A.txt && -f B.txt && -f C.txt ]]
-
 rm -f A.txt B.txt C.txt
 
+# Test empty task file
+salloc -n 2 disBatch /dev/null
+
 # disBatch is expected to exit with a non-zero exit code here
-salloc -n 2 disbatch --fail-fast Tasks_failfast || true
+salloc -n 2 disBatch --fail-fast Tasks_failfast || true
 
 # check that we failed fast and didn't run any more tasks
 [[ ! -f A.txt ]]
+
+cd - > /dev/null
 
 trap - ERR
 echo "Slurm test passed."

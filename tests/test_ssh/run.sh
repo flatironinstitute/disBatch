@@ -18,14 +18,18 @@ disBatch -s localhost:2 Tasks
 # Check that all 3 tasks ran,
 # which means A.txt, B.txt, and C.txt exist
 [[ -f A.txt && -f B.txt && -f C.txt ]]
-
 rm -f A.txt B.txt C.txt
+
+# Test empty task file
+disBatch -s localhost:2 /dev/null
 
 # disBatch is expected to exit with a non-zero exit code here
 disbatch -s localhost:2 --fail-fast Tasks_failfast || true
 
 # check that we failed fast and didn't run any more tasks
 [[ ! -f A.txt ]]
+
+cd - > /dev/null
 
 trap - ERR
 echo "SSH test passed."
