@@ -1217,6 +1217,7 @@ class Driver(Thread):
         self.statusLastOffset = self.statusFile.tell()
         self.noMoreTasks = False
         self.tasksDone = False
+        self.failFast = db_info.args.fail_fast
 
         self.daemon = True
         self.start()
@@ -1524,6 +1525,11 @@ class Driver(Thread):
                         if self.currentReturnCode == 0:
                             # Remember the first failure. Somewhat arbitrary.
                             self.currentReturnCode = rc
+
+                    if self.failed and self.failFast:
+                        logger.info(f'Failing fast, task exited with code: {self.currentReturnCode}')
+                        self.ageQ.put('CheckFailExit')
+                        break
 
                     # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than
                     # one per key
@@ -2234,6 +2240,7 @@ def main(kvsq=None):
             '--use-address', default=None, metavar='HOST:PORT', help='Specify hostname and port to use for this run.'
         )
         argp.add_argument('-w', '--web', action='store_true', help='Enable web interface.')
+        argp.add_argument('-f', '--fail-fast', action='store_true', help='Exit on first task failure.')
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument(
             '--taskcommand',
