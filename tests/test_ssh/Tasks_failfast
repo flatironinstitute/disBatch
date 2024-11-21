@@ -1,0 +1,3 @@
+sleep 1000
+exit 1
+touch A.txt

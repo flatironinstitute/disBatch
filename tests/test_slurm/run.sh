@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 workdir=$(mktemp -d -p ./ disbatch-test.XXXX)
 cp Tasks $workdir
 cd $workdir
@@ -9,8 +11,8 @@ salloc -n 2 disBatch Tasks
 
 # Check that all 3 tasks ran,
 # which means A.txt, B.txt, and C.txt exist
-[[ -f A.txt && -f B.txt && -f C.txt ]]
-success=$?
+success=0
+[[ -f A.txt && -f B.txt && -f C.txt ]] || success=$?
 
 cd - > /dev/null
 

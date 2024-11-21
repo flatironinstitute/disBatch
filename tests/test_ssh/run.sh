@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -e
+
 workdir=$(mktemp -d -p ./ disbatch-test.XXXX)
 cp Tasks Tasks_failfast $workdir
 cd $workdir
