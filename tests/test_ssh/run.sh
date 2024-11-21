@@ -20,6 +20,12 @@ disBatch -s localhost:2 Tasks
 [[ -f A.txt && -f B.txt && -f C.txt ]]
 rm -f A.txt B.txt C.txt
 
+# Add a task and check that we can resume
+echo "touch D.txt" >> Tasks
+disBatch -s localhost:2 Tasks -r Tasks*_status.txt
+
+[[ -f D.txt && ! -f A.txt && ! -f B.txt && ! -f C.txt ]]
+
 # Test empty task file
 disBatch -s localhost:2 /dev/null
 
