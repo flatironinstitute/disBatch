@@ -20,6 +20,12 @@ salloc -n 2 disBatch Tasks
 [[ -f A.txt && -f B.txt && -f C.txt ]]
 rm -f A.txt B.txt C.txt
 
+# Add a task and check that we can resume
+echo "touch D.txt" >> Tasks
+salloc -n 2 disBatch Tasks -r Tasks*_status.txt
+
+[[ -f D.txt && ! -f A.txt && ! -f B.txt && ! -f C.txt ]]
+
 # Test empty task file
 salloc -n 2 disBatch /dev/null
 
