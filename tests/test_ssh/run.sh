@@ -1,7 +1,7 @@
 #!/bin/bash
 
 workdir=$(mktemp -d -p ./ disbatch-test.XXXX)
-cp -t $workdir Tasks Tasks_failfast
+cp Tasks Tasks_failfast $workdir
 cd $workdir
 
 # Run the test
