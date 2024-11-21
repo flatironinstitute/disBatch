@@ -1,7 +1,7 @@
 #!/bin/bash
 
 workdir=$(mktemp -d -p ./ disbatch-test.XXXX)
-cp Tasks $workdir
+cp -t $workdir Tasks Tasks_failfast
 cd $workdir
 
 # Run the test
@@ -11,6 +11,11 @@ disBatch -s localhost:2 Tasks
 # which means A.txt, B.txt, and C.txt exist
 [[ -f A.txt && -f B.txt && -f C.txt ]]
 success=$?
+
+rm A.txt B.txt C.txt
+disbatch -s localhost:2 --fail-fast Tasks_failfast
+[[ ! -f A.txt ]]
+success=$((success + $?))
 
 cd - > /dev/null
 
