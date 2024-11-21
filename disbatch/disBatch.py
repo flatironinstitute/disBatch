@@ -1009,12 +1009,17 @@ class TaskGenerator:
 
     The generator also knows when it has no more user tasks, as indicated by
     the `done` property.
+
+    A filter is also accepted, since we can't wrap this generator. Wrapping it
+    would change its type and hide the `done` property.
     """
 
-    def __init__(self, tasks):
+    def __init__(self, tasks, filter=None):
         self._tasks = tasks
         self._done = False
         self._generator = self._task_generator()
+        if filter:
+            self._generator = filter(self._generator)
 
         # We look ahead by one task because we need to actually
         # start constructing tasks to know if we are done.
@@ -2425,13 +2430,13 @@ def main(kvsq=None):
                     'Task source name: ' + taskSource.name.decode('utf-8')
                 )  # TODO: Think about the decoding a bit more?
 
-        tasks = TaskGenerator(taskSource)
+        def resumefilter(t):
+            return statusTaskFilter(t, parseStatusFiles(*args.resume_from), args.retry, args.force_resume)
+
+        tasks = TaskGenerator(taskSource, filter=resumefilter if args.resume_from else None)
 
         if tasks.done:
             print('No tasks to run.', file=sys.stderr)
-
-        if args.resume_from:
-            tasks = statusTaskFilter(tasks, parseStatusFiles(*args.resume_from), args.retry, args.force_resume)
 
         if args.web:
             from kvsstcp import wskvsmu
