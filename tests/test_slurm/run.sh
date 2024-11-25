@@ -1,9 +1,15 @@
 #!/bin/bash
 
-set -e
+exit_fail() {
+    err=$?
+    echo "Slurm test failed! Output is in $workdir"
+    exit $err
+}
 
-workdir=$(mktemp -d -p ./ disbatch-test.XXXX)
-cp Tasks $workdir
+trap exit_fail ERR
+
+workdir=$(mktemp -d -p $PWD disbatch-test.XXXX)
+cp Tasks Tasks_failfast $workdir
 cd $workdir
 
 # Run the test
@@ -11,16 +17,16 @@ salloc -n 2 disBatch Tasks
 
 # Check that all 3 tasks ran,
 # which means A.txt, B.txt, and C.txt exist
-success=0
-[[ -f A.txt && -f B.txt && -f C.txt ]] || success=$?
+[[ -f A.txt && -f B.txt && -f C.txt ]]
 
-cd - > /dev/null
+rm -f A.txt B.txt C.txt
 
-if [[ $success -eq 0 ]]; then
-    echo "Slurm test passed."
-    rm -rf $workdir
-else
-    echo "Slurm test failed! Output is in $workdir"
-fi
+# disBatch is expected to exit with a non-zero exit code here
+salloc -n 2 disbatch --fail-fast Tasks_failfast || true
 
-exit $success
+# check that we failed fast and didn't run any more tasks
+[[ ! -f A.txt ]]
+
+trap - ERR
+echo "Slurm test passed."
+rm -rf $workdir
