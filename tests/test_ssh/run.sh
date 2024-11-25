@@ -1,8 +1,14 @@
 #!/bin/bash
 
-set -e
+exit_fail() {
+    err=$?
+    echo "SSH test failed! Output is in $workdir"
+    exit $err
+}
 
-workdir=$(mktemp -d -p ./ disbatch-test.XXXX)
+trap exit_fail ERR
+
+workdir=$(mktemp -d -p $PWD disbatch-test.XXXX)
 cp Tasks Tasks_failfast $workdir
 cd $workdir
 
@@ -12,20 +18,15 @@ disBatch -s localhost:2 Tasks
 # Check that all 3 tasks ran,
 # which means A.txt, B.txt, and C.txt exist
 [[ -f A.txt && -f B.txt && -f C.txt ]]
-success=$?
 
-rm A.txt B.txt C.txt
-disbatch -s localhost:2 --fail-fast Tasks_failfast
+rm -f A.txt B.txt C.txt
+
+# disBatch is expected to exit with a non-zero exit code here
+disbatch -s localhost:2 --fail-fast Tasks_failfast || true
+
+# check that we failed fast and didn't run any more tasks
 [[ ! -f A.txt ]]
-success=$((success + $?))
 
-cd - > /dev/null
-
-if [[ $success -eq 0 ]]; then
-    echo "SSH test passed."
-    rm -rf $workdir
-else
-    echo "SSH test failed! Output is in $workdir"
-fi
-
-exit $success
+trap - ERR
+echo "SSH test passed."
+rm -rf $workdir
