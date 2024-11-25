@@ -289,14 +289,11 @@ disBatch refers to a collection of execution resources as a *context* and the re
 
 ## Invocation
 ```
-usage: disbatch [-h] [-e] [--force-resume] [--kvsserver [HOST:PORT]]
-                [--logfile FILE]
-                [--loglevel {CRITICAL,ERROR,WARNING,INFO,DEBUG}] [--mailFreq N]
-                [--mailTo ADDR] [-p PATH] [-r STATUSFILE] [-R] [-S]
-                [--status-header] [--use-address HOST:PORT] [-w]
-                [--taskcommand COMMAND] [--taskserver [HOST:PORT]]
-                [-C TASK_LIMIT] [-c N] [--fill] [-g] [--no-retire] [-l COMMAND]
-                [--retire-cmd COMMAND] [-s HOST:CORECOUNT] [-t N]
+usage: disbatch [-h] [-e] [--force-resume] [--kvsserver [HOST:PORT]] [--logfile FILE]
+                [--loglevel {CRITICAL,ERROR,WARNING,INFO,DEBUG}] [--mailFreq N] [--mailTo ADDR] [-p PATH]
+                [-r STATUSFILE] [-R] [-S] [--status-header] [--use-address HOST:PORT] [-w] [-f]
+                [--taskcommand COMMAND] [--taskserver [HOST:PORT]] [--version] [-C TASK_LIMIT] [-c N] [--fill]
+                [--no-retire] [-l COMMAND] [--retire-cmd COMMAND] [-s HOST:CORECOUNT] [-t N]
                 [taskfile]
 
 Use batch resources to process a file of tasks, one task per line.
@@ -306,63 +303,51 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
-  -e, --exit-code       When any task fails, exit with non-zero status (default:
-                        only if disBatch itself fails)
-  --force-resume        With -r, proceed even if task commands/lines are
-                        different.
+  -e, --exit-code       When any task fails, exit with non-zero status (default: only if disBatch itself fails)
+  --force-resume        With -r, proceed even if task commands/lines are different.
   --kvsserver [HOST:PORT]
                         Use a running KVS server.
   --logfile FILE        Log file.
   --loglevel {CRITICAL,ERROR,WARNING,INFO,DEBUG}
                         Logging level (default: INFO).
-  --mailFreq N          Send email every N task completions (default: 1). "--
-                        mailTo" must be given.
+  --mailFreq N          Send email every N task completions (default: 1). "--mailTo" must be given.
   --mailTo ADDR         Mail address for task completion notification(s).
   -p PATH, --prefix PATH
-                        Path for log, dbUtil, and status files (default: ".").
-                        If ends with non-directory component, use as prefix for
-                        these files names (default:
-                        <Taskfile>_disBatch_<YYYYMMDDhhmmss>_<Random>).
+                        Path for log, dbUtil, and status files (default: "."). If ends with non-directory component,
+                        use as prefix for these files names (default: <Taskfile>_disBatch_<YYYYMMDDhhmmss>_<Random>).
   -r STATUSFILE, --resume-from STATUSFILE
-                        Read the status file from a previous run and skip any
-                        completed tasks (may be specified multiple times).
-  -R, --retry           With -r, also retry any tasks which failed in previous
-                        runs (non-zero return).
-  -S, --startup-only    Startup only the disBatch server (and KVS server if
-                        appropriate). Use "dbUtil..." script to add execution
-                        contexts. Incompatible with "--ssh-node".
+                        Read the status file from a previous run and skip any completed tasks (may be specified
+                        multiple times).
+  -R, --retry           With -r, also retry any tasks which failed in previous runs (non-zero return).
+  -S, --startup-only    Startup only the disBatch server (and KVS server if appropriate). Use "dbUtil..." script to
+                        add execution contexts. Incompatible with "--ssh-node".
   --status-header       Add header line to status file.
   --use-address HOST:PORT
                         Specify hostname and port to use for this run.
   -w, --web             Enable web interface.
+  -f, --fail-fast       Exit on first task failure. Running tasks will be interrupted and disBatch will exit with a
+                        non-zero exit code.
   --taskcommand COMMAND
-                        Tasks will come from the command specified via the KVS
-                        server (passed in the environment).
+                        Tasks will come from the command specified via the KVS server (passed in the environment).
   --taskserver [HOST:PORT]
                         Tasks will come from the KVS server.
+  --version             Print the version and exit
   -C TASK_LIMIT, --context-task-limit TASK_LIMIT
                         Shutdown after running COUNT tasks (0 => no limit).
   -c N, --cpusPerTask N
-                        Number of cores used per task; may be fractional
-                        (default: 1).
-  --fill                Try to use extra cores if allocated cores exceeds
-                        requested cores.
-  -g, --gpu             Use assigned GPU resources [DEPRECATED]
-  --no-retire           Don't retire nodes from the batch system (e.g., if
-                        running as part of a larger job).
+                        Number of cores used per task; may be fractional (default: 1).
+  --fill                Try to use extra cores if allocated cores exceeds requested cores.
+  --no-retire           Don't retire nodes from the batch system (e.g., if running as part of a larger job).
   -l COMMAND, --label COMMAND
                         Label for this context. Should be unique.
-  --retire-cmd COMMAND  Shell command to run to retire a node (environment
-                        includes $NODE being retired, remaining $ACTIVE node
-                        list, $RETIRED node list; default based on batch
-                        system). Incompatible with "--ssh-node".
+  --retire-cmd COMMAND  Shell command to run to retire a node (environment includes $NODE being retired, remaining
+                        $ACTIVE node list, $RETIRED node list; default based on batch system). Incompatible with "--
+                        ssh-node".
   -s HOST:CORECOUNT, --ssh-node HOST:CORECOUNT
-                        Run tasks over SSH on the given nodes (can be specified
-                        multiple times for additional hosts; equivalent to
-                        setting DISBATCH_SSH_NODELIST)
+                        Run tasks over SSH on the given nodes (can be specified multiple times for additional hosts;
+                        equivalent to setting DISBATCH_SSH_NODELIST)
   -t N, --tasksPerNode N
-                        Maximum concurrently executing tasks per node (up to
-                        cores/cpusPerTask).
+                        Maximum concurrently executing tasks per node (up to cores/cpusPerTask).
 ```
 
 The options for mail will only work if your computing environment permits processes to access mail via SMTP.
