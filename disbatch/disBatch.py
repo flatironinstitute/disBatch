@@ -1528,7 +1528,9 @@ class Driver(Thread):
 
                     if self.failed and self.failFast:
                         logger.info(f'Failing fast, task exited with code: {self.currentReturnCode}')
+                        print('Quitting early due to task failure with --fail-fast', file=sys.stderr)
                         self.ageQ.put('CheckFailExit')
+                        # Break out of the main driver control loop and drop into the exit code
                         break
 
                     # Maybe we want to track results by streamIndex instead of taskId?  But then there could be more than
@@ -1577,6 +1579,7 @@ class Driver(Thread):
                         # A "check" barrier fails if any tasks before it do (since the start or the last barrier).
                         logger.info('Barrier check failed: %d.', self.currentReturnCode)
                         self.ageQ.put('CheckFailExit')
+                        # Break out of the main driver control loop and drop into the exit code
                         break
                     # Let the feeder know.
                     self.ageQ.put(bTinfo.taskId)
@@ -2240,7 +2243,12 @@ def main(kvsq=None):
             '--use-address', default=None, metavar='HOST:PORT', help='Specify hostname and port to use for this run.'
         )
         argp.add_argument('-w', '--web', action='store_true', help='Enable web interface.')
-        argp.add_argument('-f', '--fail-fast', action='store_true', help='Exit on first task failure.')
+        argp.add_argument(
+            '-f',
+            '--fail-fast',
+            action='store_true',
+            help='Exit on first task failure. Running tasks will be interrupted and disBatch will exit with a non-zero exit code.',
+        )
         source = argp.add_mutually_exclusive_group(required=True)
         source.add_argument(
             '--taskcommand',
