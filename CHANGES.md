@@ -22,6 +22,7 @@ https://github.com/flatironinstitute/disBatch/pull/32
 - Refreshed the readme
 - Added `disbatch --version` and `disbatch.__version__`
 - Added MacOS test
+- Added `--fail-fast` option [https://github.com/flatironinstitute/disBatch/pull/38]
 
 ### Changes
 - `kvsstcp` submodule is now vendored
