@@ -1023,6 +1023,7 @@ class TaskGenerator:
 
         # We look ahead by one task because we need to actually
         # start constructing tasks to know if we are done.
+        logger.info('Fetching first task, could block')
         self._buffer_next()
 
     def __iter__(self):
