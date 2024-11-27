@@ -23,6 +23,7 @@ https://github.com/flatironinstitute/disBatch/pull/32
 - Added `disbatch --version` and `disbatch.__version__`
 - Added MacOS test
 - Added `--fail-fast` option [https://github.com/flatironinstitute/disBatch/pull/38]
+- Gracefully handle empty task list [https://github.com/flatironinstitute/disBatch/pull/38]
 
 ### Changes
 - `kvsstcp` submodule is now vendored
