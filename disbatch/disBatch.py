@@ -103,7 +103,7 @@ def killPatiently(sub, name, timeout=15):
 def register(kvs, which):
     # Contact the controller to be assigned an identifier via a random
     # key.
-    key = '%d' % (10e7 * random.random())
+    key = str(int(10e7 * random.random()))
     kvs.put('.controller', ('register', (which, key)))
     return kvs.get(key)
 
@@ -183,7 +183,7 @@ class BatchContext:
 
     def __init__(self, sysid, dbInfo, rank, nodes, cylinders, cores_per_cylinder, args, contextLabel=None):
         if contextLabel is None:
-            contextLabel = 'context%05d' % rank
+            contextLabel = f'context{rank:05d}'
         self.sysid = sysid
         self.dbInfo = dbInfo
         self.rank = rank
@@ -194,7 +194,7 @@ class BatchContext:
         self.label = contextLabel
 
         self.error = False  # engine errors (non-zero return values)
-        self.kvsKey = '.context_%d' % rank
+        self.kvsKey = f'.context_{rank:d}'
         self.retireCmd = None
 
     def __str__(self):
@@ -651,7 +651,7 @@ class SSHContext(BatchContext):
         self.for_log = []
 
         nodelist = args.ssh_node if args.ssh_node else os.getenv('DISBATCH_SSH_NODELIST')
-        contextLabel = args.label if args.label else 'SSH%d' % rank
+        contextLabel = args.label if args.label else f'SSH{rank:d}'
 
         core_count, node_set, nodes = [], set(), []
         if type(nodelist) is not str:
@@ -1059,7 +1059,7 @@ class TaskGenerator:
         def peEndListTasks():
             for when in ['START', 'STOP']:
                 yield TaskInfo(
-                    peCounters[when], tsx, -1, b'#ENDLIST', '.per engine %s %d' % (when, peCounters[when]), kind='P'
+                    peCounters[when], tsx, -1, b'#ENDLIST', f'.per engine {when:s} {peCounters[when]:d}', kind='P'
                 )
 
         OK = True
@@ -1098,7 +1098,7 @@ class TaskGenerator:
                     when = when.decode('ascii')
                     cmd = prefix + cmd + suffix
                     yield TaskInfo(
-                        peCounters[when], tsx, -1, cmd, '.per engine %s %d' % (when, peCounters[when]), kind='P'
+                        peCounters[when], tsx, -1, cmd, f'.per engine {when:s} {peCounters[when]:d}', kind='P'
                     )
                     peCounters[when] += 1
                     continue
@@ -1281,10 +1281,10 @@ class Driver(Thread):
 
             self.statusFile.seek(self.statusLastOffset)
             mailTo = self.db_info.args.mailTo
-            msg = MIMEText('Last %d:\n\n' % self.db_info.args.mailFreq + self.statusFile.read())
-            msg['Subject'] = '%s has completed %d tasks' % (self.db_info.uniqueId, self.finished)
+            msg = MIMEText(f'Last {self.db_info.args.mailFreq + self.statusFile.read():d}:\n\n')
+            msg['Subject'] = f'{self.db_info.uniqueId:s} has completed {self.finished:d} tasks'
             if self.failed:
-                msg['Subject'] += ' (%d failed)' % self.failed
+                msg['Subject'] += f' ({self.failed:d} failed)'
             msg['From'] = mailTo
             msg['To'] = mailTo
             s = smtplib.SMTP()
@@ -1331,19 +1331,10 @@ class Driver(Thread):
 
         def __str__(self):
             return (
-                'Engine %d: Context %d, Host %s, PID %d, Started at %.2f, Last heard from %.2f, Cylinders %d, Assigned %d, Finished %d, Failed %d'
-                % (
-                    self.rank,
-                    self.cRank,
-                    self.hostname,
-                    self.pid,
-                    self.start,
-                    time.time() - self.last,
-                    len(self.cylinders),
-                    self.assigned,
-                    self.finished,
-                    self.failed,
-                )
+                f'Engine {self.rank:d}: Context {self.cRank:d}, Host {self.hostname:s}, PID {self.pid:d}, '
+                f'Started at {self.start:.2f}, Last heard from {time.time() - self.last:.2f}, '
+                f'Cylinders {len(self.cylinders):d}, Assigned {self.assigned:d}, Finished {self.finished:d}, '
+                f'Failed {self.failed:d}'
             )
 
         def addCylinder(self, pid, pgid, ckey):
@@ -1794,7 +1785,7 @@ class EngineBlock(Thread):
                 logger.exception('Cylinder %d exception: ', self.cylinderRank)
             finally:
                 logger.info('Cylinder %d stopping.', self.cylinderRank)
-                killPatiently(self.taskProc, 'cylinder %d subproc' % self.cylinderRank, 2)
+                killPatiently(self.taskProc, f'cylinder {self.cylinderRank:d} subproc', 2)
 
         def main(self):
             self.pid = os.getpid()  # TODO: Remove
@@ -1824,9 +1815,9 @@ class EngineBlock(Thread):
                 self.localEnv['DISBATCH_STREAM_INDEX'] = str(ti.taskStreamIndex)
                 self.localEnv['DISBATCH_REPEAT_INDEX'] = str(ti.taskRepIndex)
                 self.localEnv['DISBATCH_TASKID'] = str(ti.taskId)
-                self.localEnv['DISBATCH_STREAM_INDEX_ZP'] = '%06d' % ti.taskStreamIndex
-                self.localEnv['DISBATCH_REPEAT_INDEX_ZP'] = '%06d' % ti.taskRepIndex
-                self.localEnv['DISBATCH_TASKID_ZP'] = '%06d' % ti.taskId
+                self.localEnv['DISBATCH_STREAM_INDEX_ZP'] = f'{ti.taskStreamIndex:06d}'
+                self.localEnv['DISBATCH_REPEAT_INDEX_ZP'] = f'{ti.taskRepIndex:06d}'
+                self.localEnv['DISBATCH_TASKID_ZP'] = f'{ti.taskId:06d}'
 
                 logger.info('Cylinder %d executing %s.', self.cylinderRank, ti)
                 t0 = time.time()
@@ -1945,7 +1936,7 @@ class EngineBlock(Thread):
                 self.hbQueue,
                 self.rank,
                 x,
-                self.FetchTask('.cylinder %d %d' % (self.rank, x), constantKeyGen, kvsstcp.KVSClient.get),
+                self.FetchTask(f'.cylinder {self.rank:d} {x:d}', constantKeyGen, kvsstcp.KVSClient.get),
             )
             for x in range(cylinders)
         ]
@@ -2111,7 +2102,7 @@ def main(kvsq=None):
         context.setNode(args.node)
         logger = logging.getLogger('DisBatch Engine')
         lconf = {'format': '%(asctime)s %(levelname)-8s %(name)-15s: %(message)s', 'level': dbInfo.args.loglevel}
-        lconf['filename'] = '%s_%s_%s_engine_%d.log' % (dbInfo.uniqueId, context.label, args.node, rank)
+        lconf['filename'] = f'{dbInfo.uniqueId:s}_{context.label:s}_{args.node:s}_engine_{rank:d}.log'
         logging.basicConfig(**lconf)
         logger.info('Starting engine %s (%d) on %s (%d) in %s.', context.node, rank, myHostname, myPid, os.getcwd())
         logger.info('argv: %r', sys.argv)
@@ -2350,7 +2341,9 @@ def main(kvsq=None):
         forceDir = args.prefix[-1] == '/'
         rp = os.path.realpath(args.prefix)
         if os.path.isdir(rp):
-            uniqueId = rp + '/%s_disBatch_%s_%03d' % (tfn, time.strftime('%y%m%d%H%M%S'), int(random.random() * 1000))
+            uniqueId = rp + '/{:s}_disBatch_{:s}_{:03d}'.format(
+                tfn, time.strftime('%y%m%d%H%M%S'), int(random.random() * 1000)
+            )
         else:
             if not forceDir:
                 rpp, name = os.path.split(rp)
@@ -2382,7 +2375,7 @@ def main(kvsq=None):
             else:
                 host, port = socket.gethostname(), 0
             kvsst = kvsstcp.KVSServerThread(host, port)
-            kvsserver = '%s:%d' % kvsst.cinfo
+            kvsserver = '{:s}:{:d}'.format(*kvsst.cinfo)
             kvsinfotxt = uniqueId + '_kvsinfo.txt'
             with open(kvsinfotxt, 'w') as kvsi:
                 kvsi.write(kvsserver)

@@ -45,8 +45,12 @@ for x in range(NumTasks):
 tid2status = db.syncTasks(tasks)
 for tid in tasks:
     print(
-        'task %d: %s returned %d, matched: %s'
-        % (tid, repr(tasks[tid]), tid2status[tid]['ReturnCode'], repr(tasks[tid]) == tid2status[tid]['TaskCmd'])
+        'task {:d}: {:s} returned {:d}, matched: {:s}'.format(
+            tid,
+            repr(tasks[tid]),
+            tid2status[tid]['ReturnCode'],
+            repr(tasks[tid]) == tid2status[tid]['TaskCmd'],
+        )
     )
 
 # Now try a repeat construct. Force an error for the index 112.
@@ -60,7 +64,7 @@ for x in range(NumTasks):
     # Wait for one task and return its status info.
     s = db.wait_one_task()
     assert s['TaskId'] in target_tids
-    print('task %d: returned %d, "%s"' % (s['TaskId'], s['ReturnCode'], s['TaskCmd']))
+    print(f'task {s["TaskId"]:d}: returned {s["ReturnCode"]:d}, "{s["TaskCmd"]:s}"')
 
 # Tell DisBatcher no more tasks are coming.
 db.done()
