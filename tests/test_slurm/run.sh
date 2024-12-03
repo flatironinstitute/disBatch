@@ -39,4 +39,5 @@ cd - > /dev/null
 
 trap - ERR
 echo "Slurm test passed."
-rm -rf $workdir
+# NFS sometimes leaves stale file handles, but don't fail the test
+rm -rf $workdir || true
