@@ -673,7 +673,7 @@ if '__main__' == __name__:
     logging.basicConfig(**lconf)
 
     t = KVSServer(args.host, args.port)
-    addr = '%s:%d' % t.cinfo
+    addr = '{:s}:{:d}'.format(*t.cinfo)
     logger.info('Server running at %s.', addr)
     if args.addrfile:
         args.addrfile.write(addr)

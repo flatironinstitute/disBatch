@@ -147,7 +147,7 @@ def popYNC(msg, parent, inq, title='Confirm'):
     if len(msgw) > h:
         missing = 1 + len(msgw) - h
         msgw = msgw[: h - 1]
-        msgw.append('%d lines elided.' % missing)
+        msgw.append(f'{missing:d} lines elided.')
 
     nw = curses.newwin(h + 2, w + 2, ro, co)
     nw.border()
@@ -198,7 +198,7 @@ def display(S, kvsc, inq):
         S.clear()
 
         if tooSmall:
-            S.addstr(0, 0, 'Screen must be at least %dX%d' % (MinLines, MinCols), CPRB)
+            S.addstr(0, 0, f'Screen must be at least {MinLines:d}X{MinCols:d}', CPRB)
         else:
             # Header
             for r, (L, cp) in enumerate(header):
@@ -308,7 +308,7 @@ def display(S, kvsc, inq):
                                 except OSError:
                                     pass
             else:
-                msg = 'Got unrecognized key: %d' % k
+                msg = f'Got unrecognized key: {k:d}'
         elif tag == 'status':
             engines, contexts, header, content = o
             # Adjust cursor location if needed.
