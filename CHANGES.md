@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.0.0 (upcoming)
+## 3.0.0 (2024-12-05)
 
 https://github.com/flatironinstitute/disBatch/pull/32
 
