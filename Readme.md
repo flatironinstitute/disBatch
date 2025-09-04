@@ -24,12 +24,25 @@ Then, to run 5 tasks at a time in parallel on your local machine, run:
     disBatch -s localhost:5 Tasks
 
 `disBatch` will start the first five running concurrently. When one finishes, the next will be started until all are done.
+Note that this effectively means that tasks (lines) may run in any order.
 
-Or, to distribute this work on a Slurm cluster, run:
+To distribute this work on a Slurm cluster instead of locally, run:
 
     sbatch -n 5 disBatch Tasks
 
 You may need to provide additional arguments specific to your cluster to specify a partition, time limit, etc.
+
+The same invocation as a Slurm batch script would look like:
+```bash
+#!/bin/bash
+# file: job.sh
+#SBATCH -n 5
+
+disBatch Tasks
+```
+
+Submit as usual with `sbatch job.sh`. disBatch will inspect the environment as see that it is running under Slurm, and use
+`srun` internally to launch persistent task slots.
   
 ## Overview
 
