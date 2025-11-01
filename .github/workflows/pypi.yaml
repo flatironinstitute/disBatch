@@ -41,7 +41,7 @@ jobs:
         ./run.sh
 
     - name: Upload dist artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v5
       with:
         name: dists
         path: dist/*
