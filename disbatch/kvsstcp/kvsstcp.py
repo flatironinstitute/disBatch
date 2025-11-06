@@ -599,7 +599,10 @@ class KVSServer(threading.Thread, Dispatcher):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.sock.setblocking(1)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.sock.bind((host, port))
+        try:
+            self.sock.bind((host, port))
+        except OSError as e:
+            raise OSError(f'Could not bind to {host}:{port}: {e.strerror}') from e
         logger.info('Setting queue size to 4000')
         self.sock.listen(4000)
         self.cinfo = self.sock.getsockname()
