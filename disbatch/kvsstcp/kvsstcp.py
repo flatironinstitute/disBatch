@@ -582,7 +582,7 @@ class KVS:
 class KVSServer(threading.Thread, Dispatcher):
     def __init__(self, host=None, port=0):
         if not host:
-            host = socket.gethostname()
+            host = ''  # bind to all interfaces
 
         self.kvs = KVS()
 
