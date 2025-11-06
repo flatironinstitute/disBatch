@@ -1,5 +1,10 @@
 # Changelog
 
+## Upcoming
+
+### Fixes
+- kvsstcp now binds to all interfaces if the hostname is not given. This may fix local usage on macOS.
+
 ## 3.0.0 (2024-12-05)
 
 https://github.com/flatironinstitute/disBatch/pull/32
