@@ -60,7 +60,7 @@ jobs:
         version: "0.4.30"
 
     - name: Download dist artifacts
-      uses: actions/download-artifact@v6
+      uses: actions/download-artifact@v7
       with:
         name: dists
         path: dist
