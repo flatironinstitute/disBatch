@@ -1745,7 +1745,7 @@ class EngineBlock(Thread):
 
     class Cylinder(Thread):
         def __init__(self, context, env, envres, kvs, hbQueue, engineRank, cylinderRank, fetchTask):
-            super(EngineBlock.Cylinder, self).__init__()
+            super().__init__()
             self.daemon = True
             self.context, self.hbQueue, self.engineRank, self.cylinderRank, self.fetchTask = (
                 context,
